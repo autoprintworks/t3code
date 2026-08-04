@@ -11,7 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
 
-import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { checkpointRefForThreadTurn, checkpointRefsPrefixForThread } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -110,6 +110,85 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
         expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
+      }),
+    );
+  });
+
+  describe("listCheckpointRefs", () => {
+    it.effect("returns only the requested thread's refs", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-checkpoint-sweep");
+        const otherThreadId = ThreadId.make("thread-checkpoint-sweep-other");
+
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: checkpointRefForThreadTurn(threadId, 0),
+        });
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        });
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: checkpointRefForThreadTurn(otherThreadId, 0),
+        });
+
+        const refs = yield* checkpointStore.listCheckpointRefs({
+          cwd: tmp,
+          refPrefix: checkpointRefsPrefixForThread(threadId),
+        });
+
+        expect([...refs].sort()).toEqual([
+          checkpointRefForThreadTurn(threadId, 0),
+          checkpointRefForThreadTurn(threadId, 1),
+        ]);
+      }),
+    );
+
+    it.effect("returns an empty list when the thread captured nothing", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const refs = yield* checkpointStore.listCheckpointRefs({
+          cwd: tmp,
+          refPrefix: checkpointRefsPrefixForThread(ThreadId.make("thread-without-checkpoints")),
+        });
+
+        expect(refs).toEqual([]);
+      }),
+    );
+
+    // The leak this guards against: checkpoint refs are not a per-worktree
+    // namespace, so refs a worktree-backed thread captured stay in the primary
+    // checkout after `git worktree remove` and have to be swept from there.
+    it.effect("lists and deletes refs a removed worktree captured", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-checkpoint-worktree");
+        const worktreePath = NodePath.join(yield* makeTmpDir("checkpoint-worktree-"), "thread");
+
+        yield* git(tmp, ["worktree", "add", "-b", "t3/thread", worktreePath]);
+        yield* writeTextFile(NodePath.join(worktreePath, "SECRET.md"), "uncommitted secret\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: worktreePath,
+          checkpointRef: checkpointRefForThreadTurn(threadId, 0),
+        });
+        yield* git(tmp, ["worktree", "remove", "--force", worktreePath]);
+
+        const refPrefix = checkpointRefsPrefixForThread(threadId);
+        const refs = yield* checkpointStore.listCheckpointRefs({ cwd: tmp, refPrefix });
+        expect(refs).toEqual([checkpointRefForThreadTurn(threadId, 0)]);
+
+        yield* checkpointStore.deleteCheckpointRefs({ cwd: tmp, checkpointRefs: refs });
+
+        expect(yield* checkpointStore.listCheckpointRefs({ cwd: tmp, refPrefix })).toEqual([]);
       }),
     );
   });

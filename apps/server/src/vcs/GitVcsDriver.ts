@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  CheckpointRef,
   GitCommandError,
   VcsProcessExitError,
   type VcsSwitchRefInput,
@@ -831,6 +832,28 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }
 
       return result.stdout;
+    }),
+
+    // Checkpoint refs live in the common ref store rather than a per-worktree
+    // namespace, so a linked worktree's refs are listed from the primary
+    // checkout too — and stay listable after that worktree is removed.
+    listCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.listCheckpointRefs")(function* (input) {
+      const result = yield* execute({
+        operation: "GitVcsDriver.checkpoints.listCheckpointRefs",
+        cwd: input.cwd,
+        args: ["for-each-ref", "--format=%(refname)", input.refPrefix],
+        allowNonZeroExit: true,
+      });
+
+      if (result.exitCode !== 0) {
+        return [];
+      }
+
+      return result.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((refName) => CheckpointRef.make(refName));
     }),
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(

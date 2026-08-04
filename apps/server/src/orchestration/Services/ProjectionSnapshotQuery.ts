@@ -147,6 +147,17 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<ProjectionThreadCheckpointContext>, ProjectionRepositoryError>;
 
   /**
+   * Read the workspace root of a thread's project.
+   *
+   * Unlike the other thread queries this one also resolves soft-deleted threads
+   * and projects, so cleanup that runs after a delete can still find the
+   * repository a thread's checkpoint refs were written to.
+   */
+  readonly getThreadWorkspaceRoot: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<string>, ProjectionRepositoryError>;
+
+  /**
    * Read only the narrow context needed to compute a full-thread diff from
    * checkpoint 0 to a specific turn count.
    */

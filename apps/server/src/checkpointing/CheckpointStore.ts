@@ -41,6 +41,11 @@ export interface DiffCheckpointsInput {
   readonly ignoreWhitespace: boolean;
 }
 
+export interface ListCheckpointRefsInput {
+  readonly cwd: string;
+  readonly refPrefix: string;
+}
+
 export interface DeleteCheckpointRefsInput {
   readonly cwd: string;
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
@@ -84,6 +89,16 @@ export class CheckpointStore extends Context.Service<
     readonly diffCheckpoints: (
       input: DiffCheckpointsInput,
     ) => Effect.Effect<string, CheckpointStoreError>;
+
+    /**
+     * List every checkpoint ref under a ref prefix.
+     *
+     * Lets callers sweep a thread's refs without knowing which turns captured
+     * one. Returns an empty list when the prefix holds no refs.
+     */
+    readonly listCheckpointRefs: (
+      input: ListCheckpointRefsInput,
+    ) => Effect.Effect<ReadonlyArray<CheckpointRef>, CheckpointStoreError>;
 
     /**
      * Delete the provided checkpoint refs.
@@ -147,6 +162,13 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.diffCheckpoints(input);
   });
 
+  const listCheckpointRefs: CheckpointStore["Service"]["listCheckpointRefs"] = Effect.fn(
+    "listCheckpointRefs",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints("CheckpointStore.listCheckpointRefs", input.cwd);
+    return yield* checkpoints.listCheckpointRefs(input);
+  });
+
   const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(
     "deleteCheckpointRefs",
   )(function* (input) {
@@ -163,6 +185,7 @@ export const make = Effect.gen(function* () {
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,
+    listCheckpointRefs,
     deleteCheckpointRefs,
   });
 });
