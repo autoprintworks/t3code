@@ -69,6 +69,9 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // Throwaway probes, held to no standard. They are recorded as they ran,
+      // so repo lint rules would only ever ask us to rewrite finished spikes.
+      "experiments/**",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     jsPlugins: ["./oxlint-plugin-t3code/index.ts"],
