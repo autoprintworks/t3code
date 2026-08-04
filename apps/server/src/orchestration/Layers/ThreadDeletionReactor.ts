@@ -1,13 +1,18 @@
-import type { OrchestrationEvent } from "@t3tools/contracts";
+import type { OrchestrationEvent, ThreadId } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
+import { checkpointRefsPrefixForThread } from "../../checkpointing/Utils.ts";
+import { isGitRepository } from "../../git/Utils.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ThreadDeletionReactor,
   type ThreadDeletionReactorShape,
@@ -37,6 +42,41 @@ export const logCleanupCauseUnlessInterrupted = <R, E>({
     }),
   );
 
+/**
+ * Drop every checkpoint ref a thread ever captured.
+ *
+ * Sweeps against the project's workspace root rather than the thread's
+ * worktree: `refs/t3/checkpoints/…` is not one of git's per-worktree ref
+ * namespaces, so the refs land in the primary checkout's ref store and outlive
+ * `git worktree remove`. Enumerating the namespace rather than reading the
+ * read model's checkpoint list also catches refs from captures that never made
+ * it into the projection.
+ */
+export const sweepThreadCheckpointRefs = Effect.fn("sweepThreadCheckpointRefs")(function* (
+  threadId: ThreadId,
+) {
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+  const workspaceRoot = yield* projectionSnapshotQuery.getThreadWorkspaceRoot(threadId);
+  if (Option.isNone(workspaceRoot) || !isGitRepository(workspaceRoot.value)) {
+    return;
+  }
+
+  const checkpointRefs = yield* checkpointStore.listCheckpointRefs({
+    cwd: workspaceRoot.value,
+    refPrefix: checkpointRefsPrefixForThread(threadId),
+  });
+  if (checkpointRefs.length === 0) {
+    return;
+  }
+
+  yield* checkpointStore.deleteCheckpointRefs({
+    cwd: workspaceRoot.value,
+    checkpointRefs,
+  });
+});
+
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
@@ -56,12 +96,20 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  const deleteCheckpointRefs = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: sweepThreadCheckpointRefs(threadId),
+      message: "thread deletion cleanup skipped checkpoint ref sweep",
+      threadId,
+    });
+
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    yield* deleteCheckpointRefs(threadId);
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

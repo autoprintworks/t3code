@@ -139,6 +139,9 @@ const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
   workspaceRoot: Schema.String,
   worktreePath: Schema.NullOr(Schema.String),
 });
+const ProjectionThreadWorkspaceRootRowSchema = Schema.Struct({
+  workspaceRoot: Schema.String,
+});
 const FullThreadDiffContextLookupInput = Schema.Struct({
   threadId: ThreadId,
   checkpointTurnCount: NonNegativeInt,
@@ -864,6 +867,23 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ON projects.project_id = threads.project_id
         WHERE threads.thread_id = ${threadId}
           AND threads.deleted_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  // Deliberately unfiltered by `deleted_at` on both sides: thread deletion
+  // cleanup runs after the delete has landed in the projection, and project
+  // deletion soft-deletes the project row before its threads finish cleaning up.
+  const getThreadWorkspaceRootRow = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadWorkspaceRootRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT projects.workspace_root AS "workspaceRoot"
+        FROM projection_threads AS threads
+        INNER JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+        WHERE threads.thread_id = ${threadId}
         LIMIT 1
       `,
   });
@@ -1996,6 +2016,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       });
     });
 
+  const getThreadWorkspaceRoot: ProjectionSnapshotQueryShape["getThreadWorkspaceRoot"] = (
+    threadId,
+  ) =>
+    getThreadWorkspaceRootRow({ threadId }).pipe(
+      Effect.map(Option.map((row) => row.workspaceRoot)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadWorkspaceRoot:query",
+          "ProjectionSnapshotQuery.getThreadWorkspaceRoot:decodeRow",
+        ),
+      ),
+    );
+
   const getFullThreadDiffContext: NonNullable<
     ProjectionSnapshotQueryShape["getFullThreadDiffContext"]
   > = (threadId, toTurnCount) =>
@@ -2269,6 +2302,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
+    getThreadWorkspaceRoot,
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,

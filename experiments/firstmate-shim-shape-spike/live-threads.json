@@ -1,0 +1,42 @@
+{
+  "threadsProbed": 6,
+  "totalBytes": 473718,
+  "medianBytes": 9741,
+  "largest": [
+    {
+      "threadId": "531b30d7-3d9a-4991-8acd-b6a7cfa8b12b",
+      "bytes": 204435,
+      "ms": 17.8,
+      "messages": 14,
+      "activities": 506
+    },
+    {
+      "threadId": "579c1990-98a2-40df-982e-6811963006a3",
+      "bytes": 140303,
+      "ms": 14,
+      "messages": 7,
+      "activities": 361
+    },
+    {
+      "threadId": "09ec0205-a9dd-4443-828d-f4891d09683e",
+      "bytes": 108797,
+      "ms": 10.7,
+      "messages": 7,
+      "activities": 268
+    },
+    {
+      "threadId": "bc431e04-b45f-49ad-80fa-9e37c5fa278f",
+      "bytes": 9741,
+      "ms": 2.6,
+      "messages": 3,
+      "activities": 16
+    },
+    {
+      "threadId": "40f0dd08-ab69-4859-b5ce-155f6b8b5ed3",
+      "bytes": 7480,
+      "ms": 2.1,
+      "messages": 2,
+      "activities": 13
+    }
+  ]
+}

@@ -1,0 +1,477 @@
+{
+  "setup": {
+    "lab": "C:/Users/Glyn/AppData/Local/Temp/fm14-lab",
+    "proj": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\proj",
+    "t3home": "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/nightly/t3home",
+    "origin": "http://127.0.0.1:37732",
+    "serverPid": 54672,
+    "worktreeA": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj",
+    "taskA": "93d8937d-3c6f-483c-b76a-538c501b0ab4",
+    "branchA": "fm/93d8937d",
+    "modelSelection": {
+      "instanceId": "claudeAgent",
+      "model": "claude-fable-5"
+    }
+  },
+  "stages": [
+    {
+      "label": "A1-after-lease",
+      "at": 3421,
+      "worktreeExists": true,
+      "head": "HEAD",
+      "headOid": "99113cc810b6d69b4668ec7c2e8c67089b327c8e",
+      "status": [],
+      "files": [
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "main"
+      ],
+      "checkpointRefsFromProject": [],
+      "checkpointRefsFromWorktree": [],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj 99113cc (detached HEAD)"
+      ],
+      "treehouseStatus": [
+        "1     leased       ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj  (held by fm-93d8937d-3c6f-483c-b76a-538c501b0ab4)"
+      ]
+    },
+    {
+      "label": "A3-after-turn-1",
+      "at": 46578,
+      "worktreeExists": true,
+      "head": "fm/93d8937d",
+      "headOid": "b7c80b0b3c4d14afba35a1c6e5c9e4eb26333516",
+      "status": [],
+      "files": [
+        "CREWMATE-A.md",
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "fm/93d8937d",
+        "main"
+      ],
+      "checkpointRefsFromProject": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31"
+      ],
+      "checkpointRefsFromWorktree": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31"
+      ],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj b7c80b0 [fm/93d8937d]"
+      ],
+      "treehouseStatus": [
+        "1     leased       ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj  (held by fm-93d8937d-3c6f-483c-b76a-538c501b0ab4)",
+        "                   claude.exe (61616)"
+      ]
+    },
+    {
+      "label": "A4-after-drift",
+      "at": 63876,
+      "worktreeExists": true,
+      "head": "drifted/93d8937d",
+      "headOid": "b7c80b0b3c4d14afba35a1c6e5c9e4eb26333516",
+      "status": [],
+      "files": [
+        "CREWMATE-A.md",
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "drifted/93d8937d",
+        "fm/93d8937d",
+        "main"
+      ],
+      "checkpointRefsFromProject": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "checkpointRefsFromWorktree": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj b7c80b0 [drifted/93d8937d]"
+      ],
+      "treehouseStatus": [
+        "1     leased       ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj  (held by fm-93d8937d-3c6f-483c-b76a-538c501b0ab4)",
+        "                   claude.exe (61616)"
+      ]
+    },
+    {
+      "label": "A5-after-return",
+      "at": 68774,
+      "worktreeExists": true,
+      "head": "HEAD",
+      "headOid": "99113cc810b6d69b4668ec7c2e8c67089b327c8e",
+      "status": [],
+      "files": [
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "fm/93d8937d",
+        "main"
+      ],
+      "checkpointRefsFromProject": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "checkpointRefsFromWorktree": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj 99113cc (detached HEAD)"
+      ],
+      "treehouseStatus": [
+        "1     available    ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj"
+      ]
+    },
+    {
+      "label": "A6-after-thread-delete",
+      "at": 73159,
+      "worktreeExists": true,
+      "head": "HEAD",
+      "headOid": "99113cc810b6d69b4668ec7c2e8c67089b327c8e",
+      "status": [],
+      "files": [
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "fm/93d8937d",
+        "main"
+      ],
+      "checkpointRefsFromProject": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "checkpointRefsFromWorktree": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj 99113cc (detached HEAD)"
+      ],
+      "treehouseStatus": [
+        "1     available    ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj"
+      ]
+    },
+    {
+      "label": "B2-reused-worktree-pristine",
+      "at": 73980,
+      "worktreeExists": true,
+      "head": "HEAD",
+      "headOid": "99113cc810b6d69b4668ec7c2e8c67089b327c8e",
+      "status": [],
+      "files": [
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "fm/93d8937d",
+        "main"
+      ],
+      "checkpointRefsFromProject": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "checkpointRefsFromWorktree": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj 99113cc (detached HEAD)"
+      ],
+      "treehouseStatus": [
+        "1     leased       ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj  (held by fm-bb2f963e-27fb-420d-b25f-bea2c44fc8df)"
+      ]
+    },
+    {
+      "label": "B3-after-turn",
+      "at": 118519,
+      "worktreeExists": true,
+      "head": "fm/bb2f963e",
+      "headOid": "99113cc810b6d69b4668ec7c2e8c67089b327c8e",
+      "status": [
+        "?? CREWMATE-B.md"
+      ],
+      "files": [
+        "CREWMATE-B.md",
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "fm/93d8937d",
+        "fm/bb2f963e",
+        "main"
+      ],
+      "checkpointRefsFromProject": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/0 6f750df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/1 46f85e5"
+      ],
+      "checkpointRefsFromWorktree": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/0 6f750df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/1 46f85e5"
+      ],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj 99113cc [fm/bb2f963e]"
+      ],
+      "treehouseStatus": [
+        "1     leased       ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj  (held by fm-bb2f963e-27fb-420d-b25f-bea2c44fc8df)",
+        "                   claude.exe (30272)"
+      ]
+    },
+    {
+      "label": "B4-after-thread-delete-worktree-alive",
+      "at": 126868,
+      "worktreeExists": true,
+      "head": "fm/bb2f963e",
+      "headOid": "99113cc810b6d69b4668ec7c2e8c67089b327c8e",
+      "status": [
+        "?? CREWMATE-B.md"
+      ],
+      "files": [
+        "CREWMATE-B.md",
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "fm/93d8937d",
+        "fm/bb2f963e",
+        "main"
+      ],
+      "checkpointRefsFromProject": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/0 6f750df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/1 46f85e5"
+      ],
+      "checkpointRefsFromWorktree": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/0 6f750df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/1 46f85e5"
+      ],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj 99113cc [fm/bb2f963e]"
+      ],
+      "treehouseStatus": [
+        "1     leased       ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj  (held by fm-bb2f963e-27fb-420d-b25f-bea2c44fc8df)"
+      ]
+    },
+    {
+      "label": "B5-final",
+      "at": 127772,
+      "worktreeExists": true,
+      "head": "HEAD",
+      "headOid": "99113cc810b6d69b4668ec7c2e8c67089b327c8e",
+      "status": [],
+      "files": [
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "branchesInRepo": [
+        "fm/93d8937d",
+        "main"
+      ],
+      "checkpointRefsFromProject": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/0 6f750df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/1 46f85e5"
+      ],
+      "checkpointRefsFromWorktree": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/0 6f750df",
+        "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/1 46f85e5"
+      ],
+      "strayCheckpointIndexes": [],
+      "gitWorktreeList": [
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj                               99113cc [main]",
+        "C:/Users/Glyn/AppData/Local/Temp/fm14-lab/proj/.treehouse/proj-196e6c/1/proj 99113cc (detached HEAD)"
+      ],
+      "treehouseStatus": [
+        "1     available    ~\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj"
+      ]
+    }
+  ],
+  "observations": {
+    "turnA1": {
+      "settled": "ready",
+      "newEvents": 36
+    },
+    "branchRecordedAfterTurnA1": "fm/93d8937d",
+    "turnA2": {
+      "settled": "ready",
+      "newEvents": 17
+    },
+    "drift": {
+      "branchAtCreate": "fm/93d8937d",
+      "worktreeHeadAfterDrift": "drifted/93d8937d",
+      "branchRecordedAfterDrift": "drifted/93d8937d",
+      "driftFollowed": true
+    },
+    "teardownA": {
+      "branchAtTeardown": "drifted/93d8937d",
+      "detach": {
+        "ok": true,
+        "stderr": ""
+      },
+      "branchDelete": {
+        "ok": true,
+        "stdout": "Deleted branch drifted/93d8937d (was b7c80b0).",
+        "stderr": ""
+      },
+      "treehouseReturn": {
+        "ok": true,
+        "stdout": "",
+        "stderr": "",
+        "status": 0
+      }
+    },
+    "threadDeleteA": {
+      "ok": true,
+      "value": {
+        "sequence": 134
+      }
+    },
+    "pooledReuse": {
+      "worktreeA": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj",
+      "worktreeB": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj",
+      "sameDirectory": true
+    },
+    "carryover": {
+      "crewmateAFileStillPresent": false,
+      "files": [
+        "NOTES.md",
+        "README.md",
+        "treehouse.toml"
+      ],
+      "dirty": [],
+      "head": "HEAD",
+      "checkpointRefsVisible": [
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+        "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df"
+      ],
+      "logFromHead": [
+        "99113cc pool of one",
+        "90222ea treehouse pool config",
+        "2f2754c scratch project for the checkpoint/worktree spike"
+      ]
+    },
+    "turnB1": {
+      "settled": "ready",
+      "newEvents": 47
+    },
+    "crewmateBReport": "# CREWMATE-B — Inherited worktree report\n\n## ls -a\n```\n.\n..\n.git\nNOTES.md\nREADME.md\ntreehouse.toml\n```\n\n## git status --porcelain\n```\n(no output — clean)\n```\n\n## git rev-parse --abbrev-ref HEAD\n```\nfm/bb2f963e\n```\n\n## git log --oneline -3\n```\n99113cc pool of one\n90222ea treehouse pool config\n2f2754c scratch project for the checkpoint/worktree spike\n```\n",
+    "threadDeleteB": {
+      "ok": true,
+      "value": {
+        "sequence": 187
+      }
+    },
+    "teardownB": {
+      "branchAtTeardown": "fm/bb2f963e",
+      "detach": {
+        "ok": true,
+        "stderr": ""
+      },
+      "branchDelete": {
+        "ok": true,
+        "stdout": "Deleted branch fm/bb2f963e (was 99113cc).",
+        "stderr": ""
+      },
+      "treehouseReturn": {
+        "ok": true,
+        "stdout": "",
+        "stderr": "",
+        "status": 0
+      }
+    },
+    "finalCheckpointRefs": [
+      "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/0 27ce718",
+      "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/1 95ffc31",
+      "refs/t3/checkpoints/OTNkODkzN2QtM2M2Zi00ODNjLWI3NmEtNTM4YzUwMWIwYWI0/turn/2 7fa94df",
+      "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/0 6f750df",
+      "refs/t3/checkpoints/YmIyZjk2M2UtMjdmYi00MjBkLWIyNWYtYmVhMmM0NGZjOGRm/turn/1 46f85e5"
+    ],
+    "finalBranches": [
+      "fm/93d8937d",
+      "main"
+    ],
+    "finalStrayIndexes": [],
+    "repoSizeAfter": [
+      "count: 38",
+      "size: 6.29 KiB",
+      "in-pack: 0",
+      "packs: 0",
+      "size-pack: 0 bytes",
+      "prune-packable: 0",
+      "garbage: 0",
+      "size-garbage: 0 bytes"
+    ]
+  },
+  "notes": [
+    "worktree A leased at HEAD=HEAD (detached is expected, #18)",
+    "project.create was refused: [{\"_tag\":\"Fail\",\"error\":{\"_tag\":\"OrchestrationDispatchCommandError\",\"message\":\"Orchestration command invariant failed (project.create): Active project '5b243a1f-0439-480e-9a28-347d636176ef' already exists for workspace root 'c:\\\\users\\\\glyn\\\\appdata\\\\local\\\\temp\\\\fm14-lab\\\\proj'.\",\"cause\":{\"name\":\"OrchestrationCommandInvariantError\",\"message\":\"Orchestration command invariant failed (project.create): Active project '5b243a1f-0439-480e-9a28-347d636176ef' already exists for workspace root 'c:\\\\users\\\\glyn\\\\appdata\\\\local\\\\temp\\\\fm14-lab\\\\proj'.\"}}}]",
+    "adopted the existing project 5b243a1f-0439-480e-9a28-347d636176ef for C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\proj",
+    "after turn 1: HEAD=fm/93d8937d, 2 refs/t3 ref(s) visible from the PRIMARY checkout — checkpoint refs are shared refs, not per-worktree",
+    "drift probe: worktree HEAD is drifted/93d8937d, T3 now records branch drifted/93d8937d (drift FOLLOWED)",
+    "treehouse return --force SUCCEEDED with 3 checkpoint ref(s) still in the repo",
+    "after thread.delete: 3 checkpoint ref(s) remain (T3 only deletes checkpoint refs on revert, never on thread deletion)",
+    "reused worktree carries 0 dirty path(s) and 3 of the previous thread's checkpoint refs (visible because the ref store is shared, not because the worktree is dirty)",
+    "thread B checkpoint refs: 5 total in the repo (each thread id gets its own refs/t3/checkpoints/<base64url threadId>/ namespace)",
+    "deleting thread B while its worktree still exists left 5 checkpoint ref(s) — same as deleting it after"
+  ]
+}

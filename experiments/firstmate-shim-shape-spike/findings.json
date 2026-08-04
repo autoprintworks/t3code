@@ -1,0 +1,127 @@
+{
+  "environment": {
+    "origin": "http://127.0.0.1:3773",
+    "node": "v22.15.0",
+    "platform": "win32",
+    "session": {
+      "sessionId": "381a8bac-2999-4f7f-85cd-3fc38b7fc296",
+      "subject": "cli-issued-session",
+      "expiresAt": "2026-09-03T05:36:11.524Z",
+      "scopes": [
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write"
+      ]
+    }
+  },
+  "phases": {
+    "processFloor": {
+      "n": 10,
+      "min": 48.0516,
+      "median": 53.1066,
+      "max": 58.3941
+    },
+    "coldCaptureHttp": {
+      "n": 10,
+      "min": 74.3909,
+      "median": 79.3461,
+      "max": 105.8107
+    },
+    "coldCaptureWs": {
+      "n": 10,
+      "min": 79.3489,
+      "median": 84.4513,
+      "max": 87.9864
+    },
+    "coldCaptureCurl": {
+      "n": 10,
+      "min": 24.3576,
+      "median": 26.9164,
+      "max": 53.3888
+    },
+    "mirrorTail": {
+      "n": 10,
+      "min": 20.9092,
+      "median": 23.628,
+      "max": 31.2802
+    },
+    "mirrorBytes": 961,
+    "mirrorAgreement": {
+      "mirrorLines": 40,
+      "captureLines": 40,
+      "lastLineMatches": true
+    },
+    "warmHttp": {
+      "n": 20,
+      "min": 1.3325,
+      "median": 1.8674,
+      "max": 23.7815
+    },
+    "serverGetConfigWarm": {
+      "n": 5,
+      "min": 1676.1378,
+      "median": 2069.0236,
+      "max": 2309.4476
+    },
+    "dispatchHttpWarm": {
+      "n": 5,
+      "min": 3.2991,
+      "median": 4.069,
+      "max": 6.0974
+    },
+    "dispatchWsWarm": {
+      "n": 5,
+      "min": 3.7527,
+      "median": 5.1907,
+      "max": 25.5039
+    },
+    "coldSendHttp": {
+      "n": 3,
+      "min": 86.5443,
+      "median": 92.0079,
+      "max": 94.0783
+    },
+    "snapshotBytes": {
+      "afterTurn1": 2157,
+      "afterTurn2": 6669,
+      "capturedLines": 41
+    },
+    "busyState": {
+      "duringTurn": {
+        "mirror": "busy",
+        "oneShot": "busy"
+      },
+      "afterTurn1": "idle",
+      "afterTurn2": "idle"
+    },
+    "mirrorFreshness": {
+      "lastItemAt": 1785822458757,
+      "fileMtime": 1785822458756.2795,
+      "lagMs": -1,
+      "lines": 167
+    },
+    "multiplex": {
+      "subscribed": 2,
+      "snapshotsSeen": 2
+    },
+    "gone": {
+      "archivedStatus": 404,
+      "archivedExitCode": 3,
+      "deletedStatus": 404
+    },
+    "badCredential": {
+      "httpStatus": 401,
+      "shimExitCode": 1,
+      "shimStderr": "error: thread snapshot 401"
+    }
+  },
+  "notes": [
+    "project.create and thread.create both went over POST /api/orchestration/dispatch — the whole spawn sequence #9 drove over the websocket is available on plain HTTP",
+    "thread.create requires branch and worktreePath (nullable, not optional) and thread.turn.start requires runtimeMode and interactionMode; omitting any of them is a 400 with an EMPTY body, which is how a schema decode failure differs from the normalizer's JSON invalid_command 400 and the engine's 500"
+  ]
+}

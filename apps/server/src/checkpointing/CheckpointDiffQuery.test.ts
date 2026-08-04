@@ -68,6 +68,7 @@ describe("CheckpointDiffQuery.layer", () => {
             });
             return "full thread diff patch";
           }),
+        listCheckpointRefs: () => Effect.succeed([]),
         deleteCheckpointRefs: () => Effect.void,
       };
 
@@ -93,6 +94,7 @@ describe("CheckpointDiffQuery.layer", () => {
                 getThreadCheckpointContextCalls += 1;
                 return Option.none();
               }),
+            getThreadWorkspaceRoot: () => Effect.succeed(Option.none()),
             getFullThreadDiffContext: () =>
               Effect.sync(() => {
                 getFullThreadDiffContextCalls += 1;
@@ -177,6 +179,7 @@ describe("CheckpointDiffQuery.layer", () => {
             });
             return "diff patch";
           }),
+        listCheckpointRefs: () => Effect.succeed([]),
         deleteCheckpointRefs: () => Effect.void,
       };
 
@@ -198,6 +201,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+            getThreadWorkspaceRoot: () => Effect.succeed(Option.none()),
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
@@ -261,6 +265,7 @@ describe("CheckpointDiffQuery.layer", () => {
             diffCheckpointsCalls.push({ ignoreWhitespace });
             return "diff patch";
           }),
+        listCheckpointRefs: () => Effect.succeed([]),
         deleteCheckpointRefs: () => Effect.void,
       };
 
@@ -282,6 +287,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+            getThreadWorkspaceRoot: () => Effect.succeed(Option.none()),
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
@@ -330,6 +336,7 @@ describe("CheckpointDiffQuery.layer", () => {
           }),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: () => Effect.succeed("diff patch"),
+        listCheckpointRefs: () => Effect.succeed([]),
         deleteCheckpointRefs: () => Effect.void,
       };
 
@@ -351,6 +358,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+            getThreadWorkspaceRoot: () => Effect.succeed(Option.none()),
             getFullThreadDiffContext: () => Effect.die("unused"),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
@@ -384,6 +392,7 @@ describe("CheckpointDiffQuery.layer", () => {
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: () => Effect.succeed(""),
+        listCheckpointRefs: () => Effect.succeed([]),
         deleteCheckpointRefs: () => Effect.void,
       };
 
@@ -405,6 +414,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+            getThreadWorkspaceRoot: () => Effect.succeed(Option.none()),
             getFullThreadDiffContext: () => Effect.succeed(Option.none()),
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),

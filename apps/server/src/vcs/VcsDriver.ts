@@ -33,6 +33,11 @@ export interface VcsDiffCheckpointsInput {
   readonly ignoreWhitespace: boolean;
 }
 
+export interface VcsListCheckpointRefsInput {
+  readonly cwd: string;
+  readonly refPrefix: string;
+}
+
 export interface VcsDeleteCheckpointRefsInput {
   readonly cwd: string;
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
@@ -47,6 +52,9 @@ export interface VcsCheckpointOps {
     input: VcsRestoreCheckpointInput,
   ) => Effect.Effect<boolean, VcsError>;
   readonly diffCheckpoints: (input: VcsDiffCheckpointsInput) => Effect.Effect<string, VcsError>;
+  readonly listCheckpointRefs: (
+    input: VcsListCheckpointRefsInput,
+  ) => Effect.Effect<ReadonlyArray<CheckpointRef>, VcsError>;
   readonly deleteCheckpointRefs: (
     input: VcsDeleteCheckpointRefsInput,
   ) => Effect.Effect<void, VcsError>;

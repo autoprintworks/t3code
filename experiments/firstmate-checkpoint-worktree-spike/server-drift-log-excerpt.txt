@@ -1,0 +1,29 @@
+74:[06:30:28.281] INFO (#337): thread branch followed worktree checkout
+75-  {
+76-    threadId: '94286d44-e3b9-4087-b2ef-5ecd7f60f62a',
+77-    previousBranch: 'start/94286d44',
+78-    branch: 'drift/94286d44'
+--
+81:[06:30:59.053] INFO (#337): thread branch followed worktree checkout
+82-  {
+83-    threadId: '0b411fd8-58cd-4021-a9a6-7fa968947a41',
+84-    previousBranch: 'start/0b411fd8',
+85-    branch: 'drift/0b411fd8'
+--
+88:[06:33:48.000] INFO (#337): thread branch followed worktree checkout
+89-  {
+90-    threadId: '93d8937d-3c6f-483c-b76a-538c501b0ab4',
+91-    previousBranch: 'fm/93d8937d',
+92-    branch: 'drifted/93d8937d'
+--
+96:[06:35:30.721] INFO (#337): thread branch followed worktree checkout
+97-  {
+98-    threadId: '6fc472c9-061a-434d-a951-1cb8b7911738',
+99-    previousBranch: 'start/6fc472c9',
+100-    branch: 'drift/6fc472c9'
+--
+103:[06:36:04.575] INFO (#337): thread branch followed worktree checkout
+104-  {
+105-    threadId: '3ab4fe91-aadf-42db-8aa5-13075d2eadeb',
+106-    previousBranch: 'start/3ab4fe91',
+107-    branch: 'drift/3ab4fe91'

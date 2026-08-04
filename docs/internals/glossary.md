@@ -128,6 +128,8 @@ A saved snapshot of a thread workspace at a particular turn. In practice it is a
 
 The durable identifier for a filesystem checkpoint, stored as a Git ref. It is typed in [the contracts][1], constructed in [Utils.ts][22], and used by [CheckpointStore.ts][19].
 
+Every ref a thread captures lives under `refs/t3/checkpoints/<base64url thread id>/`. That namespace is not one of Git's per-worktree ref namespaces, so refs a worktree-backed thread captures are written to the project's common ref store and survive `git worktree remove`. Because the refs are real Git refs, `git gc` never reclaims the working-tree snapshots they pin — so the refs have to be swept explicitly. Deleting a thread does that: [ThreadDeletionReactor.ts][25] enumerates the thread's namespace against the project's workspace root and drops every ref in it, which makes the thread's turn snapshots unrecoverable.
+
 #### Checkpoint baseline
 
 The starting checkpoint for diffing a thread timeline. This flow is surfaced through [RuntimeReceiptBus.ts][13], coordinated in [CheckpointReactor.ts][6], and supported by [Utils.ts][22].
@@ -179,3 +181,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts
