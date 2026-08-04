@@ -23,11 +23,18 @@ same way.
    `titleSeed` is optional on `thread.turn.start`. Omit it and `fm-<ID>` is permanent. That makes
    `t3_thread_title=fm-<ID>` a **sound** detector: it changes only when a human changes it.
 
-So: **check it, warn, never gate on it.** The gate is existence, not identity. Concretely —
-`target_exists` reads presence in the shell snapshot (an archived or deleted thread is simply
-absent, §4); the title comparison is reported by the session-start digest and by nothing else
-(§5); `agent_state` ships `unverified`, so no recovery is licensed (§6); and no operation
-refuses because a thread got renamed (§5).
+So: **check it, and act — but only on the watcher.** The gate is existence, not identity.
+Concretely — `target_exists` reads presence in the shell snapshot (an archived or deleted thread
+is simply absent, §4); a renamed thread sets firstmate's existing **`captain-held`** status, which
+puts the watcher on its long cadence and pokes nothing, while `fm-send` and teardown keep working
+(§5); a drifted `worktreePath` reads as *the endpoint does not exist* (§5); `agent_state` ships
+`unverified`, so no recovery is licensed (§6).
+
+> **Amended 2026-08-04**, after the maintainer pushed back on the original report-only verdict.
+> The amendment is confined to §5 and §8.3; §§1-4, 6 and the HTTP finding stand unchanged.
+> §5 previously argued report-only on the grounds that T3 is the tmux case and firstmate's tmux
+> arm does not refuse on a renamed window. That precedent does not transfer, for the reason
+> given in §5.1.
 
 **And the finding that outruns the ticket.** #7 concluded that "`/ws` is the only orchestration
 surface — there is no HTTP read", and #1 records the open decision that follows from it: whether
@@ -210,8 +217,8 @@ record rather than a gap to close.
 
 ## 5. Which operations check, and what a mismatch does
 
-**Gate on existence, on every op. Report identity, in the digest only. Refuse nothing because of
-a rename.**
+**Gate on existence, on every op. On a rename, stop the watcher and nothing else. On a drifted
+`worktreePath`, read the endpoint as gone.**
 
 The existence gate is not optional and not new: cmux, zellij and herdr all call their
 `target_ready` first in every op (`firstmate/bin/backends/zellij.sh:433,457,471`,
@@ -228,45 +235,109 @@ absent fails the op, loudly, at the caller.
 **The title is not part of that gate**, for one reason: in T3 the title is not the address.
 `threadId` is, on `thread.turn.start`, `thread.session.stop`, `thread.archive`,
 `thread.meta.update` and every other command, and it is immutable — #8 established T3 burns
-thread ids permanently. So a renamed thread is still perfectly addressable, and refusing a send
-because the captain relabelled it would refuse an operation that would have worked. That is the
-tmux case from §1(b), not the cmux case from §1(c), and firstmate's tmux arm does not refuse on a
-renamed window either — it targets the stable id and carries on.
+thread ids permanently. So a renamed thread is still perfectly addressable, and refusing an op
+because the captain relabelled it would refuse an operation that would have worked.
 
-**Why check at all, then.** Because it is free. The title arrives in the same GET that already
-answers existence and busy-state, so the comparison costs zero calls. And it is the only signal
-that separates *"the captain has taken this thread over"* from *"the crewmate is slow"* — which is
-precisely the kind of thing firstmate's session-start digest exists to put in front of a human.
+But *not gating* is not the same as *not acting*, and the two were conflated in this document's
+first draft.
 
-**Where it surfaces.** The digest, and nowhere else. `firstmate/bin/fm-session-start.sh:351-377`
-already prints one identity line per task and is the one place firstmate reports endpoint
-identity to a person. The watcher polls every few seconds
-(`firstmate/bin/fm-watch.sh:881`), so a per-op stderr warning would repeat the same line for
-hours. Concretely, the digest arm should print alongside the existing `endpoint:` line:
+### 5.1 Why tmux's "carry on" does not transfer
+
+The original verdict here was report-only, reasoning that T3 is the stable-id case of §1(b) and
+that firstmate's tmux arm does not refuse on a renamed window — it targets the window id and
+carries on. That is true of tmux and it does not generalise, because of *why* tmux renames
+happen.
+
+`automatic-rename` fires when the pane's foreground process changes. The rename is **mechanical
+noise**, which is precisely why `firstmate/bin/backends/tmux.sh:92-93` pins it off: it carries no
+information about intent, so there is nothing to act on. In T3 there is no automatic rename at
+all (§2 — `canReplaceThreadTitle` refuses every title that is neither `"New thread"` nor the
+caller's own `titleSeed`). **Every rename in T3 is a human deliberately typing a new name.** Same
+event, inverted signal-to-noise. Inheriting tmux's indifference would be inheriting a response to
+a different signal.
+
+### 5.2 What acting costs if firstmate does not
+
+The autonomous driver is the watcher, and #10 measured what it does to a thread a human is
+using:
+
+- a poke is **indistinguishable from the captain's own typing** — `ThreadMessageSentPayload`
+  carries no source, origin or actor field, so no client can tell them apart, and #20 records the
+  consequence (on a deliberately light run, six pokes against two genuine user messages, 75% of
+  the captain's own side of the conversation was watcher traffic);
+- **a busy mate is not refused, just late** — the poke steers into the live SDK loop
+  (`apps/server/src/provider/Layers/ClaudeAdapter.ts:3729-3735`) and lands as a new turn 38 s
+  later.
+
+So a watcher polling a thread the captain has adopted is not noise. It is a second driver
+steering the same agent, in a conversation where the captain cannot tell which messages are
+theirs.
+
+### 5.3 The action: `captain-held`, and only for the watcher
+
+Three ops, three answers:
+
+| op | on a detected rename | why |
+| --- | --- | --- |
+| **watcher** (`fm-watch.sh`, `fm-supervise-daemon.sh`) | **back off** | the autonomous driver, and the whole hazard (§5.2) |
+| **`fm-send`** | unchanged, still works | directed by the first mate; refusing removes its ability to say "I see you have taken this over, here is the context" |
+| **teardown** | unchanged, still works | refusing strands a treehouse lease, and #13's archive-based teardown reads honestly either way |
+
+**Reuse firstmate's existing state; do not invent a refusal.** `captain-held`
+(`firstmate/bin/fm-classify-lib.sh:131-141`) already means exactly "the captain owns this now,
+stop escalating". `fm-watch.sh:1021` and `:875` route a `captain-held` task onto the bounded pause
+cadence via `handle_paused_stale` instead of poking it, and
+`firstmate/bin/fm-supervise-daemon.sh:392,1264` treats it as a non-wedge status. Nothing is torn
+down.
+
+**This also answers the obvious objection.** A captain who renames a thread for a trivial reason
+("fm-abc123 — the flaky test one") would, under a naive implementation, silently lose supervision
+of a crewmate that still needs it. `captain-held` is **finite**: `fm-watch.sh:149-154` puts an
+unchanged hold on a cadence "longer than the wedge threshold, but finite so a forgotten hold
+cannot rot invisibly", and re-surfaces it. Supervision degrades rather than stopping, which is
+what makes acting safe here rather than reckless.
+
+**The one genuine invention, stated plainly.** `captain-held` is today *declared* by the crewmate
+in its own status stream — `fm-decision-hold.sh:330` appends the line — and is never *inferred*
+from the endpoint. Making a detected rename set it would be the first time firstmate infers that
+status rather than reading it. That is a small extension of an existing state with the right
+semantics, and it is a much smaller invention than a new refusal path would be. It should be
+written as a status line through the same append path, so every existing reader
+(`status_is_paused_or_captain_held`, the digest, the daemon) picks it up with no further change.
+
+### 5.4 `worktreePath` drift is a different verdict: gone
+
+The second mutable identity field is the dangerous one, and it does **not** map to
+`captain-held`. `apps/web/src/components/BranchToolbarBranchSelector.tsx:155-171`: when the
+captain picks a different branch in the toolbar, the client first
+`stopThreadSession({ threadId })` if the worktree path changed, then dispatches
+`thread.meta.update { branch, worktreePath }`. `apps/web/src/components/ChatView.tsx:4135` can set
+`worktreePath: null` outright after a checkout switch.
+
+That is not "the captain is helping with this task". The provider session is stopped and the
+thread now points somewhere other than the treehouse lease firstmate spawned it into — the
+endpoint firstmate addressed is not there any more. **That is §1(c)'s cmux rule exactly**: where
+the recorded identity no longer matches the live one, the target does not exist. So a drifted
+`worktreePath` fails `target_exists`, the digest prints `endpoint: dead`, and §6's `unverified`
+still licenses no automatic recovery.
+
+### 5.5 Where it surfaces
+
+The digest keeps its line either way — `firstmate/bin/fm-session-start.sh:351-377` is the one
+place firstmate reports endpoint identity to a person, and the status line alone is easy to miss:
 
 ```
 endpoint: alive (backend=t3 window=<threadId>)
-endpoint: alive, RENAMED by hand (backend=t3 window=<threadId> title='<live>' expected='fm-<ID>')
+endpoint: alive, RENAMED by hand -> captain-held (backend=t3 window=<threadId> title='<live>' expected='fm-<ID>')
+endpoint: dead (backend=t3 window=<threadId> worktree re-pointed to '<live>')
 ```
 
 Signature-wise, `t3.sh`'s ops still take `[expected-label]` as their last argument for conformance
 with `fm_backend_capture`/`send_key`/`send_text_submit`
-(`firstmate/bin/fm-backend.sh:778,796,816`), which already thread `EXPECTED_LABEL` from every
-call site. `t3.sh` accepts it and uses it for the report, not the gate — the same shape as the
-backends that report `unknown` for `composer_state` rather than inventing one
-(`fm-backend.sh:904-916`).
-
-**A second identity field deserves the same line, and it is the dangerous one.**
-`worktreePath` is mutable from the GUI and its mutation is *destructive*, unlike a rename.
-`apps/web/src/components/BranchToolbarBranchSelector.tsx:155-171`: when the captain picks a
-different branch in the toolbar, the client first
-`stopThreadSession({ threadId })` if the worktree path changed, then dispatches
-`thread.meta.update { branch, worktreePath }`. That kills the crewmate's provider session and
-re-points the thread out of its treehouse lease in one gesture.
-`apps/web/src/components/ChatView.tsx:4135` can set `worktreePath: null` outright after a checkout
-switch. A `worktreePath` that no longer equals the lease is the strongest available evidence that
-the thread is no longer firstmate's, and it should be reported the same way — it is the same GET,
-the same line.
+(`firstmate/bin/fm-backend.sh:778,796,816`), which already thread `EXPECTED_LABEL` from every call
+site. `t3.sh` accepts it and uses it to classify, not to gate. A per-op stderr warning is still
+wrong — `fm-watch.sh:881` polls every few seconds and would repeat the same line for hours; the
+`captain-held` status line is written once, on transition.
 
 ## 6. `agent_state`: `unverified`, so no recovery
 
@@ -293,12 +364,15 @@ unchanged.
 3. **`busy_state`** — `session.status` + `hasPendingApprovals`/`hasPendingUserInput` off the same
    payload, per #7's classifier. No bridge process (§3).
 4. **`agent_state`** — no arm; `unverified` (§6).
-5. **Identity report** — compare `title` to `fm-<ID>` and `worktreePath` to the recorded lease;
-   surface both on the session-start digest's `endpoint:` line and nowhere else (§5).
+5. **Identity check, two verdicts** (§5). Compare `title` to `fm-<ID>` and `worktreePath` to the
+   recorded lease, off the same payload. A drifted `worktreePath` fails `target_exists` (§5.4). A
+   changed `title` writes one `captain-held` status line on transition, which backs the watcher
+   off without touching `fm-send` or teardown (§5.3). Both show on the digest's `endpoint:` line.
 6. **Spawn** — `thread.create { title: "fm-<ID>" }` and `thread.turn.start` **without
    `titleSeed`**, so T3 never renames it (§2). Record `t3_thread_title=fm-<ID>` and
    `worktree_lease=1` in `state/<id>.meta` per #8.
-7. **Gate nothing on the title.** Ops address `threadId` and succeed on a renamed thread (§5).
+7. **Gate nothing on the title.** Ops address `threadId` and succeed on a renamed thread; the
+   watcher stands down by status, not by refusal (§5.3).
 
 ## 8. Open questions and contradictions
 
@@ -311,12 +385,17 @@ unchanged.
    simpler than holding a socket, but it is a poll: the watcher's latency becomes its interval.
    #10 measured a cold-process socket round trip at 36-62 ms, so the two are closer in cost than
    expected. Genuinely open, and now a performance question rather than an architectural one.
-3. **Should firstmate report a rename at all, or act on it?** §5 says report. The argument for
-   acting — refusing further sends once the captain has adopted a thread, so two supervisors do
-   not drive one crewmate — is not absurd, and #9's "neither surface owns the thread" cuts both
-   ways. Fidelity decides it for v1 (firstmate's tmux arm does not refuse on a renamed window),
-   but if the captain-adoption case turns out to be common in practice this is the first thing to
-   revisit.
+3. ~~**Should firstmate report a rename at all, or act on it?**~~ **Closed 2026-08-04: act, on
+   the watcher only.** The maintainer's call, against this document's first draft. The reasoning
+   is now §5.1-5.3: the tmux precedent the original verdict rested on does not transfer, because
+   a tmux rename is mechanical noise while a T3 rename is always deliberate; and #10/#20's
+   measurements make an unattended watcher poking an adopted thread a second driver rather than
+   mere noise. What remains genuinely open is narrower — **should a `captain-held` inferred from
+   a rename ever clear itself?** If the captain renames the thread back, or renames it to
+   something still containing the id, firstmate would today stay held until the bounded cadence
+   re-surfaces it (`fm-watch.sh:149-154`). Auto-clearing on a restored title is one line and is
+   probably right, but it is the kind of automatic adoption `docs/herdr-backend.md:96` warns
+   against, so it wants a deliberate decision rather than a default.
 4. **`fm_backend_kill`'s signature does not carry `[expected-label]`**
    (`firstmate/bin/fm-backend.sh:836`), yet `fm-teardown.sh:1264,1336` passes four arguments and
    cmux's kill reads `${3:-}` as the label (`cmux.sh:639-642`). The extra arguments reach the
