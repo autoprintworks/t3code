@@ -1,0 +1,964 @@
+[
+  {
+    "at": 17,
+    "kind": "snapshot",
+    "scenario": "setup",
+    "snapshotSequence": 2754,
+    "session": null,
+    "latestTurn": null
+  },
+  {
+    "at": 17,
+    "kind": "synchronized",
+    "scenario": "setup"
+  },
+  {
+    "at": 238,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.message-sent",
+    "sequence": 2755,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "messageId": "dbc6a352-0f64-4794-9850-06dce25b3fcb",
+      "role": "user",
+      "text": "Reply with exactly the word: ok. Use no tools.",
+      "attachments": [],
+      "turnId": null,
+      "streaming": false,
+      "createdAt": "2026-08-04T01:33:10.046Z",
+      "updatedAt": "2026-08-04T01:33:10.046Z"
+    }
+  },
+  {
+    "at": 900,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.session-set",
+    "sequence": 2758,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "starting",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:10.046Z"
+      }
+    }
+  },
+  {
+    "at": 1295,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.session-set",
+    "sequence": 2759,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "starting",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:11.152Z"
+      }
+    }
+  },
+  {
+    "at": 1301,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.session-set",
+    "sequence": 2760,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "starting",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:11.163Z"
+      }
+    }
+  },
+  {
+    "at": 1303,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.session-set",
+    "sequence": 2761,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "starting",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:11.163Z"
+      }
+    }
+  },
+  {
+    "at": 2398,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.session-set",
+    "sequence": 2762,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": "13db86e6-7c01-44be-9e8f-1d0c22df54d5",
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:12.228Z"
+      }
+    }
+  },
+  {
+    "at": 2764,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.session-set",
+    "sequence": 2763,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": "13db86e6-7c01-44be-9e8f-1d0c22df54d5",
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:12.630Z"
+      }
+    }
+  },
+  {
+    "at": 2784,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.session-set",
+    "sequence": 2764,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": "13db86e6-7c01-44be-9e8f-1d0c22df54d5",
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:12.631Z"
+      }
+    }
+  },
+  {
+    "at": 5015,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.message-sent",
+    "sequence": 2765,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "messageId": "assistant:94ae3e30-d8f6-40f6-a69d-a6931a0e9eb5",
+      "role": "assistant",
+      "text": "ok",
+      "turnId": "13db86e6-7c01-44be-9e8f-1d0c22df54d5",
+      "streaming": true,
+      "createdAt": "2026-08-04T01:33:14.886Z",
+      "updatedAt": "2026-08-04T01:33:14.886Z"
+    }
+  },
+  {
+    "at": 5016,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.message-sent",
+    "sequence": 2766,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "messageId": "assistant:94ae3e30-d8f6-40f6-a69d-a6931a0e9eb5",
+      "role": "assistant",
+      "text": "",
+      "turnId": "13db86e6-7c01-44be-9e8f-1d0c22df54d5",
+      "streaming": false,
+      "createdAt": "2026-08-04T01:33:14.886Z",
+      "updatedAt": "2026-08-04T01:33:14.886Z"
+    }
+  },
+  {
+    "at": 5036,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.activity-appended",
+    "sequence": 2767,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "2a9d0c4e-2c95-4841-b403-e6510adfa7e6",
+        "tone": "info",
+        "kind": "context-window.updated",
+        "summary": "Context window updated",
+        "payload": {
+          "usedTokens": 29650,
+          "lastUsedTokens": 29650,
+          "inputTokens": 29634,
+          "outputTokens": 16,
+          "maxTokens": 1000000
+        },
+        "turnId": "13db86e6-7c01-44be-9e8f-1d0c22df54d5",
+        "createdAt": "2026-08-04T01:33:14.906Z"
+      }
+    }
+  },
+  {
+    "at": 5763,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.activity-appended",
+    "sequence": 2768,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "80c00022-3083-434b-8d41-507ae00d4581",
+        "tone": "info",
+        "kind": "context-window.updated",
+        "summary": "Context window updated",
+        "payload": {
+          "usedTokens": 29634,
+          "lastUsedTokens": 29634,
+          "totalProcessedTokens": 29650,
+          "maxTokens": 1000000,
+          "compactsAutomatically": true
+        },
+        "turnId": "13db86e6-7c01-44be-9e8f-1d0c22df54d5",
+        "createdAt": "2026-08-04T01:33:15.633Z"
+      }
+    }
+  },
+  {
+    "at": 5764,
+    "kind": "event",
+    "scenario": "1-turn runs and completes",
+    "type": "thread.session-set",
+    "sequence": 2769,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "ready",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:15.633Z"
+      }
+    }
+  },
+  {
+    "at": 7875,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.message-sent",
+    "sequence": 2770,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "messageId": "369f2239-4dec-48b8-91e9-a284b8509a1e",
+      "role": "user",
+      "text": "Use the Write tool to create a file named probe.txt in the current directory containing the single line `firstmate-approval-probe`. Do not ask me anything first, and do not use any other tool.",
+      "attachments": [],
+      "turnId": null,
+      "streaming": false,
+      "createdAt": "2026-08-04T01:33:17.726Z",
+      "updatedAt": "2026-08-04T01:33:17.726Z"
+    }
+  },
+  {
+    "at": 7901,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.session-set",
+    "sequence": 2772,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "starting",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:17.726Z"
+      }
+    }
+  },
+  {
+    "at": 8317,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.session-set",
+    "sequence": 2773,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:18.187Z"
+      }
+    }
+  },
+  {
+    "at": 8383,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.session-set",
+    "sequence": 2774,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:18.255Z"
+      }
+    }
+  },
+  {
+    "at": 11091,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2775,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "5932e415-a5e3-4760-86be-768385b4066c",
+        "tone": "tool",
+        "kind": "tool.started",
+        "summary": "File change started",
+        "payload": {
+          "itemType": "file_change",
+          "detail": "Write: {}"
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:20.964Z"
+      }
+    }
+  },
+  {
+    "at": 11811,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2776,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "53eda5ee-349f-4c53-bbd3-22650b3cbb58",
+        "tone": "tool",
+        "kind": "tool.updated",
+        "summary": "File change",
+        "payload": {
+          "itemType": "file_change",
+          "status": "inProgress",
+          "detail": "Write: {\"file_path\":\"C:\\\\Users\\\\Glyn\\\\AppData\\\\Local\\\\Temp\\\\fm-busy-uiPNSH\\\\probe.txt\",\"content\":\"firstmate-approval-probe\\n\"}",
+          "data": {}
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:21.682Z"
+      }
+    }
+  },
+  {
+    "at": 11836,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2777,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "ca83e8a1-20f8-4c21-89ee-7ae11272b47a",
+        "tone": "info",
+        "kind": "context-window.updated",
+        "summary": "Context window updated",
+        "payload": {
+          "usedTokens": 29829,
+          "lastUsedTokens": 29829,
+          "inputTokens": 29711,
+          "outputTokens": 118,
+          "maxTokens": 1000000
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:21.709Z"
+      }
+    }
+  },
+  {
+    "at": 11918,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2778,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "bea8ea1b-bac0-46a9-a975-061bdf9ca138",
+        "tone": "approval",
+        "kind": "approval.requested",
+        "summary": "File-change approval requested",
+        "payload": {
+          "requestId": "afce9ffe-ea67-4724-8cf6-0b82d472038a",
+          "requestKind": "file-change",
+          "requestType": "file_change_approval",
+          "detail": "Write: {\"file_path\":\"C:\\\\Users\\\\Glyn\\\\AppData\\\\Local\\\\Temp\\\\fm-busy-uiPNSH\\\\probe.txt\",\"content\":\"firstmate-approval-probe\\n\"}"
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:21.789Z"
+      }
+    }
+  },
+  {
+    "at": 15100,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2780,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "942b9165-8420-4eff-9860-0dccf4f5b822",
+        "tone": "approval",
+        "kind": "approval.resolved",
+        "summary": "Approval resolved",
+        "payload": {
+          "requestId": "afce9ffe-ea67-4724-8cf6-0b82d472038a",
+          "requestKind": "file-change",
+          "requestType": "file_change_approval",
+          "decision": "accept"
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:24.974Z"
+      }
+    }
+  },
+  {
+    "at": 15165,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2781,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "43174032-7f2f-442e-bd6c-0ed678bd3c04",
+        "tone": "tool",
+        "kind": "tool.updated",
+        "summary": "File change",
+        "payload": {
+          "itemType": "file_change",
+          "status": "inProgress",
+          "detail": "Write: {\"file_path\":\"C:\\\\Users\\\\Glyn\\\\AppData\\\\Local\\\\Temp\\\\fm-busy-uiPNSH\\\\probe.txt\",\"content\":\"firstmate-approval-probe\\n\"}",
+          "data": {}
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:25.038Z"
+      }
+    }
+  },
+  {
+    "at": 15196,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2782,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "682299b8-8a40-4bb0-83ec-4f9f119b1b9a",
+        "tone": "tool",
+        "kind": "tool.completed",
+        "summary": "File change",
+        "payload": {
+          "itemType": "file_change",
+          "detail": "Write: {\"file_path\":\"C:\\\\Users\\\\Glyn\\\\AppData\\\\Local\\\\Temp\\\\fm-busy-uiPNSH\\\\probe.txt\",\"content\":\"firstmate-approval-probe\\n\"}",
+          "data": {}
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:25.038Z"
+      }
+    }
+  },
+  {
+    "at": 15197,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.session-set",
+    "sequence": 2783,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:25.042Z"
+      }
+    }
+  },
+  {
+    "at": 17119,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.message-sent",
+    "sequence": 2784,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "messageId": "assistant:d596c542-03ab-467d-8ed5-b8748c7d87ab",
+      "role": "assistant",
+      "text": "Done — created `probe.txt` in the current directory with the single line `firstmate-approval-probe`.",
+      "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+      "streaming": true,
+      "createdAt": "2026-08-04T01:33:26.990Z",
+      "updatedAt": "2026-08-04T01:33:26.990Z"
+    }
+  },
+  {
+    "at": 17120,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.message-sent",
+    "sequence": 2785,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "messageId": "assistant:d596c542-03ab-467d-8ed5-b8748c7d87ab",
+      "role": "assistant",
+      "text": "",
+      "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+      "streaming": false,
+      "createdAt": "2026-08-04T01:33:26.990Z",
+      "updatedAt": "2026-08-04T01:33:26.990Z"
+    }
+  },
+  {
+    "at": 17148,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2786,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "9053b607-ab6c-4cb0-ac0c-8e3b5cdcb9d7",
+        "tone": "info",
+        "kind": "context-window.updated",
+        "summary": "Context window updated",
+        "payload": {
+          "usedTokens": 29933,
+          "lastUsedTokens": 29933,
+          "inputTokens": 29898,
+          "outputTokens": 35,
+          "maxTokens": 1000000
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:27.015Z"
+      }
+    }
+  },
+  {
+    "at": 17902,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.activity-appended",
+    "sequence": 2787,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "6e031c60-5077-495b-9291-9d888f9a926c",
+        "tone": "info",
+        "kind": "context-window.updated",
+        "summary": "Context window updated",
+        "payload": {
+          "usedTokens": 29898,
+          "lastUsedTokens": 29898,
+          "totalProcessedTokens": 59762,
+          "maxTokens": 1000000,
+          "compactsAutomatically": true
+        },
+        "turnId": "6d429cde-87e5-49a4-a245-7843bab911ee",
+        "createdAt": "2026-08-04T01:33:27.771Z"
+      }
+    }
+  },
+  {
+    "at": 17903,
+    "kind": "event",
+    "scenario": "2-awaiting approval",
+    "type": "thread.session-set",
+    "sequence": 2788,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "ready",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:27.771Z"
+      }
+    }
+  },
+  {
+    "at": 20103,
+    "kind": "event",
+    "scenario": "3-awaiting user input",
+    "type": "thread.message-sent",
+    "sequence": 2789,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "messageId": "0be392b8-0836-4e85-a92b-ae17f40df7da",
+      "role": "user",
+      "text": "Use the AskUserQuestion tool right now to ask me which colour I prefer, with the options red and blue. Ask before doing anything else.",
+      "attachments": [],
+      "turnId": null,
+      "streaming": false,
+      "createdAt": "2026-08-04T01:33:29.949Z",
+      "updatedAt": "2026-08-04T01:33:29.949Z"
+    }
+  },
+  {
+    "at": 20171,
+    "kind": "event",
+    "scenario": "3-awaiting user input",
+    "type": "thread.session-set",
+    "sequence": 2791,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "starting",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:29.949Z"
+      }
+    }
+  },
+  {
+    "at": 20496,
+    "kind": "event",
+    "scenario": "3-awaiting user input",
+    "type": "thread.session-set",
+    "sequence": 2792,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": "619c10a4-ad74-4601-b0ca-221b9501f861",
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:30.363Z"
+      }
+    }
+  },
+  {
+    "at": 20554,
+    "kind": "event",
+    "scenario": "3-awaiting user input",
+    "type": "thread.session-set",
+    "sequence": 2793,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": "619c10a4-ad74-4601-b0ca-221b9501f861",
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:30.425Z"
+      }
+    }
+  },
+  {
+    "at": 23000,
+    "kind": "event",
+    "scenario": "3-awaiting user input",
+    "type": "thread.activity-appended",
+    "sequence": 2794,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "e5e4726c-471e-4b76-a092-cb47f0375426",
+        "tone": "tool",
+        "kind": "tool.started",
+        "summary": "Tool call started",
+        "payload": {
+          "itemType": "dynamic_tool_call",
+          "detail": "AskUserQuestion: {}"
+        },
+        "turnId": "619c10a4-ad74-4601-b0ca-221b9501f861",
+        "createdAt": "2026-08-04T01:33:32.875Z"
+      }
+    }
+  },
+  {
+    "at": 24001,
+    "kind": "event",
+    "scenario": "3-awaiting user input",
+    "type": "thread.activity-appended",
+    "sequence": 2795,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "6e516853-1bf7-43f2-ac82-3c92e549d848",
+        "tone": "tool",
+        "kind": "tool.updated",
+        "summary": "Tool call",
+        "payload": {
+          "itemType": "dynamic_tool_call",
+          "status": "inProgress",
+          "detail": "AskUserQuestion: {\"questions\":[{\"question\":\"Which colour do you prefer?\",\"header\":\"Colour\",\"options\":[{\"label\":\"Red\",\"description\":\"Prefer the colour red\"},{\"label\":\"Blue\",\"desc...",
+          "data": {}
+        },
+        "turnId": "619c10a4-ad74-4601-b0ca-221b9501f861",
+        "createdAt": "2026-08-04T01:33:33.873Z"
+      }
+    }
+  },
+  {
+    "at": 24027,
+    "kind": "event",
+    "scenario": "3-awaiting user input",
+    "type": "thread.activity-appended",
+    "sequence": 2796,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "e595a8f9-10ea-4063-8e5d-7de5968e137f",
+        "tone": "info",
+        "kind": "context-window.updated",
+        "summary": "Context window updated",
+        "payload": {
+          "usedTokens": 30170,
+          "lastUsedTokens": 30170,
+          "totalProcessedTokens": 59762,
+          "inputTokens": 29980,
+          "outputTokens": 190,
+          "maxTokens": 1000000
+        },
+        "turnId": "619c10a4-ad74-4601-b0ca-221b9501f861",
+        "createdAt": "2026-08-04T01:33:33.901Z"
+      }
+    }
+  },
+  {
+    "at": 24062,
+    "kind": "event",
+    "scenario": "3-awaiting user input",
+    "type": "thread.activity-appended",
+    "sequence": 2797,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "45809550-4224-45be-b855-0943bf58eb9c",
+        "tone": "info",
+        "kind": "user-input.requested",
+        "summary": "User input requested",
+        "payload": {
+          "requestId": "272535bd-c9b6-4fbb-ab10-402f11b7dff2",
+          "questions": [
+            {
+              "id": "Which colour do you prefer?",
+              "header": "Colour",
+              "question": "Which colour do you prefer?",
+              "options": [
+                {
+                  "label": "Red",
+                  "description": "Prefer the colour red"
+                },
+                {
+                  "label": "Blue",
+                  "description": "Prefer the colour blue"
+                }
+              ],
+              "multiSelect": false
+            }
+          ]
+        },
+        "turnId": "619c10a4-ad74-4601-b0ca-221b9501f861",
+        "createdAt": "2026-08-04T01:33:33.935Z"
+      }
+    }
+  },
+  {
+    "at": 27801,
+    "kind": "event",
+    "scenario": "5-session stop",
+    "type": "thread.activity-appended",
+    "sequence": 2799,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "38a843ca-e7f9-4fc2-a5fe-95d6911cead7",
+        "tone": "tool",
+        "kind": "tool.completed",
+        "summary": "Tool call",
+        "payload": {
+          "itemType": "dynamic_tool_call",
+          "detail": "AskUserQuestion: {\"questions\":[{\"question\":\"Which colour do you prefer?\",\"header\":\"Colour\",\"options\":[{\"label\":\"Red\",\"description\":\"Prefer the colour red\"},{\"label\":\"Blue\",\"desc...",
+          "data": {}
+        },
+        "turnId": "619c10a4-ad74-4601-b0ca-221b9501f861",
+        "createdAt": "2026-08-04T01:33:37.667Z"
+      }
+    }
+  },
+  {
+    "at": 27809,
+    "kind": "event",
+    "scenario": "5-session stop",
+    "type": "thread.activity-appended",
+    "sequence": 2800,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "db0ef657-2fa4-4208-8cef-02ef77731988",
+        "tone": "info",
+        "kind": "context-window.updated",
+        "summary": "Context window updated",
+        "payload": {
+          "usedTokens": 29980,
+          "lastUsedTokens": 29980,
+          "totalProcessedTokens": 59762,
+          "maxTokens": 1000000,
+          "compactsAutomatically": true
+        },
+        "turnId": "619c10a4-ad74-4601-b0ca-221b9501f861",
+        "createdAt": "2026-08-04T01:33:37.667Z"
+      }
+    }
+  },
+  {
+    "at": 27809,
+    "kind": "event",
+    "scenario": "5-session stop",
+    "type": "thread.session-set",
+    "sequence": 2801,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "ready",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:37.667Z"
+      }
+    }
+  },
+  {
+    "at": 27814,
+    "kind": "event",
+    "scenario": "5-session stop",
+    "type": "thread.activity-appended",
+    "sequence": 2802,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "activity": {
+        "id": "14ff0038-8c77-4480-bc19-7514cf23a199",
+        "tone": "info",
+        "kind": "user-input.resolved",
+        "summary": "User input submitted",
+        "payload": {
+          "requestId": "272535bd-c9b6-4fbb-ab10-402f11b7dff2",
+          "answers": {}
+        },
+        "turnId": null,
+        "createdAt": "2026-08-04T01:33:37.670Z"
+      }
+    }
+  },
+  {
+    "at": 29806,
+    "kind": "event",
+    "scenario": "5-session stop",
+    "type": "thread.session-set",
+    "sequence": 2803,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "stopped",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:37.027Z"
+      }
+    }
+  },
+  {
+    "at": 29807,
+    "kind": "event",
+    "scenario": "5-session stop",
+    "type": "thread.session-set",
+    "sequence": 2804,
+    "payload": {
+      "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+      "session": {
+        "threadId": "a5c68ff3-6733-4652-800e-22b05ccca586",
+        "status": "stopped",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "approval-required",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T01:33:39.672Z"
+      }
+    }
+  }
+]
