@@ -42,6 +42,9 @@ export default defineConfig({
       "apps/web/src/lib/vendor/qrcodegen.ts",
       "apps/mobile/uniwind-types.d.ts",
       "*.icon/**",
+      // Throwaway probes and the transcripts they captured. Reformatting a
+      // recorded result rewrites evidence, so spikes stay as they landed.
+      "experiments/**",
     ],
     sortPackageJson: {},
     overrides: [
