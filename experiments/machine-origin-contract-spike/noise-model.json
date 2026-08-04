@@ -1,0 +1,55 @@
+{
+  "source": "experiments/firstmate-watcher-poke-spike/findings.json",
+  "total": {
+    "rows": 15,
+    "chars": 12195,
+    "userRows": 8,
+    "machineRows": 6
+  },
+  "policies": [
+    {
+      "name": "A: hide machine user rows",
+      "description": "Exactly what one optional origin field on the message enables today.",
+      "rowsRemoved": 6,
+      "rowsRemovedPct": 40,
+      "charsRemoved": 1058,
+      "rowsRemaining": 9,
+      "orphanedAssistantRows": 5,
+      "orphanedPctOfRemaining": 56,
+      "minimapEntriesRemaining": 2
+    },
+    {
+      "name": "B: hide machine rows and their replies",
+      "description": "What a reader actually wants. Requires a prompt-to-reply link.",
+      "rowsRemoved": 11,
+      "rowsRemovedPct": 73,
+      "charsRemoved": 1343,
+      "rowsRemaining": 4,
+      "orphanedAssistantRows": 0,
+      "orphanedPctOfRemaining": 0,
+      "minimapEntriesRemaining": 2
+    },
+    {
+      "name": "C: minimap only",
+      "description": "Keep every row, drop machine rows from the navigation rail.",
+      "rowsRemoved": 0,
+      "rowsRemovedPct": 0,
+      "charsRemoved": 0,
+      "rowsRemaining": 15,
+      "orphanedAssistantRows": 0,
+      "orphanedPctOfRemaining": 0,
+      "minimapEntriesRemaining": 2
+    }
+  ],
+  "adjacencyHeuristic": {
+    "pairs": 7,
+    "misattributed": 1,
+    "detail": [
+      {
+        "assistantRow": 13,
+        "guessed": 12,
+        "actual": 11
+      }
+    ]
+  }
+}

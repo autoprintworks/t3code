@@ -1,0 +1,370 @@
+{
+  "effect": "4.0.0-beta.102",
+  "node": "v22.15.0",
+  "ranAt": "2026-08-04T06:07:25.342Z",
+  "results": [
+    {
+      "group": "new-client-to-old-server",
+      "name": "command with unknown origin decodes on old schema",
+      "question": "Does an excess property fail the decode or get dropped?",
+      "input": {
+        "type": "thread.turn.start",
+        "commandId": "cmd_1",
+        "threadId": "thr_1",
+        "message": {
+          "messageId": "msg_1",
+          "role": "user",
+          "text": "poke",
+          "attachments": []
+        },
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "origin": "machine"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": false,
+        "origin": null,
+        "keys": ["commandId", "createdAt", "message", "threadId", "type"]
+      }
+    },
+    {
+      "group": "new-client-to-old-server",
+      "name": "nested unknown origin on message sub-struct",
+      "question": "Same question one level down, where the field arguably belongs.",
+      "input": {
+        "type": "thread.turn.start",
+        "commandId": "cmd_1",
+        "threadId": "thr_1",
+        "message": {
+          "messageId": "msg_1",
+          "role": "user",
+          "text": "poke",
+          "attachments": [],
+          "origin": "machine"
+        },
+        "createdAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": false,
+        "origin": null,
+        "keys": ["commandId", "createdAt", "message", "threadId", "type"]
+      }
+    },
+    {
+      "group": "old-server-to-new-client",
+      "name": "payload without origin, closed optional",
+      "question": "Does a pre-change payload still decode, and what is origin then?",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": false,
+        "origin": null,
+        "keys": [
+          "createdAt",
+          "messageId",
+          "role",
+          "streaming",
+          "text",
+          "threadId",
+          "turnId",
+          "updatedAt"
+        ]
+      }
+    },
+    {
+      "group": "old-server-to-new-client",
+      "name": "payload without origin, closed + decoding default",
+      "question": "Does a pre-change payload still decode, and what is origin then?",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": true,
+        "origin": "user",
+        "keys": [
+          "createdAt",
+          "messageId",
+          "origin",
+          "role",
+          "streaming",
+          "text",
+          "threadId",
+          "turnId",
+          "updatedAt"
+        ]
+      }
+    },
+    {
+      "group": "old-server-to-new-client",
+      "name": "payload without origin, open optional",
+      "question": "Does a pre-change payload still decode, and what is origin then?",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": false,
+        "origin": null,
+        "keys": [
+          "createdAt",
+          "messageId",
+          "role",
+          "streaming",
+          "text",
+          "threadId",
+          "turnId",
+          "updatedAt"
+        ]
+      }
+    },
+    {
+      "group": "event-replay",
+      "name": "historical message row, closed optional",
+      "question": "What does a message written before the field look like after replay?",
+      "input": {
+        "id": "msg_1",
+        "role": "user",
+        "text": "poke",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": false,
+        "origin": null,
+        "keys": ["createdAt", "id", "role", "streaming", "text", "turnId", "updatedAt"]
+      }
+    },
+    {
+      "group": "event-replay",
+      "name": "historical message row, closed + decoding default",
+      "question": "What does a message written before the field look like after replay?",
+      "input": {
+        "id": "msg_1",
+        "role": "user",
+        "text": "poke",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": true,
+        "origin": "user",
+        "keys": ["createdAt", "id", "origin", "role", "streaming", "text", "turnId", "updatedAt"]
+      }
+    },
+    {
+      "group": "third-value",
+      "name": "closed union meets an unknown origin value",
+      "question": "Can a third origin be added later without breaking older peers?",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z",
+        "origin": "cron"
+      },
+      "outcome": {
+        "decoded": false,
+        "error": "Expected \"user\" | \"machine\", got \"cron\""
+      }
+    },
+    {
+      "group": "third-value",
+      "name": "open string meets an unknown origin value",
+      "question": "Same, if the field is an open string instead.",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z",
+        "origin": "cron"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": true,
+        "origin": "cron",
+        "keys": [
+          "createdAt",
+          "messageId",
+          "origin",
+          "role",
+          "streaming",
+          "text",
+          "threadId",
+          "turnId",
+          "updatedAt"
+        ]
+      }
+    },
+    {
+      "group": "third-value",
+      "name": "closed union with decoding default meets an unknown origin value",
+      "question": "Does a decoding default rescue an out-of-range value, or only a missing one?",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z",
+        "origin": "cron"
+      },
+      "outcome": {
+        "decoded": false,
+        "error": "Expected \"user\" | \"machine\", got \"cron\""
+      }
+    },
+    {
+      "group": "explicit-undefined",
+      "name": "origin: undefined, closed optional",
+      "question": "Is an explicitly-undefined field the same as a missing one?",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": true,
+        "origin": null,
+        "keys": [
+          "createdAt",
+          "messageId",
+          "origin",
+          "role",
+          "streaming",
+          "text",
+          "threadId",
+          "turnId",
+          "updatedAt"
+        ]
+      }
+    },
+    {
+      "group": "explicit-undefined",
+      "name": "origin: undefined, closed + decoding default",
+      "question": "Same, for the defaulted encoding.",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": true,
+        "origin": "user",
+        "keys": [
+          "createdAt",
+          "messageId",
+          "origin",
+          "role",
+          "streaming",
+          "text",
+          "threadId",
+          "turnId",
+          "updatedAt"
+        ]
+      }
+    },
+    {
+      "group": "null-origin",
+      "name": "origin: null, closed optional",
+      "question": "Does null decode, or does it need Schema.NullOr?",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z",
+        "origin": null
+      },
+      "outcome": {
+        "decoded": false,
+        "error": "Expected \"user\" | \"machine\" | undefined, got null"
+      }
+    },
+    {
+      "group": "encode",
+      "name": "absent origin does not materialise on encode",
+      "question": "Does encoding add an explicit origin key when the field is unset?",
+      "input": {
+        "threadId": "thr_1",
+        "messageId": "msg_1",
+        "role": "user",
+        "text": "FIRSTMATE_OP: v1 watcher: WAKE stale:fm-crew-a1b2c3",
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T10:00:00.000Z",
+        "updatedAt": "2026-08-04T10:00:00.000Z"
+      },
+      "outcome": {
+        "decoded": true,
+        "hasOrigin": false,
+        "serialised": false,
+        "keys": [
+          "createdAt",
+          "messageId",
+          "role",
+          "streaming",
+          "text",
+          "threadId",
+          "turnId",
+          "updatedAt"
+        ]
+      }
+    }
+  ]
+}
