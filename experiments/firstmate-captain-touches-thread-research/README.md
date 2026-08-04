@@ -305,6 +305,12 @@ semantics, and it is a much smaller invention than a new refusal path would be. 
 written as a status line through the same append path, so every existing reader
 (`status_is_paused_or_captain_held`, the digest, the daemon) picks it up with no further change.
 
+**The inference is one-way: set only, never cleared.** firstmate infers the hold because no other
+signal for it exists; it does not infer the release, because one already does — `captain-held` is
+a status verb and clears the way every status verb clears, on the crewmate's or the first mate's
+next status line, with `fm-watch.sh:149-154`'s finite cadence as the backstop. A restored title
+does **not** clear it (§8.3).
+
 ### 5.4 `worktreePath` drift is a different verdict: gone
 
 The second mutable identity field is the dangerous one, and it does **not** map to
@@ -390,12 +396,28 @@ unchanged.
    is now §5.1-5.3: the tmux precedent the original verdict rested on does not transfer, because
    a tmux rename is mechanical noise while a T3 rename is always deliberate; and #10/#20's
    measurements make an unattended watcher poking an adopted thread a second driver rather than
-   mere noise. What remains genuinely open is narrower — **should a `captain-held` inferred from
-   a rename ever clear itself?** If the captain renames the thread back, or renames it to
-   something still containing the id, firstmate would today stay held until the bounded cadence
-   re-surfaces it (`fm-watch.sh:149-154`). Auto-clearing on a restored title is one line and is
-   probably right, but it is the kind of automatic adoption `docs/herdr-backend.md:96` warns
-   against, so it wants a deliberate decision rather than a default.
+   mere noise.
+
+   **The follow-on — should an inferred `captain-held` clear itself when the title is restored? —
+   is also closed, 2026-08-04: no.** Three reasons, in order of weight.
+
+   - **The failure modes are asymmetric.** Holding wrongly costs a delayed poke and is
+     self-healing, because `fm-watch.sh:149-154` re-surfaces an unchanged hold on the bounded
+     cadence. Clearing wrongly resumes autonomous poking of a thread a human may still be in —
+     the §5.2 hazard, reintroduced. When one direction is bounded and self-correcting and the
+     other is not, stay held.
+   - **A non-inferred clear already exists.** `captain-held` is a status verb and clears the way
+     every status verb clears: the crewmate's next status line, or the first mate's. §5.3 infers
+     the *set* only because no other signal exists; the *clear* needs no inference, and adding
+     one where firstmate already has a declaration is what `docs/herdr-backend.md:96` warns
+     against.
+   - **The trigger would rarely fire.** Auto-clearing keys on the captain renaming the thread
+     back to `fm-<ID>` character-for-character. A captain who is finished with a thread stops
+     looking at it; they do not tidy the title back. The branch would be rare and ambiguous when
+     it did fire.
+
+   Net: the hold is sticky, clears through the status stream, and the finite cadence is the
+   backstop. One fewer inference than the alternative.
 4. **`fm_backend_kill`'s signature does not carry `[expected-label]`**
    (`firstmate/bin/fm-backend.sh:836`), yet `fm-teardown.sh:1264,1336` passes four arguments and
    cmux's kill reads `${3:-}` as the label (`cmux.sh:639-642`). The extra arguments reach the
