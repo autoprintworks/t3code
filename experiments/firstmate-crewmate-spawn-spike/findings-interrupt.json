@@ -1,0 +1,412 @@
+{
+  "dispatches": [
+    {
+      "label": "project.create",
+      "type": "project.create",
+      "ok": true
+    },
+    {
+      "label": "thread.create",
+      "type": "thread.create",
+      "ok": true
+    },
+    {
+      "label": "thread.turn.start (launch brief)",
+      "type": "thread.turn.start",
+      "ok": true
+    },
+    {
+      "label": "thread.turn.interrupt",
+      "type": "thread.turn.interrupt",
+      "ok": true
+    },
+    {
+      "label": "thread.session.stop",
+      "type": "thread.session.stop",
+      "ok": true
+    },
+    {
+      "label": "thread.delete",
+      "type": "thread.delete",
+      "ok": true
+    },
+    {
+      "label": "project.delete",
+      "type": "project.delete",
+      "ok": true
+    }
+  ],
+  "refusals": [],
+  "improvised": [
+    {
+      "field": "modelSelection",
+      "value": {
+        "instanceId": "claudeAgent",
+        "model": "claude-fable-5"
+      },
+      "why": "firstmate's model=default/effort=default are absence markers, not a request for a default (#12) — the backend must resolve a concrete instance and slug itself"
+    },
+    {
+      "field": "title",
+      "value": "fm-7d9559b2",
+      "why": "T3 requires a non-empty thread title; firstmate has no title concept, so #8's fm-<ID> convention supplies one"
+    },
+    {
+      "field": "interactionMode",
+      "value": "default",
+      "why": "firstmate has no analogue — it is a T3-only axis, so the default stands"
+    }
+  ],
+  "notes": [
+    "brief passed as 258 bytes of message text, matching claude-bg's CLAUDE_BG_PROMPT=$(cat \"$BRIEF\") (fm-spawn.sh:1766) rather than a path pointer",
+    "1 user message(s) seen on the subscription during the run; 0 of them arrived from the desktop GUI rather than from this script — which is the proof that both surfaces share one thread",
+    "interrupt settled the session as error"
+  ],
+  "summary": {
+    "taskId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+    "threadTitle": "fm-7d9559b2",
+    "projectId": "b2b602b7-eb46-4640-8f21-6c59aeaadd3a",
+    "projAbs": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-crew-vb9dHR",
+    "worktree": "C:\\Users\\Glyn\\.treehouse\\fm-crew-vb9dHR-1bfae2\\1\\fm-crew-vb9dHR",
+    "branch": "HEAD",
+    "leaseMechanism": "treehouse",
+    "modelSelection": {
+      "instanceId": "claudeAgent",
+      "model": "claude-fable-5"
+    },
+    "streamItems": 20,
+    "accepted": 7,
+    "refused": 0
+  },
+  "stream": [
+    {
+      "at": 2881,
+      "kind": "snapshot",
+      "session": null
+    },
+    {
+      "at": 2882,
+      "kind": "synchronized"
+    },
+    {
+      "at": 3127,
+      "kind": "event",
+      "type": "thread.message-sent",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "messageId": "457759db-7b11-4124-a26d-64fdd1844733",
+        "role": "user",
+        "text": "# Launch brief — task 7d9559b2-a7a9-4859-b2cb-e74a318fb684\n\nYou are a crewmate. Do not use any tools at all.\n\nCount from 1 to 2000, one number per line, writing each number out as a word\nas well as a numeral (for example: `1 — one`). Go all the way to 2000.\n",
+        "attachments": [],
+        "turnId": null,
+        "streaming": false,
+        "createdAt": "2026-08-04T02:12:34.241Z",
+        "updatedAt": "2026-08-04T02:12:34.241Z"
+      }
+    },
+    {
+      "at": 3245,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "starting",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": null,
+          "updatedAt": "2026-08-04T02:12:34.241Z"
+        }
+      }
+    },
+    {
+      "at": 3270,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "starting",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": null,
+          "updatedAt": "2026-08-04T02:12:34.444Z"
+        }
+      }
+    },
+    {
+      "at": 3278,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "starting",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": null,
+          "updatedAt": "2026-08-04T02:12:34.453Z"
+        }
+      }
+    },
+    {
+      "at": 3335,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "starting",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": null,
+          "updatedAt": "2026-08-04T02:12:34.453Z"
+        }
+      }
+    },
+    {
+      "at": 4535,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "running",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+          "lastError": null,
+          "updatedAt": "2026-08-04T02:12:35.723Z"
+        }
+      }
+    },
+    {
+      "at": 4635,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "running",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+          "lastError": null,
+          "updatedAt": "2026-08-04T02:12:35.823Z"
+        }
+      }
+    },
+    {
+      "at": 4640,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "running",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+          "lastError": null,
+          "updatedAt": "2026-08-04T02:12:35.824Z"
+        }
+      }
+    },
+    {
+      "at": 18319,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "error",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+          "lastError": "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null",
+          "updatedAt": "2026-08-04T02:12:49.509Z"
+        }
+      }
+    },
+    {
+      "at": 18321,
+      "kind": "event",
+      "type": "thread.activity-appended",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "activity": {
+          "id": "acf8bf76-5fa1-4d3b-9086-b58fb76701f2",
+          "tone": "error",
+          "kind": "runtime.error",
+          "summary": "Runtime error",
+          "payload": {
+            "message": "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"
+          },
+          "turnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+          "createdAt": "2026-08-04T02:12:49.509Z"
+        }
+      }
+    },
+    {
+      "at": 19019,
+      "kind": "event",
+      "type": "thread.message-sent",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "messageId": "assistant:cdda2707-7245-46cd-90d4-d719bb19e0cf",
+        "role": "assistant",
+        "text": "1 — one\n2 — two\n3 — three\n4 — four\n5 — five\n6 — six\n7 — seven\n8 — eight\n9 — nine\n10 — ten\n11 — eleven\n12 — twelve\n13 — thirteen\n14 — fourteen\n15 — fifteen\n16 — sixteen\n17 — seventeen\n18 — eighteen\n19 — nineteen\n20 — twenty\n21 — twenty-one\n22 — twenty-two\n23 — twenty-three\n24 — twenty-four\n25 — twenty-five\n26 — twenty-six\n27 — twenty-seven\n28 — twenty-eight\n29 — twenty-nine\n30 — thirty\n31 — thirty-one\n32 — thirty-two\n33 — thirty-three\n34 — thirty-four\n35 — thirty-five\n36 — thirty-six\n37 — thirty-seven\n38 — thirty-eight\n39 — thirty-nine\n40 — forty\n41 — forty-one\n42 — forty-two\n43 — forty-three\n44 — forty-four\n45 — forty-five\n46 — forty-six\n47 — forty-seven\n48 — forty-eight\n49 — forty-nine\n50 — fifty\n51 — fifty-one\n52 — fifty-two\n53 — fifty-three\n54 — fifty-four\n55 — fifty-five\n56 — fifty-six\n57 — fifty-seven\n58 — fifty-eight\n59 — f",
+        "turnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+        "streaming": true,
+        "createdAt": "2026-08-04T02:12:50.206Z",
+        "updatedAt": "2026-08-04T02:12:50.206Z"
+      }
+    },
+    {
+      "at": 19031,
+      "kind": "event",
+      "type": "thread.message-sent",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "messageId": "assistant:cdda2707-7245-46cd-90d4-d719bb19e0cf",
+        "role": "assistant",
+        "text": "",
+        "turnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+        "streaming": false,
+        "createdAt": "2026-08-04T02:12:50.206Z",
+        "updatedAt": "2026-08-04T02:12:50.206Z"
+      }
+    },
+    {
+      "at": 19031,
+      "kind": "event",
+      "type": "thread.activity-appended",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "activity": {
+          "id": "35f6ad12-79b8-4f1f-be13-2466fad03ac0",
+          "tone": "info",
+          "kind": "context-window.updated",
+          "summary": "Context window updated",
+          "payload": {
+            "usedTokens": 29520,
+            "lastUsedTokens": 29520,
+            "maxTokens": 1000000,
+            "compactsAutomatically": true
+          },
+          "turnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+          "createdAt": "2026-08-04T02:12:50.206Z"
+        }
+      }
+    },
+    {
+      "at": 19032,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "error",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null",
+          "updatedAt": "2026-08-04T02:12:50.206Z"
+        }
+      }
+    },
+    {
+      "at": 21143,
+      "kind": "event",
+      "type": "thread.turn-diff-completed",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "turnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+        "checkpointTurnCount": 1,
+        "checkpointRef": "refs/t3/checkpoints/N2Q5NTU5YjItYTdhOS00ODU5LWIyY2ItZTc0YTMxOGZiNjg0/turn/1",
+        "status": "error",
+        "files": [],
+        "assistantMessageId": "assistant:cdda2707-7245-46cd-90d4-d719bb19e0cf",
+        "completedAt": "2026-08-04T02:12:50.206Z"
+      }
+    },
+    {
+      "at": 21146,
+      "kind": "event",
+      "type": "thread.activity-appended",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "activity": {
+          "id": "8908a2e4-a8b6-424e-bb3c-79509278f030",
+          "tone": "info",
+          "kind": "checkpoint.captured",
+          "summary": "Checkpoint captured",
+          "payload": {
+            "turnCount": 1,
+            "status": "error"
+          },
+          "turnId": "989c792d-eb12-4f88-83b9-a9f8114ab0f5",
+          "createdAt": "2026-08-04T02:12:50.206Z"
+        }
+      }
+    },
+    {
+      "at": 21764,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "stopped",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null",
+          "updatedAt": "2026-08-04T02:12:52.682Z"
+        }
+      }
+    },
+    {
+      "at": 21765,
+      "kind": "event",
+      "type": "thread.session-set",
+      "payload": {
+        "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+        "session": {
+          "threadId": "7d9559b2-a7a9-4859-b2cb-e74a318fb684",
+          "status": "stopped",
+          "providerName": "claudeAgent",
+          "providerInstanceId": "claudeAgent",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null",
+          "updatedAt": "2026-08-04T02:12:52.950Z"
+        }
+      }
+    }
+  ]
+}
