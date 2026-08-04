@@ -3,13 +3,14 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { it } from "@effect/vitest";
 import { CheckpointRef, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { afterAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect } from "vite-plus/test";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { checkpointRefsPrefixForThread } from "../../checkpointing/Utils.ts";
@@ -119,59 +120,67 @@ describe("sweepThreadCheckpointRefs", () => {
   const runSweep = (input: {
     readonly workspaceRoot: Option.Option<string>;
     readonly listed?: ReadonlyArray<CheckpointRef>;
-  }) => {
-    const calls = {
-      listed: [] as Array<CheckpointStore.ListCheckpointRefsInput>,
-      deleted: [] as Array<CheckpointStore.DeleteCheckpointRefsInput>,
-    };
-    return Effect.runPromise(
-      sweepThreadCheckpointRefs(threadId).pipe(
+  }) =>
+    Effect.gen(function* () {
+      const calls = {
+        listed: [] as Array<CheckpointStore.ListCheckpointRefsInput>,
+        deleted: [] as Array<CheckpointStore.DeleteCheckpointRefsInput>,
+      };
+      yield* sweepThreadCheckpointRefs(threadId).pipe(
         Effect.provide(
           Layer.mergeAll(
             makeProjectionLayer(input.workspaceRoot),
             makeCheckpointStoreLayer(input.listed ?? [], calls),
           ),
         ),
-      ),
-    ).then(() => calls);
-  };
-
-  it("deletes every ref the thread captured, from the project workspace root", async () => {
-    const workspaceRoot = makeWorkspaceRoot({ git: true });
-
-    const calls = await runSweep({
-      workspaceRoot: Option.some(workspaceRoot),
-      listed: [capturedRef],
+      );
+      return calls;
     });
 
-    expect(calls.listed).toEqual([{ cwd: workspaceRoot, refPrefix }]);
-    expect(calls.deleted).toEqual([{ cwd: workspaceRoot, checkpointRefs: [capturedRef] }]);
-  });
+  it.effect("deletes every ref the thread captured, from the project workspace root", () =>
+    Effect.gen(function* () {
+      const workspaceRoot = makeWorkspaceRoot({ git: true });
 
-  it("skips the delete when the thread captured no checkpoints", async () => {
-    const calls = await runSweep({
-      workspaceRoot: Option.some(makeWorkspaceRoot({ git: true })),
-      listed: [],
-    });
+      const calls = yield* runSweep({
+        workspaceRoot: Option.some(workspaceRoot),
+        listed: [capturedRef],
+      });
 
-    expect(calls.listed).toHaveLength(1);
-    expect(calls.deleted).toEqual([]);
-  });
+      expect(calls.listed).toEqual([{ cwd: workspaceRoot, refPrefix }]);
+      expect(calls.deleted).toEqual([{ cwd: workspaceRoot, checkpointRefs: [capturedRef] }]);
+    }),
+  );
 
-  it("skips workspaces that are not git repositories", async () => {
-    const calls = await runSweep({
-      workspaceRoot: Option.some(makeWorkspaceRoot({ git: false })),
-      listed: [capturedRef],
-    });
+  it.effect("skips the delete when the thread captured no checkpoints", () =>
+    Effect.gen(function* () {
+      const calls = yield* runSweep({
+        workspaceRoot: Option.some(makeWorkspaceRoot({ git: true })),
+        listed: [],
+      });
 
-    expect(calls.listed).toEqual([]);
-    expect(calls.deleted).toEqual([]);
-  });
+      expect(calls.listed).toHaveLength(1);
+      expect(calls.deleted).toEqual([]);
+    }),
+  );
 
-  it("skips threads whose project can no longer be resolved", async () => {
-    const calls = await runSweep({ workspaceRoot: Option.none(), listed: [capturedRef] });
+  it.effect("skips workspaces that are not git repositories", () =>
+    Effect.gen(function* () {
+      const calls = yield* runSweep({
+        workspaceRoot: Option.some(makeWorkspaceRoot({ git: false })),
+        listed: [capturedRef],
+      });
 
-    expect(calls.listed).toEqual([]);
-    expect(calls.deleted).toEqual([]);
-  });
+      expect(calls.listed).toEqual([]);
+      expect(calls.deleted).toEqual([]);
+    }),
+  );
+
+  it.effect("skips threads whose project can no longer be resolved", () =>
+    Effect.gen(function* () {
+      const calls = yield* runSweep({ workspaceRoot: Option.none(), listed: [capturedRef] });
+
+      expect(calls.listed).toEqual([]);
+      expect(calls.deleted).toEqual([]);
+    }),
+  );
 });
