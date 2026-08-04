@@ -401,12 +401,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.archive": {
-      yield* requireThreadNotArchived({
+      const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
+      // Archiving inside the adoption window would strand a turn the decider
+      // already accepted: the provider reactor cannot resolve an archived
+      // thread, so the turn would be dropped with no trace.
+      if (threadHasQueuedTurnStart(thread, occurredAt)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has a queued turn start and cannot be archived`,
+          }),
+        );
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -749,7 +760,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
-      const targetThread = yield* requireThread({
+      // Archive is the one lifecycle state a turn does not clear: unlike a
+      // settle or a snooze, it is deliberate, so a stale client sending into
+      // an archived thread is refused here rather than persisting a user
+      // message the provider reactor would later drop in silence.
+      const targetThread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
