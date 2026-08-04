@@ -1,0 +1,38 @@
+{
+  "results": [
+    {
+      "label": "treehouse",
+      "worktreePathSent": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj",
+      "worktreePathRecorded": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\proj\\.treehouse\\proj-196e6c\\1\\proj",
+      "pathsIdentical": true,
+      "branchRecordedAtCreate": "start/6fc472c9",
+      "branchRecordedAfterTurn": "drift/6fc472c9",
+      "branchCheckedOutAfterTurn": "drift/6fc472c9",
+      "driftFollowed": true,
+      "metaUpdatedEventsOnStream": 0,
+      "eventTypes": [
+        "thread.message-sent",
+        "thread.session-set",
+        "thread.activity-appended",
+        "thread.turn-diff-completed"
+      ]
+    },
+    {
+      "label": "plain",
+      "worktreePathSent": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\plain-wt",
+      "worktreePathRecorded": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm14-lab\\plain-wt",
+      "pathsIdentical": true,
+      "branchRecordedAtCreate": "start/3ab4fe91",
+      "branchRecordedAfterTurn": "drift/3ab4fe91",
+      "branchCheckedOutAfterTurn": "drift/3ab4fe91",
+      "driftFollowed": true,
+      "metaUpdatedEventsOnStream": 0,
+      "eventTypes": [
+        "thread.message-sent",
+        "thread.session-set",
+        "thread.activity-appended",
+        "thread.turn-diff-completed"
+      ]
+    }
+  ]
+}
