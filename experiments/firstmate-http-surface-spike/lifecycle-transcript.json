@@ -1,0 +1,450 @@
+[
+  {
+    "at": 321,
+    "kind": "baseline",
+    "threads": 1,
+    "projects": 3
+  },
+  {
+    "at": 330,
+    "kind": "dispatch",
+    "label": "project.create",
+    "status": 200,
+    "body": {
+      "sequence": 15802
+    }
+  },
+  {
+    "at": 336,
+    "kind": "dispatch",
+    "label": "thread.create",
+    "status": 200,
+    "body": {
+      "sequence": 15803
+    }
+  },
+  {
+    "at": 552,
+    "kind": "observe",
+    "label": "appears",
+    "seen": "no-session/turn=none",
+    "thread": {
+      "id": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+      "projectId": "f855a61f-3a9a-4b53-b603-9120132ed339",
+      "title": "fm-285d23ca",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5",
+        "options": [
+          {
+            "id": "effort",
+            "value": "medium"
+          },
+          {
+            "id": "contextWindow",
+            "value": "200k"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-http-yaBGOo",
+      "latestTurn": null,
+      "createdAt": "2026-08-04T21:00:19.209Z",
+      "updatedAt": "2026-08-04T21:00:19.209Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "session": null,
+      "latestUserMessageAt": null,
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "hasActionableProposedPlan": false
+    }
+  },
+  {
+    "at": 565,
+    "kind": "dispatch",
+    "label": "thread.turn.start",
+    "status": 200,
+    "body": {
+      "sequence": 15805
+    }
+  },
+  {
+    "at": 836,
+    "kind": "observe",
+    "label": "turn end",
+    "seen": "no-session/turn=none",
+    "thread": {
+      "id": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+      "projectId": "f855a61f-3a9a-4b53-b603-9120132ed339",
+      "title": "fm-285d23ca",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5",
+        "options": [
+          {
+            "id": "effort",
+            "value": "medium"
+          },
+          {
+            "id": "contextWindow",
+            "value": "200k"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-http-yaBGOo",
+      "latestTurn": null,
+      "createdAt": "2026-08-04T21:00:19.209Z",
+      "updatedAt": "2026-08-04T21:00:19.431Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "session": null,
+      "latestUserMessageAt": "2026-08-04T21:00:19.431Z",
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "hasActionableProposedPlan": false
+    }
+  },
+  {
+    "at": 1548,
+    "kind": "observe",
+    "label": "turn end",
+    "seen": "starting/turn=none",
+    "thread": {
+      "id": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+      "projectId": "f855a61f-3a9a-4b53-b603-9120132ed339",
+      "title": "fm-285d23ca",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5",
+        "options": [
+          {
+            "id": "effort",
+            "value": "medium"
+          },
+          {
+            "id": "contextWindow",
+            "value": "200k"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-http-yaBGOo",
+      "latestTurn": null,
+      "createdAt": "2026-08-04T21:00:19.209Z",
+      "updatedAt": "2026-08-04T21:00:19.768Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "session": {
+        "threadId": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+        "status": "starting",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "full-access",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T21:00:19.768Z"
+      },
+      "latestUserMessageAt": "2026-08-04T21:00:19.431Z",
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "hasActionableProposedPlan": false
+    }
+  },
+  {
+    "at": 2938,
+    "kind": "observe",
+    "label": "turn end",
+    "seen": "running/turn=running",
+    "thread": {
+      "id": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+      "projectId": "f855a61f-3a9a-4b53-b603-9120132ed339",
+      "title": "fm-285d23ca",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5",
+        "options": [
+          {
+            "id": "effort",
+            "value": "medium"
+          },
+          {
+            "id": "contextWindow",
+            "value": "200k"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-http-yaBGOo",
+      "latestTurn": {
+        "turnId": "d3bb87c0-3c66-4f83-9be5-67f4ef63ab73",
+        "state": "running",
+        "requestedAt": "2026-08-04T21:00:19.431Z",
+        "startedAt": "2026-08-04T21:00:19.431Z",
+        "completedAt": null,
+        "assistantMessageId": null
+      },
+      "createdAt": "2026-08-04T21:00:19.209Z",
+      "updatedAt": "2026-08-04T21:00:21.058Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "session": {
+        "threadId": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+        "status": "running",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "full-access",
+        "activeTurnId": "d3bb87c0-3c66-4f83-9be5-67f4ef63ab73",
+        "lastError": null,
+        "updatedAt": "2026-08-04T21:00:21.058Z"
+      },
+      "latestUserMessageAt": "2026-08-04T21:00:19.431Z",
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "hasActionableProposedPlan": false
+    }
+  },
+  {
+    "at": 6926,
+    "kind": "observe",
+    "label": "turn end",
+    "seen": "ready/turn=none",
+    "thread": {
+      "id": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+      "projectId": "f855a61f-3a9a-4b53-b603-9120132ed339",
+      "title": "fm-285d23ca",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5",
+        "options": [
+          {
+            "id": "effort",
+            "value": "medium"
+          },
+          {
+            "id": "contextWindow",
+            "value": "200k"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-http-yaBGOo",
+      "latestTurn": null,
+      "createdAt": "2026-08-04T21:00:19.209Z",
+      "updatedAt": "2026-08-04T21:00:25.104Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "session": {
+        "threadId": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+        "status": "ready",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "full-access",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T21:00:25.104Z"
+      },
+      "latestUserMessageAt": "2026-08-04T21:00:19.431Z",
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "hasActionableProposedPlan": false
+    }
+  },
+  {
+    "at": 6930,
+    "kind": "dispatch",
+    "label": "thread.session.stop",
+    "status": 200,
+    "body": {
+      "sequence": 15818
+    }
+  },
+  {
+    "at": 7100,
+    "kind": "observe",
+    "label": "stopped",
+    "seen": "ready/turn=none",
+    "thread": {
+      "id": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+      "projectId": "f855a61f-3a9a-4b53-b603-9120132ed339",
+      "title": "fm-285d23ca",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5",
+        "options": [
+          {
+            "id": "effort",
+            "value": "medium"
+          },
+          {
+            "id": "contextWindow",
+            "value": "200k"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-http-yaBGOo",
+      "latestTurn": null,
+      "createdAt": "2026-08-04T21:00:19.209Z",
+      "updatedAt": "2026-08-04T21:00:25.104Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "session": {
+        "threadId": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+        "status": "ready",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "full-access",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T21:00:25.104Z"
+      },
+      "latestUserMessageAt": "2026-08-04T21:00:19.431Z",
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "hasActionableProposedPlan": false
+    }
+  },
+  {
+    "at": 7734,
+    "kind": "observe",
+    "label": "stopped",
+    "seen": "stopped/turn=none",
+    "thread": {
+      "id": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+      "projectId": "f855a61f-3a9a-4b53-b603-9120132ed339",
+      "title": "fm-285d23ca",
+      "modelSelection": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5",
+        "options": [
+          {
+            "id": "effort",
+            "value": "medium"
+          },
+          {
+            "id": "contextWindow",
+            "value": "200k"
+          }
+        ]
+      },
+      "runtimeMode": "full-access",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-http-yaBGOo",
+      "latestTurn": null,
+      "createdAt": "2026-08-04T21:00:19.209Z",
+      "updatedAt": "2026-08-04T21:00:26.343Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "snoozedUntil": null,
+      "snoozedAt": null,
+      "session": {
+        "threadId": "285d23ca-458c-499a-b4fa-46bc5293d0bc",
+        "status": "stopped",
+        "providerName": "claudeAgent",
+        "providerInstanceId": "claudeAgent",
+        "runtimeMode": "full-access",
+        "activeTurnId": null,
+        "lastError": null,
+        "updatedAt": "2026-08-04T21:00:26.343Z"
+      },
+      "latestUserMessageAt": "2026-08-04T21:00:19.431Z",
+      "hasPendingApprovals": false,
+      "hasPendingUserInput": false,
+      "hasActionableProposedPlan": false
+    }
+  },
+  {
+    "at": 7742,
+    "kind": "dispatch",
+    "label": "thread.archive",
+    "status": 200,
+    "body": {
+      "sequence": 15821
+    }
+  },
+  {
+    "at": 7916,
+    "kind": "observe",
+    "label": "absent after archive",
+    "seen": "ABSENT",
+    "thread": null
+  },
+  {
+    "at": 7919,
+    "kind": "get-after-archive",
+    "status": 404
+  },
+  {
+    "at": 7936,
+    "kind": "dispatch",
+    "label": "thread.archive (repeat)",
+    "status": 500,
+    "body": {
+      "_tag": "EnvironmentInternalError",
+      "code": "internal_error",
+      "reason": "orchestration_dispatch_failed",
+      "traceId": "d96c21c097d3f3cc8265e3f6505a2c95"
+    }
+  },
+  {
+    "at": 7944,
+    "kind": "dispatch",
+    "label": "thread.turn.start (archived)",
+    "status": 200,
+    "body": {
+      "sequence": 15823
+    }
+  },
+  {
+    "at": 7952,
+    "kind": "dispatch",
+    "label": "thread.delete",
+    "status": 200,
+    "body": {
+      "sequence": 15824
+    }
+  },
+  {
+    "at": 7961,
+    "kind": "dispatch",
+    "label": "project.delete",
+    "status": 200,
+    "body": {
+      "sequence": 15825
+    }
+  }
+]
