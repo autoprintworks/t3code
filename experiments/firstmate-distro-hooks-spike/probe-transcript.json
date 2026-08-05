@@ -1,0 +1,56 @@
+[
+  {
+    "at": 129,
+    "kind": "project",
+    "mode": "adopted",
+    "projectId": "b95d23b1-70c2-4597-aa3c-ae7d8c459bec"
+  },
+  {
+    "at": 136,
+    "kind": "dispatch",
+    "label": "thread.create",
+    "status": 200,
+    "body": {
+      "sequence": 17506
+    }
+  },
+  {
+    "at": 259,
+    "kind": "observe",
+    "label": "appears",
+    "seen": "no-session/turn=none"
+  },
+  {
+    "at": 269,
+    "kind": "dispatch",
+    "label": "thread.turn.start",
+    "status": 200,
+    "body": {
+      "sequence": 17508
+    }
+  },
+  {
+    "at": 472,
+    "kind": "observe",
+    "label": "turn end",
+    "seen": "no-session/turn=none"
+  },
+  {
+    "at": 1630,
+    "kind": "observe",
+    "label": "turn end",
+    "seen": "starting/turn=none"
+  },
+  {
+    "at": 2795,
+    "kind": "observe",
+    "label": "turn end",
+    "seen": "running/turn=running"
+  },
+  {
+    "at": 99544,
+    "kind": "observe",
+    "label": "turn end",
+    "seen": "ready/turn=none"
+  }
+]
