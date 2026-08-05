@@ -1,0 +1,24 @@
+{
+  "instance": "spike_b",
+  "worktree": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-inst-spike\\sess-spike_b",
+  "observations": [
+    {
+      "seen": "status=no-session inst=- err=",
+      "session": null
+    },
+    {
+      "seen": "status=error inst=spike_b err=ProviderValidationError: Provider validation failed in ProviderService.startSession: Provider instance 'spike_b' is disa",
+      "session": {
+        "threadId": "dbcbbf98-474b-4974-a5ec-e31ccea8e660",
+        "status": "error",
+        "providerName": "codex",
+        "providerInstanceId": "spike_b",
+        "runtimeMode": "full-access",
+        "activeTurnId": null,
+        "lastError": "ProviderValidationError: Provider validation failed in ProviderService.startSession: Provider instance 'spike_b' is disabled in T3 Code settings.\n    at toValidationError (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:45479:9)\n    at Array.<anonymous> (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:45714:45)\n    at startSession (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85427:59)\n    at startSession (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:45690:30)\n    at ensureSessionForThread (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85507:10)\n    at ensureSessionForThread (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85350:40)\n    at processTurnStartRequested (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85771:12)\n    at processTurnStartRequested (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85597:43)\n    at processDomainEvent (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85787:46)\n    at processDomainEvent (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85755:36)",
+        "updatedAt": "2026-08-05T04:41:22.438Z"
+      }
+    }
+  ],
+  "dumps": []
+}

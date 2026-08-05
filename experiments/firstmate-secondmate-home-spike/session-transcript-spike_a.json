@@ -1,0 +1,119 @@
+{
+  "instance": "spike_a",
+  "model": "gpt-5.4",
+  "worktree": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-inst-spike\\sess-spike_a",
+  "observations": [
+    {
+      "at": 227,
+      "seen": "status=no-session inst=- sel=spike_a turn=none appr=false input=false",
+      "session": null,
+      "thread": {
+        "id": "851ae555-40f9-4085-a8f8-1dfd2380e2f6",
+        "projectId": "400f1605-2b5a-47b1-b60d-9c79c2c46198",
+        "title": "fm47-851ae555",
+        "modelSelection": {
+          "instanceId": "spike_a",
+          "model": "gpt-5.4"
+        },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": "main",
+        "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-inst-spike\\sess-spike_a",
+        "latestTurn": null,
+        "createdAt": "2026-08-05T04:42:43.209Z",
+        "updatedAt": "2026-08-05T04:42:43.215Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "session": null,
+        "latestUserMessageAt": "2026-08-05T04:42:43.215Z",
+        "hasPendingApprovals": false,
+        "hasPendingUserInput": false,
+        "hasActionableProposedPlan": false
+      }
+    },
+    {
+      "at": 761,
+      "seen": "status=stopped inst=spike_a sel=spike_a turn=none appr=false input=false",
+      "session": {
+        "threadId": "851ae555-40f9-4085-a8f8-1dfd2380e2f6",
+        "status": "stopped",
+        "providerName": "codex",
+        "providerInstanceId": "spike_a",
+        "runtimeMode": "full-access",
+        "activeTurnId": null,
+        "lastError": "ProviderAdapterProcessError: Provider adapter process error (codex) for thread 851ae555-40f9-4085-a8f8-1dfd2380e2f6: Codex App Server process exited with code 1\n    at file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:71163:74\n    at file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/node_modules/effect/dist/internal/effect.js:1378:96\n    at ~effect/Utils/internal (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/node_modules/effect/dist/Utils.js:83:14)\n    at startSession (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85427:59)\n    at startSession (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:45690:30)\n    at ensureSessionForThread (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85507:10)\n    at ensureSessionForThread (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85350:40)\n    at processTurnStartRequested (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85771:12)\n    at processTurnStartRequested (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85597:43)\n    at processDomainEvent (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85787:46)\n    at processDomainEvent (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85755:36) {\n  [cause]: CodexAppServerProcessExitedError: Codex App Server process exited with code 1\n      at Object.onSuccess (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:68955:23)\n}",
+        "updatedAt": "2026-08-05T04:42:43.215Z"
+      },
+      "thread": {
+        "id": "851ae555-40f9-4085-a8f8-1dfd2380e2f6",
+        "projectId": "400f1605-2b5a-47b1-b60d-9c79c2c46198",
+        "title": "fm47-851ae555",
+        "modelSelection": {
+          "instanceId": "spike_a",
+          "model": "gpt-5.4"
+        },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": "main",
+        "worktreePath": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-inst-spike\\sess-spike_a",
+        "latestTurn": null,
+        "createdAt": "2026-08-05T04:42:43.209Z",
+        "updatedAt": "2026-08-05T04:42:43.215Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "session": {
+          "threadId": "851ae555-40f9-4085-a8f8-1dfd2380e2f6",
+          "status": "stopped",
+          "providerName": "codex",
+          "providerInstanceId": "spike_a",
+          "runtimeMode": "full-access",
+          "activeTurnId": null,
+          "lastError": "ProviderAdapterProcessError: Provider adapter process error (codex) for thread 851ae555-40f9-4085-a8f8-1dfd2380e2f6: Codex App Server process exited with code 1\n    at file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:71163:74\n    at file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/node_modules/effect/dist/internal/effect.js:1378:96\n    at ~effect/Utils/internal (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/node_modules/effect/dist/Utils.js:83:14)\n    at startSession (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85427:59)\n    at startSession (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:45690:30)\n    at ensureSessionForThread (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85507:10)\n    at ensureSessionForThread (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85350:40)\n    at processTurnStartRequested (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85771:12)\n    at processTurnStartRequested (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85597:43)\n    at processDomainEvent (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85787:46)\n    at processDomainEvent (definition) (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:85755:36) {\n  [cause]: CodexAppServerProcessExitedError: Codex App Server process exited with code 1\n      at Object.onSuccess (file:///C:/Users/Glyn/AppData/Local/Programs/t3code/resources/app.asar.unpacked/apps/server/dist/bin.mjs:68955:23)\n}",
+          "updatedAt": "2026-08-05T04:42:43.215Z"
+        },
+        "latestUserMessageAt": "2026-08-05T04:42:43.215Z",
+        "hasPendingApprovals": false,
+        "hasPendingUserInput": false,
+        "hasActionableProposedPlan": false
+      }
+    }
+  ],
+  "dumps": [
+    {
+      "name": "a-17824.json",
+      "kind": "SESSION",
+      "ts": "2026-08-05T04:42:43.342Z",
+      "pid": 17824,
+      "ppid": 41428,
+      "argv": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-inst-spike\\sess-spike_a\\app-server",
+        "-c",
+        "mcp_servers.t3-code.url=http://127.0.0.1:3799/mcp",
+        "-c",
+        "mcp_servers.t3-code.bearer_token_env_var=\"T3_MCP_BEARER_TOKEN\""
+      ],
+      "cwd": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-inst-spike\\sess-spike_a",
+      "FM_HOME": "C:\\Users\\Glyn\\AppData\\Local\\Temp\\fm-inst-spike\\fmhome-a",
+      "CODEX_HOME": null,
+      "hasPATH": true,
+      "pathLen": 2019,
+      "envKeyCount": 86,
+      "SPIKE_TAG": "a",
+      "SPIKE_SECRET": "s3cret-value-0047",
+      "sampleHostVars": [
+        "USERPROFILE",
+        "APPDATA",
+        "SystemRoot",
+        "TEMP",
+        "COMSPEC"
+      ]
+    }
+  ]
+}
