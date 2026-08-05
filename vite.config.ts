@@ -22,7 +22,10 @@ export default defineConfig({
   },
   staged: {
     // Formatter only for now — no lint or typecheck on commit.
-    "*": "vp fmt",
+    // experiments/ is excluded from fmt below, so an experiments-only commit
+    // would hand `vp fmt` a file list it discards entirely and fail on
+    // "expected at least one target file".
+    "!experiments/**": "vp fmt",
   },
   fmt: {
     ignorePatterns: [
