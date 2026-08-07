@@ -46,11 +46,13 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   setDockIcon: () => Effect.void,
   appendCommandLineSwitch: () => Effect.void,
   onBeforeQuitForUpdate: () => Effect.void,
+  removeCommandLineSwitch: () => Effect.void,
   on: () => Effect.void,
 } satisfies ElectronApp.ElectronApp["Service"]);
 
 const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
   pickFolder: () => Effect.succeed(Option.none()),
+  pickFiles: () => Effect.succeed([]),
   confirm: () => Effect.succeed(false),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
