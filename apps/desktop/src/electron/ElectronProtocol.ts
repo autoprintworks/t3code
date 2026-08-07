@@ -9,8 +9,12 @@ import * as Scope from "effect/Scope";
 import * as Electron from "electron";
 
 export const DESKTOP_HOST = "app";
-export const DESKTOP_PRODUCTION_SCHEME = "t3code";
-export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+// Distinct from upstream's "t3code": this is registered as the OS-level default
+// protocol handler (app.setAsDefaultProtocolClient), so sharing the scheme with an
+// official T3 Code install would let whichever app registered most recently steal
+// the other's t3code:// links.
+export const DESKTOP_PRODUCTION_SCHEME = "t3code-fork";
+export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-fork-dev";
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;

@@ -20,7 +20,10 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // our own handler entry pointing at the current AppImage and claim the
 // scheme default via xdg-mime, exactly what the file manager's "set as
 // default" checkbox would record in mimeapps.list.
-export const URL_HANDLER_DESKTOP_ENTRY_NAME = "t3code-url-handler.desktop";
+// Distinct from upstream's "t3code-url-handler.desktop": this file lands in the
+// shared ~/.local/share/applications directory, so an official T3 Code install
+// using the same name would have its handler entry silently overwritten.
+export const URL_HANDLER_DESKTOP_ENTRY_NAME = "t3code-fork-url-handler.desktop";
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 

@@ -75,7 +75,7 @@ authenticated.
 
 - Default build is unsigned/not notarized for local sharing.
 - The DMG build uses `assets/prod/black-macos-1024.png` as the production app icon source.
-- Desktop production windows load the bundled UI from the `t3code://app/` root URL (not a
+- Desktop production windows load the bundled UI from the `t3code-fork://app/` root URL (not a
   `127.0.0.1` document URL, and not an explicit `index.html` path).
 - Desktop packaging includes `apps/server/dist` (the `t3` backend) and starts it on loopback with an
   auth token for WebSocket/API traffic.
@@ -91,6 +91,23 @@ authenticated.
   `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME`, and `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`.
 - Azure authentication env vars are also required (for example service principal with secret):
   `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`.
+
+### Desktop NSIS (Windows) packaging notes
+
+- Default build is unsigned. `--signed` uses Azure Trusted Signing (see the `.dmg` notes above for the
+  required env vars' Windows equivalents).
+- Needs a Rust toolchain with the `x86_64-pc-windows-msvc` target, and MSVC build tools able to link
+  it, to build the resource-monitor helper via `cargo build --release`.
+- The staged package is named `t3code-fork` and `appId` is `com.autoprintworks.t3code`
+  (`scripts/build-desktop-artifact.ts`), deliberately distinct from upstream's `t3code` /
+  `com.t3tools.t3code`. electron-builder's default NSIS installer derives its install directory from the
+  staged package name, so this fork's installer targets `%LOCALAPPDATA%\Programs\t3code-fork`, not
+  `%LOCALAPPDATA%\Programs\t3code` where an official release lives. See
+  [Fork Windows build](../operations/fork-windows-build.md) for the full identity/database separation and
+  why it exists.
+- `--wsl-prebuild <path>` (or `T3CODE_DESKTOP_WSL_PREBUILD`) bundles a prebuilt Linux `pty.node` for the
+  WSL backend. Omitting it is a warning, not a build failure — the packaged app just won't have a
+  working WSL backend.
 
 ## Browser development
 

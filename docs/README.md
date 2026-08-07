@@ -36,6 +36,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 ### Runbooks
 
 - [Release](./operations/release.md)
+- [Fork Windows build](./operations/fork-windows-build.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)

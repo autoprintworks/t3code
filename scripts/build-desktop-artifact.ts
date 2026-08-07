@@ -35,7 +35,10 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+// Deliberately distinct from upstream's "com.t3tools.t3code": this fork never goes
+// upstream (#34), so its builds must not collide with an official T3 Code install's
+// appId, install directory, or protocol handler. See docs/operations/fork-windows-build.md.
+const DESKTOP_APP_ID = "com.autoprintworks.t3code";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1517,8 +1520,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+    ? "T3 Code Fork (Nightly)"
+    : (desktopPackageJson.productName ?? "T3 Code Fork");
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -1570,8 +1573,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: "T3 Code Fork",
+          schemes: ["t3code-fork", "t3code-fork-dev"],
         },
       ],
       ...(macPasskeySigning
@@ -1586,7 +1589,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code",
+      executableName: "t3code-fork",
       icon: "icons",
       category: "Development",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
@@ -1594,13 +1597,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // t3code:// OAuth callbacks to the app.
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: "T3 Code Fork",
+          schemes: ["t3code-fork", "t3code-fork-dev"],
         },
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: "t3code-fork",
         },
       },
     };
@@ -1912,7 +1915,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     stageDependencies,
   );
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    // Also distinct from upstream's "t3code": electron-builder derives the default
+    // NSIS install directory from this field, not productName, so this is what keeps
+    // this fork's installer out of an official release's install folder.
+    name: "t3code-fork",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,

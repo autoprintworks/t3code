@@ -78,7 +78,10 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+// Deliberately distinct from upstream's "T3 Code": this fork never goes upstream
+// (#34), so its identity, default data directory, and protocol scheme must not
+// collide with an official T3 Code install. See docs/operations/fork-windows-build.md.
+const APP_BASE_NAME = "T3 Code Fork";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -150,7 +153,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
   const configuredBaseDir = config.t3Home;
-  const baseDir = Option.getOrElse(configuredBaseDir, () => path.join(homeDirectory, ".t3"));
+  // ".t3-fork", not ".t3": an official T3 Code install already owns "~/.t3" on this
+  // machine. Defaulting there too would mean every build of this fork reads and
+  // writes the same live database as the official app with no way to opt out.
+  // T3CODE_HOME still overrides this for anyone who wants the shared thread list.
+  const baseDir = Option.getOrElse(configuredBaseDir, () => path.join(homeDirectory, ".t3-fork"));
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const branding = resolveDesktopAppBranding({
@@ -162,7 +169,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
   );
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
+  const userDataDirName = isDevelopment ? "t3code-fork-dev" : "t3code-fork";
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
@@ -207,10 +214,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment ? "com.autoprintworks.t3code.dev" : "com.autoprintworks.t3code",
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxDesktopEntryName: isDevelopment ? "t3code-fork-dev.desktop" : "t3code-fork.desktop",
+    linuxWmClass: isDevelopment ? "t3code-fork-dev" : "t3code-fork",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,
