@@ -631,10 +631,15 @@ export const PreviewAutomationResponse = Schema.Struct({
 });
 export type PreviewAutomationResponse = typeof PreviewAutomationResponse.Type;
 
+/**
+ * Raised when an MCP credential is missing the capability a toolkit needs. The
+ * `capability` field names one of the MCP capabilities, so this error covers
+ * every toolkit gate rather than the preview toolkit alone.
+ */
 export class PreviewAutomationUnavailableError extends Schema.TaggedErrorClass<PreviewAutomationUnavailableError>()(
   "PreviewAutomationUnavailableError",
   {
-    capability: Schema.Literal("preview"),
+    capability: Schema.Literals(["preview", "fleet"]),
     environmentId: EnvironmentId,
     threadId: ThreadId,
     providerSessionId: TrimmedNonEmptyString,

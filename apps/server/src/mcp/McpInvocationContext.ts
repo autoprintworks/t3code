@@ -7,7 +7,11 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview";
+/**
+ * Capabilities a minted MCP credential can carry. Each toolkit gates on exactly
+ * one of these through `requireMcpCapability`.
+ */
+export type McpCapability = "preview" | "fleet";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
