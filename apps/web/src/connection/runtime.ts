@@ -9,6 +9,7 @@ import {
   backgroundActivityObserverLayer,
   backgroundActivityReporterLayer,
 } from "../lib/backgroundActivityReporter";
+import { ClientTracingLive } from "../observability/clientTracing";
 import { connectionPlatformLayer } from "./platform";
 
 const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
@@ -23,14 +24,22 @@ type ConnectionLayerSource =
   | typeof runtimeContextLayer
   | typeof connectionPlatformLayer
   | typeof backgroundActivityObserverLayer
-  | typeof backgroundActivityReporterLayer;
+  | typeof backgroundActivityReporterLayer
+  | typeof ClientTracingLive;
 
+// ClientTracingLive routes every span created inside the connection runtime (RPC session
+// connect/probe, ping/pong, socket close - see packages/client-runtime/src/rpc/session.ts) to
+// the configured client tracing exporter, which posts to the primary environment's
+// /api/observability/v1/traces and lands in that server's trace file as otlp-span records.
+// Without this, connection spans use the ambient no-op Tracer and never leave the process -
+// see docs/operations/observability.md.
 const providedClientConnectionLayer = Layer.merge(Connection.layer, snapshotLoaderLayer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       runtimeContextLayer,
       providedConnectionPlatformLayer,
       backgroundActivityObserverLayer,
+      ClientTracingLive,
     ),
   ),
 );

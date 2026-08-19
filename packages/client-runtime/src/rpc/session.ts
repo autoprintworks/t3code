@@ -1,10 +1,13 @@
 import { type ServerConfig, WS_METHODS } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
+import type * as Tracer from "effect/Tracer";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as Socket from "effect/unstable/socket/Socket";
@@ -21,6 +24,37 @@ import {
 } from "../connection/model.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
+
+// Diagnosing intermittent client disconnects (banner: "<label> disconnected.") needs to
+// distinguish "who closed this socket, with what code" from "was the Pong late", rather than
+// inferring both from the generic transport error. `clientRuntime.connection.rpcSession.socket`
+// covers one connect() call end to end: it opens when connect() starts, gains a Ping/Pong event
+// per keepalive tick, and ends with the native WebSocket close code/reason once the socket dies.
+// Cheap by construction — the pinger only ticks every 5s (RpcClient.js), so a socket open for the
+// median 46s observed in the field produces well under a dozen span events.
+const SOCKET_SPAN_NAME = "clientRuntime.connection.rpcSession.socket";
+
+interface WebSocketCloseInfo {
+  readonly code: number;
+  readonly reason: string;
+  readonly wasClean: boolean;
+}
+
+// Wraps the platform WebSocketConstructor so we observe the native 'close' event (code + reason)
+// directly from the browser/Electron/RN WebSocket object. Effect's RpcClient protocol layer
+// consumes the same WebSocket instance unmodified; we only attach an extra listener.
+function instrumentWebSocketConstructor(
+  base: (url: string, protocols?: string | Array<string>) => globalThis.WebSocket,
+  onClose: (info: WebSocketCloseInfo) => void,
+): (url: string, protocols?: string | Array<string>) => globalThis.WebSocket {
+  return (url, protocols) => {
+    const ws = base(url, protocols);
+    ws.addEventListener("close", (event) => {
+      onClose({ code: event.code, reason: event.reason, wasClean: event.wasClean });
+    });
+    return ws;
+  };
+}
 
 export interface RpcSession {
   readonly client: WsRpcProtocolClient;
@@ -67,6 +101,7 @@ function mapSessionRpcError(error: InitialConfigError | ProbeError): ConnectionA
 
 export const make = Effect.gen(function* () {
   const webSocketConstructor = yield* Socket.WebSocketConstructor;
+  const clock = yield* Clock.Clock;
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
     yield* Effect.annotateCurrentSpan({
@@ -75,26 +110,82 @@ export const make = Effect.gen(function* () {
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+
+    const socketSpan: Tracer.Span = yield* Effect.makeSpan(SOCKET_SPAN_NAME, {
+      attributes: {
+        "connection.environment.id": connection.environmentId,
+        "connection.label": connection.label,
+      },
+    });
+    let closeInfo: WebSocketCloseInfo | undefined;
+    let lastPingSentAtMs: number | undefined;
+    let lastPongAtMs: number | undefined;
+
+    const instrumentedWebSocketConstructor = instrumentWebSocketConstructor(
+      webSocketConstructor,
+      (info) => {
+        closeInfo = info;
+        socketSpan.event("clientRuntime.connection.socket.closed", clock.currentTimeNanosUnsafe(), {
+          "connection.close.code": info.code,
+          "connection.close.reason": info.reason,
+          "connection.close.wasClean": info.wasClean,
+        });
+      },
+    );
+
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
+      onPing: Effect.sync(() => {
+        lastPingSentAtMs = clock.currentTimeMillisUnsafe();
+        socketSpan.event("clientRuntime.connection.socket.ping", clock.currentTimeNanosUnsafe());
+      }),
+      onPong: Effect.sync(() => {
+        const now = clock.currentTimeMillisUnsafe();
+        lastPongAtMs = now;
+        socketSpan.event("clientRuntime.connection.socket.pong", clock.currentTimeNanosUnsafe(), {
+          ...(lastPingSentAtMs === undefined
+            ? {}
+            : { "connection.pong.rttMs": now - lastPingSentAtMs }),
+        });
+      }),
+      onPingTimeout: Effect.sync(() => {
+        const now = clock.currentTimeMillisUnsafe();
+        socketSpan.event(
+          "clientRuntime.connection.socket.pingTimeout",
+          clock.currentTimeNanosUnsafe(),
+          {
+            ...(lastPongAtMs === undefined
+              ? {}
+              : { "connection.pingTimeout.msSinceLastPong": now - lastPongAtMs }),
+          },
+        );
+      }),
       onDisconnect: Deferred.isDone(connected).pipe(
-        Effect.flatMap((wasConnected) =>
-          Deferred.fail(
-            disconnected,
-            new ConnectionTransientErrorClass({
-              reason: "transport",
-              detail: wasConnected
-                ? `${connection.label} disconnected.`
-                : `${connection.label} could not establish a WebSocket connection.`,
-            }),
-          ),
-        ),
+        Effect.flatMap((wasConnected) => {
+          const error = new ConnectionTransientErrorClass({
+            reason: "transport",
+            detail: wasConnected
+              ? `${connection.label} disconnected.`
+              : `${connection.label} could not establish a WebSocket connection.`,
+          });
+          return Effect.sync(() => {
+            socketSpan.attribute("connection.wasConnected", wasConnected);
+            if (closeInfo !== undefined) {
+              socketSpan.attribute("connection.close.code", closeInfo.code);
+              socketSpan.attribute("connection.close.reason", closeInfo.reason);
+              socketSpan.attribute("connection.close.wasClean", closeInfo.wasClean);
+            }
+            socketSpan.end(clock.currentTimeNanosUnsafe(), Exit.fail(error));
+          }).pipe(Effect.andThen(Deferred.fail(disconnected, error)));
+        }),
         Effect.asVoid,
       ),
     });
     const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
+    }).pipe(
+      Layer.provide(Layer.succeed(Socket.WebSocketConstructor, instrumentedWebSocketConstructor)),
+    );
     const protocolLayer = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
