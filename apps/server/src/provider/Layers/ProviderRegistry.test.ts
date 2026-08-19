@@ -140,17 +140,52 @@ type TestClaudeCapabilities = {
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
   return () =>
     Effect.succeed({
-      email: undefined,
-      subscriptionType: undefined,
-      tokenSource: undefined,
-      apiProvider: undefined,
-      slashCommands: [],
-      ...overrides,
+      _tag: "Succeeded" as const,
+      probe: {
+        email: undefined,
+        subscriptionType: undefined,
+        tokenSource: undefined,
+        apiProvider: undefined,
+        slashCommands: [],
+        ...overrides,
+      },
     });
 }
 
 const noClaudeCapabilities = () =>
-  Effect.sync(() => undefined as TestClaudeCapabilities | undefined);
+  Effect.sync(
+    () =>
+      ({
+        _tag: "InitializationFailed" as const,
+        cause: "initializationResult() rejected",
+      }) as const,
+  );
+
+const timedOutClaudeCapabilities = () => Effect.sync(() => ({ _tag: "TimedOut" as const }));
+
+const setupFailedClaudeCapabilities = () =>
+  Effect.sync(
+    () =>
+      ({
+        _tag: "SetupFailed" as const,
+        cause: "failed to resolve Claude executable",
+      }) as const,
+  );
+
+function noAccountInfoClaudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
+  return () =>
+    Effect.succeed({
+      _tag: "NoAccountInfo" as const,
+      probe: {
+        email: undefined,
+        subscriptionType: undefined,
+        tokenSource: undefined,
+        apiProvider: undefined,
+        slashCommands: [],
+        ...overrides,
+      },
+    });
+}
 
 function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -2352,34 +2387,114 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         );
       });
 
-      it.effect("returns warning when the Claude initialization result is unavailable", () =>
-        Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
-            noClaudeCapabilities,
-          );
-          assert.strictEqual(status.status, "warning");
-          assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.auth.status, "unknown");
-          assert.strictEqual(
-            status.message,
-            "Could not verify Claude authentication status from initialization result.",
-          );
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":false}\n',
-                  stderr: "",
-                  code: 1,
-                };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
+      it.effect(
+        "returns warning without an auth-failure message when the initialization probe throws",
+        () =>
+          Effect.gen(function* () {
+            const status = yield* checkClaudeProviderStatus(
+              defaultClaudeSettings,
+              noClaudeCapabilities,
+            );
+            assert.strictEqual(status.status, "warning");
+            assert.strictEqual(status.installed, true);
+            assert.strictEqual(status.auth.status, "unknown");
+            assert.strictEqual(
+              status.message,
+              "Claude authentication check could not run: the Claude Agent CLI initialization probe failed.",
+            );
+          }).pipe(
+            Effect.provide(
+              mockSpawnerLayer((args) => {
+                const joined = args.join(" ");
+                if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+                if (joined === "auth status")
+                  return {
+                    stdout: '{"loggedIn":false}\n',
+                    stderr: "",
+                    code: 1,
+                  };
+                throw new Error(`Unexpected args: ${joined}`);
+              }),
+            ),
           ),
-        ),
+      );
+
+      it.effect(
+        "returns warning without an auth-failure message when the probe fails to prepare the CLI",
+        () =>
+          Effect.gen(function* () {
+            const status = yield* checkClaudeProviderStatus(
+              defaultClaudeSettings,
+              setupFailedClaudeCapabilities,
+            );
+            assert.strictEqual(status.status, "warning");
+            assert.strictEqual(status.installed, true);
+            assert.strictEqual(status.auth.status, "unknown");
+            assert.strictEqual(
+              status.message,
+              "Claude authentication check could not run: failed to prepare the Claude Agent CLI.",
+            );
+          }).pipe(
+            Effect.provide(
+              mockSpawnerLayer((args) => {
+                const joined = args.join(" ");
+                if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+                throw new Error(`Unexpected args: ${joined}`);
+              }),
+            ),
+          ),
+      );
+
+      it.effect(
+        "returns a timeout-specific warning, not an auth-failure message, when the probe times out",
+        () =>
+          Effect.gen(function* () {
+            const status = yield* checkClaudeProviderStatus(
+              defaultClaudeSettings,
+              timedOutClaudeCapabilities,
+            );
+            assert.strictEqual(status.status, "warning");
+            assert.strictEqual(status.installed, true);
+            assert.strictEqual(status.auth.status, "unknown");
+            assert.strictEqual(
+              status.message,
+              "Claude authentication check timed out; authentication status was not determined.",
+            );
+          }).pipe(
+            Effect.provide(
+              mockSpawnerLayer((args) => {
+                const joined = args.join(" ");
+                if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+                throw new Error(`Unexpected args: ${joined}`);
+              }),
+            ),
+          ),
+      );
+
+      it.effect(
+        "keeps the original warning message when initialization succeeds without an account block",
+        () =>
+          Effect.gen(function* () {
+            const status = yield* checkClaudeProviderStatus(
+              defaultClaudeSettings,
+              noAccountInfoClaudeCapabilities(),
+            );
+            assert.strictEqual(status.status, "warning");
+            assert.strictEqual(status.installed, true);
+            assert.strictEqual(status.auth.status, "unknown");
+            assert.strictEqual(
+              status.message,
+              "Could not verify Claude authentication status from initialization result.",
+            );
+          }).pipe(
+            Effect.provide(
+              mockSpawnerLayer((args) => {
+                const joined = args.join(" ");
+                if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+                throw new Error(`Unexpected args: ${joined}`);
+              }),
+            ),
+          ),
       );
     });
   },

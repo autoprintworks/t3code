@@ -58,7 +58,15 @@ import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
-const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+// Measured on a normal (unloaded) dev machine: 3 back-to-back probes took
+// 9.5s, 10.9s, and 12.7s — 40-50% of the 25s CAPABILITIES_PROBE_TIMEOUT_MS
+// budget just to spawn the CLI and read init IPC. Account/subscription data
+// changes rarely, so re-running that expensive probe every 5 minutes bought
+// little freshness while raising how often a re-probe lands during load and
+// eats into the timeout margin. 15 minutes keeps data reasonably fresh
+// (three re-probes an hour) while cutting both subprocess churn and the
+// number of chances to hit a timeout.
+const CAPABILITIES_PROBE_TTL = Duration.minutes(15);
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
