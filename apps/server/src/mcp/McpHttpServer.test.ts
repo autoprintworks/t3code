@@ -1,13 +1,23 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type IsoDateTime,
+  type OrchestrationShellSnapshot,
+  type OrchestrationThreadShell,
+  PreviewTabId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -34,6 +44,37 @@ const client = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
+const makeThreadShell = (id: string, archivedAt: string | null): OrchestrationThreadShell => ({
+  id: ThreadId.make(id),
+  projectId: ProjectId.make("project-mcp-test"),
+  title: `title for ${id}`,
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  latestTurn: null,
+  createdAt: "2026-01-01T00:00:00.000Z" as IsoDateTime,
+  updatedAt: "2026-01-02T00:00:00.000Z" as IsoDateTime,
+  archivedAt: archivedAt as IsoDateTime | null,
+  settledOverride: null,
+  settledAt: null,
+  session: null,
+  latestUserMessageAt: null,
+  hasPendingApprovals: false,
+  hasPendingUserInput: false,
+  hasActionableProposedPlan: false,
+});
+
+const makeShellSnapshot = (
+  threads: ReadonlyArray<OrchestrationThreadShell>,
+): OrchestrationShellSnapshot => ({
+  snapshotSequence: 1,
+  projects: [],
+  threads,
+  updatedAt: "2026-01-02T00:00:00.000Z" as IsoDateTime,
+});
+
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
@@ -271,4 +312,97 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(press.content).toEqual([{ type: "text", text: "null" }]);
     }),
   ).pipe(Effect.provide(TestLayer)),
+);
+
+// Proves the fleet toolkit is actually registered on the MCP server, not just
+// that its handlers compile. `fleet_whoami` is checked through the real
+// registration so the no-argument surface is the one an agent would see.
+const fleetInvocation = {
+  ...invocation,
+  capabilities: new Set(["preview", "fleet"] as const),
+};
+
+const FleetTestLayer = McpHttpServer.FleetToolkitRegistrationLive.pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provide(
+    Layer.succeed(ProjectionSnapshotQuery, {
+      getCommandReadModel: () => Effect.die("unused"),
+      getSnapshot: () => Effect.die("unused"),
+      getShellSnapshot: () => Effect.succeed(makeShellSnapshot([makeThreadShell("live", null)])),
+      getArchivedShellSnapshot: () =>
+        Effect.succeed(
+          makeShellSnapshot([makeThreadShell("archived", "2026-01-03T00:00:00.000Z")]),
+        ),
+      searchThreads: () => Effect.die("unused"),
+      getSnapshotSequence: () => Effect.die("unused"),
+      getCounts: () => Effect.die("unused"),
+      getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+      getProjectShellById: () => Effect.die("unused"),
+      getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+      getThreadCheckpointContext: () => Effect.die("unused"),
+      getThreadWorkspaceRoot: () => Effect.die("unused"),
+      getFullThreadDiffContext: () => Effect.die("unused"),
+      getThreadShellById: () => Effect.die("unused"),
+      getThreadDetailById: () => Effect.die("unused"),
+      getThreadDetailSnapshot: () => Effect.die("unused"),
+    }),
+  ),
+);
+
+it.effect("registers the fleet toolkit beside the preview toolkit", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+
+      const whoamiTool = server.tools.find(({ tool }) => tool.name === "fleet_whoami");
+      expect(whoamiTool).toBeDefined();
+      expect(whoamiTool?.tool.annotations?.readOnlyHint).toBe(true);
+      expect(whoamiTool?.tool.annotations?.destructiveHint).toBe(false);
+      expect(whoamiTool?.tool.inputSchema).toEqual({
+        type: "object",
+        additionalProperties: false,
+      });
+
+      const whoami = yield* server
+        .callTool({ name: "fleet_whoami", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, fleetInvocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(whoami.isError).toBe(false);
+      expect(whoami.structuredContent).toEqual({ threadId, environmentId });
+
+      const listed = yield* server
+        .callTool({ name: "fleet_list_threads", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, fleetInvocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(listed.isError).toBe(false);
+      expect(listed.structuredContent).toMatchObject({
+        threads: [
+          { threadId: "live", archived: false },
+          { threadId: "archived", archived: true },
+        ],
+      });
+    }),
+  ).pipe(Effect.provide(FleetTestLayer)),
+);
+
+it.effect("refuses the fleet toolkit for a credential without the fleet capability", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({ name: "fleet_whoami", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: "MCP credential does not grant the fleet capability." },
+      ]);
+    }),
+  ).pipe(Effect.provide(FleetTestLayer)),
 );
