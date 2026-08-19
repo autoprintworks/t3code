@@ -1064,9 +1064,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             kind: event.payload.activity.kind,
             summary: event.payload.activity.summary,
             payload: event.payload.activity.payload,
-            ...(event.payload.activity.sequence !== undefined
-              ? { sequence: event.payload.activity.sequence }
-              : {}),
+            // The event envelope's own sequence, not `activity.sequence` —
+            // no caller of the `thread.activity.append` command has ever set
+            // that domain field, which is why this column was NULL for every
+            // row until ForkMigrations/002 backfilled it. `event.sequence`
+            // is the event-store sequence every sibling column orders by.
+            sequence: event.sequence,
             createdAt: event.payload.activity.createdAt,
           });
           return;

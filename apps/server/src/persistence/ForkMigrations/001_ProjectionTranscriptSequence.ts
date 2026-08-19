@@ -4,6 +4,13 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 /**
  * Event-store sequence columns for the rest of the transcript.
  *
+ * This is a fork-authored migration (see `../ForkMigrations.ts` for why it
+ * tracks separately from upstream's `effect_sql_migrations`). It first
+ * shipped as upstream-numbered migration 038, which collided with upstream's
+ * own migration 38 the first time a fork build ran against an untouched
+ * upstream database. `ForkMigrations.ts` reconciles installs that already
+ * ran it under the old id, so this file's content is otherwise unchanged.
+ *
  * Migration 008 gave activities a `sequence` because wall-clock timestamps and
  * insertion order disagree whenever the host clock moves. Messages, proposed
  * plans and turns kept ordering by `created_at`/`requested_at`, so one clock
