@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import {
@@ -165,6 +166,22 @@ const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* () {
   return { factory, sockets };
 });
 
+// `Tracer.Tracer` is read off the current fiber (see effect/internal/effect.ts makeSpanUnsafe), not
+// resolved from a Layer-provided Context service, so tests observe spans by installing a collecting
+// tracer with `Effect.withTracer` around the whole test body rather than by providing a Layer.
+function collectingTracer(spans: Array<Tracer.NativeSpan>): Tracer.Tracer {
+  return Tracer.make({
+    span(options) {
+      const span = new Tracer.NativeSpan(options);
+      spans.push(span);
+      return span;
+    },
+  });
+}
+
+const socketSpan = (spans: ReadonlyArray<Tracer.NativeSpan>) =>
+  spans.find((span) => span.name === "clientRuntime.connection.rpcSession.socket");
+
 const awaitSocket = Effect.fn("TestRpcSessionFactory.awaitSocket")(function* (
   sockets: ReadonlyArray<TestWebSocket>,
 ) {
@@ -215,8 +232,9 @@ const completeInitialConfig = Effect.fn("TestRpcSessionFactory.completeInitialCo
 });
 
 describe("RpcSessionFactory", () => {
-  it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
-    Effect.gen(function* () {
+  it.effect("owns one scoped websocket attempt and exposes readiness and closure", () => {
+    const spans: Array<Tracer.NativeSpan> = [];
+    return Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);
       const readyFiber = yield* Effect.forkChild(session.ready);
@@ -265,8 +283,14 @@ describe("RpcSessionFactory", () => {
       });
       yield* Effect.yieldNow;
       expect(sockets).toHaveLength(1);
-    }),
-  );
+
+      const span = socketSpan(spans);
+      expect(span?.attributes.get("connection.wasConnected")).toBe(true);
+      expect(span?.attributes.get("connection.close.code")).toBe(1012);
+      expect(span?.attributes.get("connection.close.reason")).toBe("service restart");
+      expect(span?.status._tag).toBe("Ended");
+    }).pipe(Effect.withTracer(collectingTracer(spans)));
+  });
 
   it.effect("closes the websocket when the session scope is released", () =>
     Effect.gen(function* () {
@@ -287,8 +311,9 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
-  it.effect("tolerates two missed pong windows before closing the session", () =>
-    Effect.gen(function* () {
+  it.effect("tolerates two missed pong windows before closing the session", () => {
+    const spans: Array<Tracer.NativeSpan> = [];
+    return Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);
       const readyFiber = yield* Effect.forkChild(session.ready);
@@ -311,8 +336,25 @@ describe("RpcSessionFactory", () => {
       const error = yield* Fiber.join(closedFiber);
       expect(error).toBeInstanceOf(ConnectionTransientError);
       expect(error).toMatchObject({ reason: "transport" });
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
+
+      // A starved Pong closes the socket with no native close event to read a code from
+      // (the pinger fails the connection itself). The span still records every ping tick
+      // and the timeout that ended it, so "how late was the last Pong" is a number.
+      const span = socketSpan(spans);
+      const pingEvents = span?.events.filter(
+        ([name]) => name === "clientRuntime.connection.socket.ping",
+      );
+      const timeoutEvents = span?.events.filter(
+        ([name]) => name === "clientRuntime.connection.socket.pingTimeout",
+      );
+      expect(pingEvents).toHaveLength(3);
+      expect(timeoutEvents).toHaveLength(1);
+    }).pipe(
+      Effect.withTracer(collectingTracer(spans)),
+      Effect.scoped,
+      Effect.provide(TestClock.layer()),
+    );
+  });
 
   it.effect("reaches ready when a newer server sends unknown config members", () =>
     Effect.gen(function* () {
