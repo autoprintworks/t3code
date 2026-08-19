@@ -1,5 +1,6 @@
 import {
   IsoDateTime,
+  NonNegativeInt,
   OrchestrationProposedPlanId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -15,6 +16,8 @@ export const ProjectionThreadProposedPlan = Schema.Struct({
   planId: OrchestrationProposedPlanId,
   threadId: ThreadId,
   turnId: Schema.NullOr(TurnId),
+  /** Event-store sequence of the creating event. The transcript ordering key. */
+  sequence: Schema.optional(NonNegativeInt),
   planMarkdown: TrimmedNonEmptyString,
   implementedAt: Schema.NullOr(IsoDateTime),
   implementationThreadId: Schema.NullOr(ThreadId),

@@ -335,6 +335,110 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("orders a new message by event sequence, not by its createdAt", () => {
+      // The host clock moved backwards between the two messages. Sequence is
+      // write order, so the newer message still lands last.
+      const threadWithEarlierMessage: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("msg-before-clock-jump"),
+            role: "user",
+            text: "sent first",
+            turnId: null,
+            streaming: false,
+            sequence: 9,
+            createdAt: "2026-04-01T09:00:00.000Z",
+            updatedAt: "2026-04-01T09:00:00.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithEarlierMessage, {
+        ...baseEventFields,
+        sequence: 10,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-after-clock-jump"),
+          role: "assistant",
+          text: "written after the clock moved back",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.id)).toEqual([
+          "msg-before-clock-jump",
+          "msg-after-clock-jump",
+        ]);
+        expect(result.thread.messages.map((message) => message.sequence)).toEqual([9, 10]);
+      }
+    });
+
+    it("keeps a streaming message at the sequence of the event that opened it", () => {
+      const threadWithStream: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("msg-stream"),
+            role: "assistant",
+            text: "Hello",
+            turnId: TurnId.make("turn-1"),
+            streaming: true,
+            sequence: 5,
+            createdAt: "2026-04-01T06:00:00.000Z",
+            updatedAt: "2026-04-01T06:00:00.000Z",
+          },
+          {
+            id: MessageId.make("msg-later"),
+            role: "user",
+            text: "steer",
+            turnId: null,
+            streaming: false,
+            sequence: 6,
+            createdAt: "2026-04-01T06:00:30.000Z",
+            updatedAt: "2026-04-01T06:00:30.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithStream, {
+        ...baseEventFields,
+        sequence: 99,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-stream"),
+          role: "assistant",
+          text: ", world!",
+          turnId: TurnId.make("turn-1"),
+          streaming: true,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T06:01:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.id)).toEqual([
+          "msg-stream",
+          "msg-later",
+        ]);
+        expect(result.thread.messages[0]?.sequence).toBe(5);
+      }
+    });
+
     it("appends text for streaming messages", () => {
       const threadWithMessage: OrchestrationThread = {
         ...baseThread,

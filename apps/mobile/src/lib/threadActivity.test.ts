@@ -55,6 +55,158 @@ function makeThread(
   };
 }
 
+function permutations<T>(items: ReadonlyArray<T>): T[][] {
+  if (items.length <= 1) return [[...items]];
+  return items.flatMap((item, index) =>
+    permutations([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [
+      item,
+      ...rest,
+    ]),
+  );
+}
+
+describe("buildThreadFeed ordering under a moving host clock", () => {
+  function makeMessage(input: {
+    readonly id: string;
+    readonly sequence: number;
+    readonly createdAt: string;
+  }): OrchestrationThread["messages"][number] {
+    return {
+      id: MessageId.make(input.id),
+      role: "user",
+      text: input.id,
+      turnId: null,
+      streaming: false,
+      sequence: input.sequence,
+      createdAt: input.createdAt,
+      updatedAt: input.createdAt,
+    };
+  }
+
+  it("puts a later-sequence message last even when it carries an earlier createdAt", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-clock-jump"),
+      projectId: ProjectId.make("project-1"),
+      title: "Clock jump thread",
+      messages: [
+        makeMessage({
+          id: "message-before-clock-jump",
+          sequence: 1,
+          createdAt: "2026-04-01T00:00:09.000Z",
+        }),
+        makeMessage({
+          id: "message-after-clock-jump",
+          sequence: 2,
+          createdAt: "2026-04-01T00:00:01.000Z",
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread).map((entry) => entry.id)).toEqual([
+      "message-before-clock-jump",
+      "message-after-clock-jump",
+    ]);
+  });
+
+  it("interleaves messages and activities by sequence, not by the clock", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-interleave"),
+      projectId: ProjectId.make("project-1"),
+      title: "Interleave thread",
+      messages: [
+        makeMessage({ id: "message-ask", sequence: 10, createdAt: "2026-04-01T00:00:04.000Z" }),
+        makeMessage({ id: "message-answer", sequence: 40, createdAt: "2026-04-01T00:00:01.000Z" }),
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-early"),
+          kind: "runtime.warning",
+          summary: "Runtime warning",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          sequence: 20,
+          turnId: TurnId.make("turn-1"),
+          payload: { message: "first" },
+        }),
+        makeActivity({
+          id: EventId.make("activity-late"),
+          kind: "runtime.warning",
+          summary: "Runtime warning",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          sequence: 30,
+          turnId: TurnId.make("turn-1"),
+          payload: { message: "second" },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed.map((entry) => entry.type)).toEqual(["message", "activity-group", "message"]);
+    expect(feed[0]?.id).toBe("message-ask");
+    expect(feed[2]?.id).toBe("message-answer");
+    const group = feed[1];
+    expect(group?.type === "activity-group" ? group.activities.map((a) => a.id) : []).toEqual([
+      "activity-early",
+      "activity-late",
+    ]);
+  });
+
+  // Property-style guard: the event-store sequence is fixed and every arrival
+  // timestamp permutation is fed through. Display order must never move.
+  it("stays in sequence order for every permutation of arrival timestamps", () => {
+    const timestamps = [
+      "2026-04-01T00:00:01.000Z",
+      "2026-04-01T00:00:02.000Z",
+      "2026-04-01T00:00:03.000Z",
+      "2026-04-01T00:00:04.000Z",
+    ] as const;
+
+    for (const clock of permutations(timestamps)) {
+      const [askAt, warnAt, noteAt, answerAt] = clock as [string, string, string, string];
+      const thread = makeThread({
+        id: ThreadId.make("thread-permutation"),
+        projectId: ProjectId.make("project-1"),
+        title: "Permutation thread",
+        messages: [
+          makeMessage({ id: "message-ask", sequence: 10, createdAt: askAt }),
+          makeMessage({ id: "message-answer", sequence: 40, createdAt: answerAt }),
+        ],
+        activities: [
+          makeActivity({
+            id: EventId.make("activity-warn"),
+            kind: "runtime.warning",
+            summary: "Runtime warning",
+            createdAt: warnAt,
+            sequence: 20,
+            turnId: TurnId.make("turn-1"),
+            payload: { message: "warn" },
+          }),
+          makeActivity({
+            id: EventId.make("activity-note"),
+            kind: "runtime.warning",
+            summary: "Runtime warning",
+            createdAt: noteAt,
+            sequence: 30,
+            turnId: TurnId.make("turn-1"),
+            payload: { message: "note" },
+          }),
+        ],
+      });
+
+      const feed = buildThreadFeed(thread);
+      expect(feed.map((entry) => entry.id)).toEqual([
+        "message-ask",
+        "activity-warn",
+        "message-answer",
+      ]);
+      const group = feed[1];
+      expect(group?.type === "activity-group" ? group.activities.map((a) => a.id) : []).toEqual([
+        "activity-warn",
+        "activity-note",
+      ]);
+    }
+  });
+});
+
 describe("buildThreadFeed", () => {
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({

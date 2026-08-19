@@ -327,6 +327,13 @@ import { useAssetUrls } from "../assets/assetUrls";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+/**
+ * Sequence for a locally-created message that has no event yet. The transcript
+ * orders by event-store sequence, so an optimistic row needs a value above
+ * every real one to sit at the live edge until the server's row replaces it.
+ */
+const OPTIMISTIC_MESSAGE_SEQUENCE = Number.MAX_SAFE_INTEGER;
+
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
@@ -4981,6 +4988,10 @@ function ChatViewContent(props: ChatViewProps) {
         createdAt: messageCreatedAt,
         updatedAt: messageCreatedAt,
         streaming: false,
+        // Pins the row to the live edge until the server's row replaces it.
+        // The transcript orders by event-store sequence, and this message has
+        // no event yet; its local timestamp cannot be trusted to place it.
+        sequence: OPTIMISTIC_MESSAGE_SEQUENCE,
       },
     ]);
     setThreadError(threadIdForSend, null);
@@ -5426,6 +5437,8 @@ function ChatViewContent(props: ChatViewProps) {
           createdAt: messageCreatedAt,
           updatedAt: messageCreatedAt,
           streaming: false,
+          // See the other optimistic send path.
+          sequence: OPTIMISTIC_MESSAGE_SEQUENCE,
         },
       ]);
 

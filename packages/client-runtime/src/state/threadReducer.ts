@@ -18,10 +18,30 @@ export type ThreadDetailReducerResult =
   | { readonly kind: "deleted" }
   | { readonly kind: "unchanged" };
 
-const proposedPlanOrder = O.combine<OrchestrationThread["proposedPlans"][number]>(
+/**
+ * Transcript ordering. The event-store sequence is the ordering key;
+ * `createdAt` and the id only break ties. A wall-clock timestamp is display
+ * data: the host clock can move in either direction between two writes, so
+ * ordering by it reorders the transcript against the order things happened.
+ *
+ * A row with no sequence predates the field and is therefore older than
+ * anything carrying one, so it sorts first. The client's own optimistic rows
+ * are the exception and set an explicit maximal sequence to pin themselves to
+ * the live edge.
+ */
+const TRANSCRIPT_SEQUENCE_UNKNOWN = 0;
+
+const proposedPlanOrder = O.combineAll<OrchestrationThread["proposedPlans"][number]>([
+  O.mapInput(O.Number, (p) => p.sequence ?? TRANSCRIPT_SEQUENCE_UNKNOWN),
   O.mapInput(O.String, (p) => p.createdAt),
   O.mapInput(O.String, (p) => p.id),
-);
+]);
+
+const messageOrder = O.combineAll<OrchestrationMessage>([
+  O.mapInput(O.Number, (m) => m.sequence ?? TRANSCRIPT_SEQUENCE_UNKNOWN),
+  O.mapInput(O.String, (m) => m.createdAt),
+  O.mapInput(O.String, (m) => m.id),
+]);
 
 const checkpointOrder = O.mapInput(
   O.Number,
@@ -277,6 +297,7 @@ export function applyThreadDetailEvent(
           : {}),
         turnId: event.payload.turnId,
         streaming: event.payload.streaming,
+        sequence: event.sequence,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
       };
@@ -301,7 +322,7 @@ export function applyThreadDetailEvent(
                     : {}),
                 },
           )
-        : Arr.append(thread.messages, message);
+        : Arr.sort(Arr.append(thread.messages, message), messageOrder);
       // Update latestTurn for assistant messages bound to a turn. A completed
       // assistant message only settles the turn once the session is no longer
       // running it — providers may emit several assistant messages per turn
@@ -431,7 +452,16 @@ export function applyThreadDetailEvent(
 
     // ── Proposed plans ──────────────────────────────────────────────
     case "thread.proposed-plan-upserted": {
-      const proposedPlan = event.payload.proposedPlan;
+      // A plan is upserted again on every edit; it keeps the sequence of the
+      // event that first created it, so it holds its transcript position. This
+      // matches how the server projects the plan row.
+      const existingPlan = thread.proposedPlans.find(
+        (entry) => entry.id === event.payload.proposedPlan.id,
+      );
+      const proposedPlan = {
+        ...event.payload.proposedPlan,
+        sequence: existingPlan?.sequence ?? event.payload.proposedPlan.sequence ?? event.sequence,
+      };
 
       const proposedPlans = pipe(
         thread.proposedPlans,

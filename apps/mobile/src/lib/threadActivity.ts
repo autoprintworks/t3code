@@ -63,6 +63,12 @@ type WorkLogToolLifecycleStatus = "inProgress" | "completed" | "failed" | "decli
 interface WorkLogEntry {
   id: string;
   createdAt: string;
+  /**
+   * Event-store sequence of the activity this row came from. This is the
+   * ordering key for the feed; `createdAt` is display data. Absent only for a
+   * row written before the server carried a sequence.
+   */
+  sequence?: number;
   turnId: TurnId | null;
   label: string;
   detail?: string;
@@ -89,12 +95,14 @@ type RawThreadFeedEntry =
       readonly type: "message";
       readonly id: string;
       readonly createdAt: string;
+      readonly sequence?: number;
       readonly message: OrchestrationThread["messages"][number];
     }
   | {
       readonly type: "activity";
       readonly id: string;
       readonly createdAt: string;
+      readonly sequence?: number;
       readonly turnId: TurnId | null;
       readonly activity: ThreadFeedActivity;
     };
@@ -360,6 +368,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
+    ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
     turnId: activity.turnId,
     ...(taskId ? { taskId } : {}),
     label: taskLabel || activity.summary,
@@ -1031,11 +1040,30 @@ function compareActivityLifecycleRank(kind: string): number {
   return 1;
 }
 
+/**
+ * Where a row with no event-store sequence sorts. Nothing on this surface is
+ * optimistic, so an absent sequence means an old server that does not send the
+ * field; the row is placed at the live edge, which is where a row the client
+ * has just learned about belongs.
+ */
+const SEQUENCE_UNKNOWN = Number.MAX_SAFE_INTEGER;
+
 const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
-  Order.mapInput(Order.Number, (activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER),
+  Order.mapInput(Order.Number, (activity) => activity.sequence ?? SEQUENCE_UNKNOWN),
   Order.mapInput(Order.String, (activity) => activity.createdAt),
   Order.mapInput(Order.Number, (activity) => compareActivityLifecycleRank(activity.kind)),
   Order.mapInput(Order.String, (activity) => activity.id),
+]);
+
+/**
+ * Total order for the merged transcript: event-store sequence, then the wall
+ * clock, then the id. Sequence order is write order, so this holds even when
+ * the host clock moves backwards between two rows of the same thread.
+ */
+const rawThreadFeedEntryOrder = Order.combineAll<RawThreadFeedEntry>([
+  Order.mapInput(Order.Number, (entry) => entry.sequence ?? SEQUENCE_UNKNOWN),
+  Order.mapInput(Order.String, (entry) => entry.createdAt),
+  Order.mapInput(Order.String, (entry) => entry.id),
 ]);
 
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
@@ -1458,25 +1486,28 @@ export function buildThreadFeed(
   },
 ): ThreadFeedEntry[] {
   const loadedMessages = options?.loadedMessages ?? thread.messages;
-  const oldestLoadedMessageCreatedAt =
-    options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
+  // Window bound for a partially loaded transcript: an activity older than the
+  // oldest loaded message belongs to a page that is not on screen. The bound is
+  // the event-store sequence, not the wall clock, so a clock excursion cannot
+  // hide rows at the page seam or drag older ones into the window.
+  const oldestLoadedMessageSequence =
+    options?.loadedMessages !== undefined ? (loadedMessages[0]?.sequence ?? null) : null;
   const workLogEntries = deriveWorkLogEntries(thread.activities);
-  const entries = Arr.sortWith(
+  const entries = Arr.sort(
     [
       ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
         type: "message",
         id: message.id,
         createdAt: message.createdAt,
+        ...(message.sequence !== undefined ? { sequence: message.sequence } : {}),
         message,
       })),
       ...workLogEntries
         .filter((entry) => {
-          if (options?.loadedMessages === undefined) {
+          if (options?.loadedMessages === undefined || oldestLoadedMessageSequence === null) {
             return true;
           }
-          return (
-            oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt
-          );
+          return (entry.sequence ?? SEQUENCE_UNKNOWN) >= oldestLoadedMessageSequence;
         })
         .map<RawThreadFeedEntry>((entry) => {
           const summary = workEntryHeading(entry);
@@ -1493,6 +1524,7 @@ export function buildThreadFeed(
             type: "activity",
             id: entry.id,
             createdAt: entry.createdAt,
+            ...(entry.sequence !== undefined ? { sequence: entry.sequence } : {}),
             turnId: entry.turnId,
             activity: {
               id: entry.id,
@@ -1510,8 +1542,7 @@ export function buildThreadFeed(
           };
         }),
     ],
-    (s) => new Date(s.createdAt),
-    Order.Date,
+    rawThreadFeedEntryOrder,
   );
 
   return groupAdjacentActivities(entries);

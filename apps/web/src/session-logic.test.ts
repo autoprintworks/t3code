@@ -1570,6 +1570,120 @@ describe("deriveTimelineEntries", () => {
   });
 });
 
+function permutations<T>(items: ReadonlyArray<T>): T[][] {
+  if (items.length <= 1) return [[...items]];
+  return items.flatMap((item, index) =>
+    permutations([...items.slice(0, index), ...items.slice(index + 1)]).map((rest) => [
+      item,
+      ...rest,
+    ]),
+  );
+}
+
+describe("deriveTimelineEntries ordering under a moving host clock", () => {
+  it("puts a later-sequence message last even when it carries an earlier createdAt", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("message-before-clock-jump"),
+          role: "user",
+          text: "sent first",
+          createdAt: "2026-02-23T00:00:09.000Z",
+          turnId: null,
+          updatedAt: "2026-02-23T00:00:09.000Z",
+          streaming: false,
+          sequence: 1,
+        },
+        {
+          id: MessageId.make("message-after-clock-jump"),
+          role: "assistant",
+          text: "written after the clock moved back",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          turnId: null,
+          updatedAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+          sequence: 2,
+        },
+      ],
+      [],
+      [],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "message-before-clock-jump",
+      "message-after-clock-jump",
+    ]);
+  });
+
+  // Property-style guard: the event-store sequence is fixed and every arrival
+  // timestamp permutation is fed through. Display order must never move.
+  it("stays in sequence order for every permutation of arrival timestamps", () => {
+    const timestamps = [
+      "2026-02-23T00:00:01.000Z",
+      "2026-02-23T00:00:02.000Z",
+      "2026-02-23T00:00:03.000Z",
+      "2026-02-23T00:00:04.000Z",
+    ] as const;
+
+    for (const clock of permutations(timestamps)) {
+      const [messageAt, planAt, workAt, replyAt] = clock as [string, string, string, string];
+      const entries = deriveTimelineEntries(
+        [
+          {
+            id: MessageId.make("message-1"),
+            role: "user",
+            text: "ask",
+            createdAt: messageAt,
+            turnId: null,
+            updatedAt: messageAt,
+            streaming: false,
+            sequence: 10,
+          },
+          {
+            id: MessageId.make("message-2"),
+            role: "assistant",
+            text: "answer",
+            createdAt: replyAt,
+            turnId: null,
+            updatedAt: replyAt,
+            streaming: false,
+            sequence: 40,
+          },
+        ],
+        [
+          {
+            id: "plan:thread-1:turn:turn-1",
+            turnId: TurnId.make("turn-1"),
+            planMarkdown: "# Ship it",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: planAt,
+            updatedAt: planAt,
+            sequence: 20,
+          },
+        ],
+        [
+          {
+            id: "work-1",
+            createdAt: workAt,
+            label: "Ran tests",
+            tone: "tool",
+            sequence: 30,
+          },
+        ],
+      );
+
+      expect(entries.map((entry) => entry.id)).toEqual([
+        "message-1",
+        "plan:thread-1:turn:turn-1",
+        "work-1",
+        "message-2",
+      ]);
+      expect(entries.map((entry) => entry.sequence)).toEqual([10, 20, 30, 40]);
+    }
+  });
+});
+
 describe("deriveWorkLogEntries context window handling", () => {
   it("excludes context window updates from the work log", () => {
     const entries = deriveWorkLogEntries([

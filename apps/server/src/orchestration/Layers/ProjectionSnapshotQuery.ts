@@ -79,9 +79,14 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    sequence: NonNegativeInt,
   }),
 );
-const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
+const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan.mapFields(
+  Struct.assign({
+    sequence: NonNegativeInt,
+  }),
+);
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
@@ -136,14 +141,19 @@ const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
 });
 // Windowed reads order turns by the stable keyset (anchor, turn key), where
-// anchor is requested_at and turn key is
+// anchor is the turn's event-store sequence and turn key is
 // COALESCE(turn_id, ''). Both are event-derived, so cursors survive the
 // revert projector's row-id rewrite and full projection rebuilds.
+//
+// The anchor was `requested_at` until it became a sequence: a wall clock is
+// not an ordering key. A host clock that jumps forwards leaves every turn
+// written during the excursion sorting after everything that follows it, which
+// breaks the keyset walk and drops rows off their page for good.
 const ThreadTurnWindowLookupInput = Schema.Struct({
   threadId: ThreadId,
-  // Exclusive keyset upper bound. Sentinels "~"/"" mean unbounded ("~" sorts
-  // after every ISO timestamp).
-  beforeAnchorAt: Schema.String,
+  // Exclusive keyset upper bound. Sentinels ANCHOR_UNBOUNDED/"" mean
+  // unbounded, i.e. the newest page.
+  beforeAnchorSeq: Schema.Number,
   beforeTurnKey: Schema.String,
   userTurnLimit: Schema.Number,
   maxRawTurns: Schema.Number,
@@ -151,18 +161,18 @@ const ThreadTurnWindowLookupInput = Schema.Struct({
 const ProjectionTurnWindowRowSchema = Schema.Struct({
   // The turn's timeline anchor, used to bound rows that have no turn linkage
   // (user messages and turnless activities) to the same page window.
-  anchorAt: Schema.String,
+  anchorSeq: Schema.Number,
   turnKey: Schema.String,
 });
 const ThreadTurnRangeLookupInput = Schema.Struct({
   threadId: ThreadId,
   // Turn-linked rows are bounded by the keyset range [min, before) over
-  // (anchor, turn key); turnless rows by the matching [minAnchorAt,
-  // beforeAnchorAt) time range. Unbounded ends use sentinels: "" for the
-  // lower bound, "~" (sorts after ISO dates) for the upper bound.
-  minAnchorAt: Schema.String,
+  // (anchor, turn key); turnless rows by the matching [minAnchorSeq,
+  // beforeAnchorSeq) sequence range. Unbounded ends use sentinels:
+  // ANCHOR_EMPTY for the lower bound, ANCHOR_UNBOUNDED for the upper bound.
+  minAnchorSeq: Schema.Number,
   minTurnKey: Schema.String,
-  beforeAnchorAt: Schema.String,
+  beforeAnchorSeq: Schema.Number,
   beforeTurnKey: Schema.String,
 });
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
@@ -331,6 +341,7 @@ function mapProposedPlanRow(
   return {
     id: row.planId,
     turnId: row.turnId,
+    sequence: row.sequence,
     planMarkdown: row.planMarkdown,
     implementedAt: row.implementedAt,
     implementationThreadId: row.implementationThreadId,
@@ -525,10 +536,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
+          sequence,
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
-        ORDER BY thread_id ASC, created_at ASC, message_id ASC
+        ORDER BY thread_id ASC, sequence ASC, created_at ASC, message_id ASC
       `,
   });
 
@@ -541,13 +553,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           plan_id AS "planId",
           thread_id AS "threadId",
           turn_id AS "turnId",
+          sequence,
           plan_markdown AS "planMarkdown",
           implemented_at AS "implementedAt",
           implementation_thread_id AS "implementationThreadId",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_proposed_plans
-        ORDER BY thread_id ASC, created_at ASC, plan_id ASC
+        ORDER BY thread_id ASC, sequence ASC, created_at ASC, plan_id ASC
       `,
   });
 
@@ -980,11 +993,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
+          sequence,
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, message_id ASC
+        ORDER BY sequence ASC, created_at ASC, message_id ASC
       `,
   });
 
@@ -997,6 +1011,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           plan_id AS "planId",
           thread_id AS "threadId",
           turn_id AS "turnId",
+          sequence,
           plan_markdown AS "planMarkdown",
           implemented_at AS "implementedAt",
           implementation_thread_id AS "implementationThreadId",
@@ -1004,7 +1019,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt"
         FROM projection_thread_proposed_plans
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, plan_id ASC
+        ORDER BY sequence ASC, created_at ASC, plan_id ASC
       `,
   });
 
@@ -1100,14 +1115,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   // Resolves a page of recent turns for a windowed thread detail read. Walks
-  // back from the exclusive (beforeAnchorAt, beforeTurnKey) keyset boundary
-  // (sentinels "~"/"" mean unbounded, i.e. the first page) until it has seen
+  // back from the exclusive (beforeAnchorSeq, beforeTurnKey) keyset boundary
+  // (sentinels ANCHOR_UNBOUNDED/"" mean unbounded, i.e. the first page) until
+  // it has seen
   // `userTurnLimit` user-anchored turns — turns whose pending message is a
   // user message; subagent/fan-out turns between them ride along — or hits the
   // `maxRawTurns` ceiling that bounds pathological fan-out. The `candidates`
   // CTE applies the keyset bound and LIMIT before the window functions run;
-  // its ORDER BY uses raw columns so the migration-037
-  // (thread_id, requested_at, turn_id) index serves both range and order with
+  // its ORDER BY uses raw columns so the migration-038
+  // (thread_id, sequence, turn_id) index serves both range and order with
   // no temp B-tree — the scan is genuinely bounded by the LIMIT. (Raw
   // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
   // real id.) The caller derives the continuation cursor from the oldest
@@ -1145,44 +1161,44 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const listTurnWindowRows = SqlSchema.findAll({
     Request: ThreadTurnWindowLookupInput,
     Result: ProjectionTurnWindowRowSchema,
-    execute: ({ threadId, beforeAnchorAt, beforeTurnKey, userTurnLimit, maxRawTurns }) =>
+    execute: ({ threadId, beforeAnchorSeq, beforeTurnKey, userTurnLimit, maxRawTurns }) =>
       sql`
         WITH candidates AS (
           SELECT
-            turns.requested_at AS anchor_at,
+            turns.sequence AS anchor_seq,
             COALESCE(turns.turn_id, '') AS turn_key,
             turns.pending_message_id
           FROM projection_turns AS turns
           WHERE turns.thread_id = ${threadId}
             AND (
-              turns.requested_at < ${beforeAnchorAt}
+              turns.sequence < ${beforeAnchorSeq}
               OR (
-                turns.requested_at = ${beforeAnchorAt}
+                turns.sequence = ${beforeAnchorSeq}
                 AND COALESCE(turns.turn_id, '') < ${beforeTurnKey}
               )
             )
-          ORDER BY turns.requested_at DESC, turns.turn_id DESC
+          ORDER BY turns.sequence DESC, turns.turn_id DESC
           LIMIT ${maxRawTurns}
         ),
         walked AS (
           SELECT
-            candidates.anchor_at,
+            candidates.anchor_seq,
             candidates.turn_key,
             CASE WHEN messages.role = 'user' THEN 1 ELSE 0 END AS is_user_turn,
             SUM(CASE WHEN messages.role = 'user' THEN 1 ELSE 0 END) OVER (
-              ORDER BY candidates.anchor_at DESC, candidates.turn_key DESC
+              ORDER BY candidates.anchor_seq DESC, candidates.turn_key DESC
             ) AS user_turns_seen
           FROM candidates
           LEFT JOIN projection_thread_messages AS messages
             ON messages.message_id = candidates.pending_message_id
         )
         SELECT
-          anchor_at AS "anchorAt",
+          anchor_seq AS "anchorSeq",
           turn_key AS "turnKey"
         FROM walked
         WHERE user_turns_seen < ${userTurnLimit}
           OR (user_turns_seen = ${userTurnLimit} AND is_user_turn = 1)
-        ORDER BY anchor_at ASC, turn_key ASC
+        ORDER BY anchor_seq ASC, turn_key ASC
       `,
   });
 
@@ -1190,13 +1206,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // bounded by the page's (anchor, turn key) keyset range over
   // projection_turns; rows with no turn linkage (user messages always, and
   // turnless activities like pre-turn context-window updates) are bounded by
-  // the matching turn-anchor time range so they land on the same page as the
-  // turns around them. Proposed plans and checkpoints stay unwindowed: they
+  // the matching turn-anchor sequence range so they land on the same page as
+  // the turns around them. A turn's anchor is its own opening user message's
+  // sequence, so the inclusive lower bound keeps that message on its page. Proposed plans and checkpoints stay unwindowed: they
   // are metadata-scale.
   const listThreadMessageRowsByThreadWindow = SqlSchema.findAll({
     Request: ThreadTurnRangeLookupInput,
     Result: ProjectionThreadMessageDbRowSchema,
-    execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
+    execute: ({ threadId, minAnchorSeq, minTurnKey, beforeAnchorSeq, beforeTurnKey }) =>
       sql`
         SELECT
           message_id AS "messageId",
@@ -1206,6 +1223,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
+          sequence,
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -1216,34 +1234,34 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               WHERE thread_id = ${threadId}
                 AND turn_id IS NOT NULL
                 AND (
-                  requested_at > ${minAnchorAt}
+                  sequence > ${minAnchorSeq}
                   OR (
-                    requested_at = ${minAnchorAt}
+                    sequence = ${minAnchorSeq}
                     AND turn_id >= ${minTurnKey}
                   )
                 )
                 AND (
-                  requested_at < ${beforeAnchorAt}
+                  sequence < ${beforeAnchorSeq}
                   OR (
-                    requested_at = ${beforeAnchorAt}
+                    sequence = ${beforeAnchorSeq}
                     AND turn_id < ${beforeTurnKey}
                   )
                 )
             )
             OR (
               turn_id IS NULL
-              AND created_at >= ${minAnchorAt}
-              AND created_at < ${beforeAnchorAt}
+              AND sequence >= ${minAnchorSeq}
+              AND sequence < ${beforeAnchorSeq}
             )
           )
-        ORDER BY created_at ASC, message_id ASC
+        ORDER BY sequence ASC, created_at ASC, message_id ASC
       `,
   });
 
   const listThreadActivityRowsByThreadWindow = SqlSchema.findAll({
     Request: ThreadTurnRangeLookupInput,
     Result: ProjectionThreadActivityDbRowSchema,
-    execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
+    execute: ({ threadId, minAnchorSeq, minTurnKey, beforeAnchorSeq, beforeTurnKey }) =>
       sql`
         SELECT
           activity_id AS "activityId",
@@ -1263,24 +1281,24 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               WHERE thread_id = ${threadId}
                 AND turn_id IS NOT NULL
                 AND (
-                  requested_at > ${minAnchorAt}
+                  sequence > ${minAnchorSeq}
                   OR (
-                    requested_at = ${minAnchorAt}
+                    sequence = ${minAnchorSeq}
                     AND turn_id >= ${minTurnKey}
                   )
                 )
                 AND (
-                  requested_at < ${beforeAnchorAt}
+                  sequence < ${beforeAnchorSeq}
                   OR (
-                    requested_at = ${beforeAnchorAt}
+                    sequence = ${beforeAnchorSeq}
                     AND turn_id < ${beforeTurnKey}
                   )
                 )
             )
             OR (
               turn_id IS NULL
-              AND created_at >= ${minAnchorAt}
-              AND created_at < ${beforeAnchorAt}
+              AND sequence >= ${minAnchorSeq}
+              AND sequence < ${beforeAnchorSeq}
             )
           )
         ORDER BY
@@ -1443,6 +1461,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
+                  sequence: row.sequence,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                 });
@@ -1455,6 +1474,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 threadProposedPlans.push({
                   id: row.planId,
                   turnId: row.turnId,
+                  sequence: row.sequence,
                   planMarkdown: row.planMarkdown,
                   implementedAt: row.implementedAt,
                   implementationThreadId: row.implementationThreadId,
@@ -2371,9 +2391,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // full thread. Resolved from a window request inside the snapshot
   // transaction (see getThreadDetailSnapshot).
   interface ThreadDetailBounds {
-    readonly minAnchorAt: string;
+    readonly minAnchorSeq: number;
     readonly minTurnKey: string;
-    readonly beforeAnchorAt: string;
+    readonly beforeAnchorSeq: number;
     readonly beforeTurnKey: string;
   }
 
@@ -2483,6 +2503,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             text: row.text,
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
+            sequence: row.sequence,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           };
@@ -2536,8 +2557,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // fan-out group across pages (the cursor continues the same group). Also
   // structurally bounds the window scan via the candidates CTE's LIMIT.
   const THREAD_DETAIL_MAX_RAW_TURNS_PER_PAGE = 150;
-  // Sentinels for unbounded keyset ends; "~" sorts after any ISO timestamp.
-  const ANCHOR_UNBOUNDED = "~";
+  // Sentinels for the keyset ends. Sequences are non-negative, so
+  // ANCHOR_UNBOUNDED is above every real anchor and ANCHOR_EMPTY is below
+  // every real anchor — an empty page is [ANCHOR_EMPTY, ANCHOR_EMPTY).
+  const ANCHOR_UNBOUNDED = Number.MAX_SAFE_INTEGER;
+  const ANCHOR_EMPTY = -1;
 
   const getThreadDetailSnapshot: ProjectionSnapshotQueryShape["getThreadDetailSnapshot"] = (
     threadId,
@@ -2572,7 +2596,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
           const windowRows = yield* listTurnWindowRows({
             threadId,
-            beforeAnchorAt: cursor?.beforeAnchorAt ?? ANCHOR_UNBOUNDED,
+            beforeAnchorSeq: cursor?.beforeAnchorSeq ?? ANCHOR_UNBOUNDED,
             beforeTurnKey: cursor?.beforeTurnId ?? "",
             userTurnLimit: window.turnLimit,
             maxRawTurns: THREAD_DETAIL_MAX_RAW_TURNS_PER_PAGE,
@@ -2595,15 +2619,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             oldest === undefined && cursor === null
               ? undefined
               : {
-                  minAnchorAt: oldest?.anchorAt ?? "",
+                  minAnchorSeq: oldest?.anchorSeq ?? ANCHOR_EMPTY,
                   minTurnKey: oldest?.turnKey ?? "",
-                  beforeAnchorAt: cursor?.beforeAnchorAt ?? ANCHOR_UNBOUNDED,
+                  beforeAnchorSeq: cursor?.beforeAnchorSeq ?? ANCHOR_UNBOUNDED,
                   beforeTurnKey: cursor?.beforeTurnId ?? "",
                 };
           // Empty window behind a cursor: nothing older remains.
           const emptyBounds =
             oldest === undefined && cursor !== null
-              ? { minAnchorAt: "", minTurnKey: "", beforeAnchorAt: "", beforeTurnKey: "" }
+              ? {
+                  minAnchorSeq: ANCHOR_EMPTY,
+                  minTurnKey: "",
+                  beforeAnchorSeq: ANCHOR_EMPTY,
+                  beforeTurnKey: "",
+                }
               : undefined;
 
           const thread = yield* getThreadDetailByIdBounded(threadId, emptyBounds ?? bounds);
@@ -2615,7 +2644,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             oldest !== undefined &&
             (yield* listTurnWindowRows({
               threadId,
-              beforeAnchorAt: oldest.anchorAt,
+              beforeAnchorSeq: oldest.anchorSeq,
               beforeTurnKey: oldest.turnKey,
               userTurnLimit: 1,
               maxRawTurns: 1,
@@ -2652,7 +2681,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 hasMore && oldest !== undefined
                   ? encodeThreadDetailPageCursor({
                       threadId,
-                      beforeAnchorAt: oldest.anchorAt,
+                      beforeAnchorSeq: oldest.anchorSeq,
                       beforeTurnId: oldest.turnKey,
                     })
                   : null,

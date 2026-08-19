@@ -119,6 +119,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           role,
           text,
           is_streaming,
+          sequence,
           created_at,
           updated_at
         )
@@ -129,6 +130,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'assistant',
           'hello from projection',
           0,
+          4,
           '2026-02-24T00:00:04.000Z',
           '2026-02-24T00:00:05.000Z'
         )
@@ -139,6 +141,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           plan_id,
           thread_id,
           turn_id,
+          sequence,
           plan_markdown,
           implemented_at,
           implementation_thread_id,
@@ -149,6 +152,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'plan-1',
           'thread-1',
           'turn-1',
+          5,
           '# Ship it',
           '2026-02-24T00:00:05.500Z',
           'thread-2',
@@ -327,6 +331,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               text: "hello from projection",
               turnId: asTurnId("turn-1"),
               streaming: false,
+              sequence: 4,
               createdAt: "2026-02-24T00:00:04.000Z",
               updatedAt: "2026-02-24T00:00:05.000Z",
             },
@@ -335,6 +340,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             {
               id: "plan-1",
               turnId: asTurnId("turn-1"),
+              sequence: 5,
               planMarkdown: "# Ship it",
               implementedAt: "2026-02-24T00:00:05.500Z",
               implementationThreadId: ThreadId.make("thread-2"),
@@ -1966,64 +1972,89 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         'turn-5', 0, 0, 0, '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:10.000Z', NULL)
     `;
 
+    // Each turn owns a hundred-wide sequence band: the turn and its opening
+    // user message share the band's base, so the turn anchors where its own
+    // first row sits. Timestamps run forward here; the ordering tests that
+    // matter drive skew through the projector, not through this fixture.
     const turns: ReadonlyArray<{
       turn: string;
       pendingMessage: string | null;
       at: string;
+      sequence: number;
     }> = [
-      { turn: "turn-1", pendingMessage: "user-msg-1", at: "2026-03-01T00:00:00.000Z" },
-      { turn: "turn-2", pendingMessage: null, at: "2026-03-01T00:01:00.000Z" },
-      { turn: "turn-3", pendingMessage: null, at: "2026-03-01T00:02:00.000Z" },
-      { turn: "turn-4", pendingMessage: "user-msg-4", at: "2026-03-01T00:03:00.000Z" },
-      { turn: "turn-5", pendingMessage: "user-msg-5", at: "2026-03-01T00:04:00.000Z" },
+      {
+        turn: "turn-1",
+        pendingMessage: "user-msg-1",
+        at: "2026-03-01T00:00:00.000Z",
+        sequence: 100,
+      },
+      { turn: "turn-2", pendingMessage: null, at: "2026-03-01T00:01:00.000Z", sequence: 200 },
+      { turn: "turn-3", pendingMessage: null, at: "2026-03-01T00:02:00.000Z", sequence: 300 },
+      {
+        turn: "turn-4",
+        pendingMessage: "user-msg-4",
+        at: "2026-03-01T00:03:00.000Z",
+        sequence: 400,
+      },
+      {
+        turn: "turn-5",
+        pendingMessage: "user-msg-5",
+        at: "2026-03-01T00:04:00.000Z",
+        sequence: 500,
+      },
     ];
-    for (const { turn, pendingMessage, at } of turns) {
+    for (const { turn, pendingMessage, at, sequence } of turns) {
       yield* sql`
         INSERT INTO projection_turns (
-          thread_id, turn_id, pending_message_id, state, requested_at, started_at, completed_at,
-          checkpoint_files_json
+          thread_id, turn_id, pending_message_id, state, sequence, requested_at, started_at,
+          completed_at, checkpoint_files_json
         )
-        VALUES ('thread-w', ${turn}, ${pendingMessage}, 'completed', ${at}, ${at}, ${at}, '[]')
+        VALUES ('thread-w', ${turn}, ${pendingMessage}, 'completed', ${sequence},
+          ${at}, ${at}, ${at}, '[]')
       `;
       if (pendingMessage !== null) {
         yield* sql`
           INSERT INTO projection_thread_messages (
-            message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+            message_id, thread_id, turn_id, role, text, is_streaming, sequence,
+            created_at, updated_at
           )
-          VALUES (${pendingMessage}, 'thread-w', NULL, 'user', ${"prompt for " + turn}, 0, ${at}, ${at})
+          VALUES (${pendingMessage}, 'thread-w', NULL, 'user', ${"prompt for " + turn}, 0,
+            ${sequence}, ${at}, ${at})
         `;
       }
       yield* sql`
         INSERT INTO projection_thread_messages (
-          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+          message_id, thread_id, turn_id, role, text, is_streaming, sequence,
+          created_at, updated_at
         )
-        VALUES (${turn + "-reply"}, 'thread-w', ${turn}, 'assistant', ${"reply from " + turn}, 0, ${at}, ${at})
+        VALUES (${turn + "-reply"}, 'thread-w', ${turn}, 'assistant', ${"reply from " + turn}, 0,
+          ${sequence + 2}, ${at}, ${at})
       `;
       yield* sql`
         INSERT INTO projection_thread_activities (
-          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
         )
         VALUES (${turn + "-activity"}, 'thread-w', ${turn}, 'tool', 'tool.completed',
-          'ran tool', '{"ok":true}', ${at})
+          'ran tool', '{"ok":true}', ${sequence + 1}, ${at})
       `;
     }
 
     // Straggler user message sent while turn-4 ran: turn_id NULL and not any
-    // turn's pending_message_id.
+    // turn's pending_message_id. Its sequence sits inside turn-4's band.
     yield* sql`
       INSERT INTO projection_thread_messages (
-        message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        message_id, thread_id, turn_id, role, text, is_streaming, sequence, created_at, updated_at
       )
       VALUES ('user-msg-straggler', 'thread-w', NULL, 'user', 'while you are at it',
-        0, '2026-03-01T00:03:30.000Z', '2026-03-01T00:03:30.000Z')
+        0, 450, '2026-03-01T00:03:30.000Z', '2026-03-01T00:03:30.000Z')
     `;
-    // Turnless activity in the same time range.
+    // Turnless activity in the same band.
     yield* sql`
       INSERT INTO projection_thread_activities (
-        activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+        activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
       )
       VALUES ('turnless-activity', 'thread-w', NULL, 'info', 'context-window.updated',
-        'usage', '{"usedTokens":1}', '2026-03-01T00:03:36.000Z')
+        'usage', '{"usedTokens":1}', 460, '2026-03-01T00:03:36.000Z')
     `;
 
     for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
@@ -2125,7 +2156,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       // Simulate the rewrite: delete and re-insert every turn row with the
       // same content, which reassigns all row ids.
       const turnRows = yield* sql`
-        SELECT thread_id, turn_id, pending_message_id, state, requested_at, started_at,
+        SELECT thread_id, turn_id, pending_message_id, state, sequence, requested_at, started_at,
           completed_at, checkpoint_files_json
         FROM projection_turns WHERE thread_id = 'thread-w' ORDER BY row_id
       `;
@@ -2133,11 +2164,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       for (const row of turnRows) {
         yield* sql`
           INSERT INTO projection_turns (
-            thread_id, turn_id, pending_message_id, state, requested_at, started_at,
+            thread_id, turn_id, pending_message_id, state, sequence, requested_at, started_at,
             completed_at, checkpoint_files_json
           )
           VALUES (${row.thread_id as string}, ${row.turn_id as string},
             ${row.pending_message_id as string | null}, ${row.state as string},
+            ${row.sequence as number},
             ${row.requested_at as string}, ${row.started_at as string},
             ${row.completed_at as string}, ${row.checkpoint_files_json as string})
         `;
@@ -2210,7 +2242,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
 
       const foreign = encodeThreadDetailPageCursor({
         threadId: ThreadId.make("thread-other"),
-        beforeAnchorAt: "2026-03-01T00:01:00.000Z",
+        beforeAnchorSeq: 999,
         beforeTurnId: "turn-2",
       });
       const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
