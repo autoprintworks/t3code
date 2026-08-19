@@ -24,6 +24,41 @@ import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+/**
+ * Clamps a client-supplied timestamp into the range the server can vouch for:
+ * no earlier than the thread's own last write, no later than the server clock.
+ *
+ * The client clock is not authoritative. A phone in the wrong timezone, a
+ * laptop resuming from sleep, or a host whose clock is deliberately moved all
+ * hand us a `createdAt` that disagrees with the order the event actually
+ * landed in. Ordering never depends on these values — that is the event-store
+ * sequence's job — but they are still what the transcript displays, so a wild
+ * one reads as a bug.
+ *
+ * When the thread's own last write is itself in the future (its history was
+ * written during a clock excursion) the range is empty; the server clock wins,
+ * which heals the display without inventing a value.
+ */
+function clampToServerClock(input: {
+  readonly clientValue: string;
+  readonly notBefore: string;
+  readonly serverNow: string;
+}): string {
+  const clientMs = Date.parse(input.clientValue);
+  const serverNowMs = Date.parse(input.serverNow);
+  if (!Number.isFinite(clientMs) || !Number.isFinite(serverNowMs)) {
+    return input.serverNow;
+  }
+  if (clientMs > serverNowMs) {
+    return input.serverNow;
+  }
+  const notBeforeMs = Date.parse(input.notBefore);
+  if (!Number.isFinite(notBeforeMs) || clientMs >= notBeforeMs) {
+    return input.clientValue;
+  }
+  return notBeforeMs <= serverNowMs ? input.notBefore : input.serverNow;
+}
+
 // Session adoption takes seconds; a user message still unadopted after this
 // window is a failed/stale start, not pending work. Mirrors the client's
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
@@ -908,11 +943,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Proposed plan '${sourceProposedPlan?.planId}' belongs to thread '${sourceThread.id}' in a different project.`,
         });
       }
+      // The client sends its own wall clock with the message. Keep it when it
+      // is plausible, so a slow round trip still shows the time the user hit
+      // send; otherwise fall back to the server's clock.
+      const turnStartedAt = clampToServerClock({
+        clientValue: command.createdAt,
+        notBefore: targetThread.updatedAt,
+        serverNow: yield* nowIso,
+      });
       const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
-          occurredAt: command.createdAt,
+          occurredAt: turnStartedAt,
           commandId: command.commandId,
         })),
         type: "thread.message-sent",
@@ -924,15 +967,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           attachments: command.message.attachments,
           turnId: null,
           streaming: false,
-          createdAt: command.createdAt,
-          updatedAt: command.createdAt,
+          createdAt: turnStartedAt,
+          updatedAt: turnStartedAt,
         },
       };
       const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
-          occurredAt: command.createdAt,
+          occurredAt: turnStartedAt,
           commandId: command.commandId,
         })),
         causationEventId: userMessageEvent.eventId,
@@ -947,7 +990,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
-          createdAt: command.createdAt,
+          createdAt: turnStartedAt,
         },
       };
       // Real activity resets ANY override: it wakes an explicitly settled
@@ -961,14 +1004,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(yield* withEventBase({
             aggregateKind: "thread",
             aggregateId: command.threadId,
-            occurredAt: command.createdAt,
+            occurredAt: turnStartedAt,
             commandId: command.commandId,
           })),
           type: "thread.unsettled",
           payload: {
             threadId: command.threadId,
             reason: "activity",
-            updatedAt: command.createdAt,
+            updatedAt: turnStartedAt,
           },
         });
       }
@@ -977,14 +1020,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(yield* withEventBase({
             aggregateKind: "thread",
             aggregateId: command.threadId,
-            occurredAt: command.createdAt,
+            occurredAt: turnStartedAt,
             commandId: command.commandId,
           })),
           type: "thread.unsnoozed",
           payload: {
             threadId: command.threadId,
             reason: "activity",
-            updatedAt: command.createdAt,
+            updatedAt: turnStartedAt,
           },
         });
       }

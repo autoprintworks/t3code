@@ -55,6 +55,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           source_proposed_plan_id,
           assistant_message_id,
           state,
+          sequence,
           requested_at,
           started_at,
           completed_at,
@@ -71,6 +72,20 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.sourceProposedPlanId},
           ${row.assistantMessageId},
           ${row.state},
+          -- A turn keeps the anchor it was first written with: later lifecycle
+          -- events (start, settle, checkpoint) must not move it.
+          COALESCE(
+            NULLIF(
+              (
+                SELECT sequence
+                FROM projection_turns
+                WHERE thread_id = ${row.threadId}
+                  AND turn_id = ${row.turnId}
+              ),
+              0
+            ),
+            ${row.sequence}
+          ),
           ${row.requestedAt},
           ${row.startedAt},
           ${row.completedAt},
@@ -86,6 +101,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           source_proposed_plan_id = excluded.source_proposed_plan_id,
           assistant_message_id = excluded.assistant_message_id,
           state = excluded.state,
+          sequence = excluded.sequence,
           requested_at = excluded.requested_at,
           started_at = excluded.started_at,
           completed_at = excluded.completed_at,
@@ -120,6 +136,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           source_proposed_plan_id,
           assistant_message_id,
           state,
+          sequence,
           requested_at,
           started_at,
           completed_at,
@@ -136,6 +153,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.sourceProposedPlanId},
           NULL,
           'pending',
+          ${row.sequence},
           ${row.requestedAt},
           NULL,
           NULL,
@@ -157,6 +175,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           pending_message_id AS "messageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
+          sequence,
           requested_at AS "requestedAt"
         FROM projection_turns
         WHERE thread_id = ${threadId}
@@ -164,7 +183,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           AND state = 'pending'
           AND pending_message_id IS NOT NULL
           AND checkpoint_turn_count IS NULL
-        ORDER BY requested_at DESC
+        ORDER BY sequence DESC, requested_at DESC
         LIMIT 1
       `,
   });
@@ -182,6 +201,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           source_proposed_plan_id AS "sourceProposedPlanId",
           assistant_message_id AS "assistantMessageId",
           state,
+          sequence,
           requested_at AS "requestedAt",
           started_at AS "startedAt",
           completed_at AS "completedAt",
@@ -197,6 +217,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
             ELSE 0
           END ASC,
           checkpoint_turn_count ASC,
+          sequence ASC,
           requested_at ASC,
           turn_id ASC
       `,
@@ -215,6 +236,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           source_proposed_plan_id AS "sourceProposedPlanId",
           assistant_message_id AS "assistantMessageId",
           state,
+          sequence,
           requested_at AS "requestedAt",
           started_at AS "startedAt",
           completed_at AS "completedAt",

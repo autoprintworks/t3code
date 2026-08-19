@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { ChatAttachment } from "@t3tools/contracts";
+import { ChatAttachment, NonNegativeInt } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -21,6 +21,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    sequence: NonNegativeInt,
   }),
 );
 
@@ -34,6 +35,7 @@ function toProjectionThreadMessage(
     role: row.role,
     text: row.text,
     isStreaming: row.isStreaming === 1,
+    sequence: row.sequence,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
@@ -57,6 +59,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json,
           is_streaming,
+          sequence,
           created_at,
           updated_at
         )
@@ -75,6 +78,18 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             )
           ),
           ${row.isStreaming ? 1 : 0},
+          -- A streaming message is upserted on every chunk; it keeps the
+          -- sequence of the event that opened it. 0 marks a row whose
+          -- originating event is unknown, and sorts first.
+          COALESCE(
+            ${row.sequence ?? null},
+            (
+              SELECT sequence
+              FROM projection_thread_messages
+              WHERE message_id = ${row.messageId}
+            ),
+            0
+          ),
           ${row.createdAt},
           ${row.updatedAt}
         )
@@ -89,6 +104,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             projection_thread_messages.attachments_json
           ),
           is_streaming = excluded.is_streaming,
+          sequence = excluded.sequence,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
       `;
@@ -108,6 +124,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
+          sequence,
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -129,11 +146,15 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
+          sequence,
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, message_id ASC
+        ORDER BY
+          sequence ASC,
+          created_at ASC,
+          message_id ASC
       `,
   });
 
