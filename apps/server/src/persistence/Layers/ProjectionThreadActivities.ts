@@ -89,11 +89,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           created_at AS "createdAt"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
-        ORDER BY
-          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
-          sequence ASC,
-          created_at ASC,
-          activity_id ASC
+        ORDER BY sequence ASC, created_at ASC, activity_id ASC
       `,
   });
 
