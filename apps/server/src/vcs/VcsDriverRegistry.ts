@@ -12,7 +12,13 @@ import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 
 const DETECTION_CACHE_CAPACITY = 2_048;
-const DETECTION_CACHE_TTL = Duration.seconds(2);
+/**
+ * Detection resolves a working directory to its repository root and metadata
+ * path, which is stable for the life of the directory. The old two-second TTL
+ * meant a routine status poll re-spawned git most times it ran. Negative
+ * results are still not cached, so `git init` is picked up immediately.
+ */
+const DETECTION_CACHE_TTL = Duration.seconds(60);
 
 export interface VcsDriverResolveInput {
   readonly cwd: string;

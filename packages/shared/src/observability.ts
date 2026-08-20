@@ -126,9 +126,38 @@ export interface TraceSink {
   close: () => Effect.Effect<void>;
 }
 
+/**
+ * Default floor for writing a finished span. Sub-millisecond successful spans
+ * (`sql.execute` and friends) dominate trace volume while telling a latency
+ * diagnosis nothing; failures, roots, and anything slow are always written.
+ * Set the floor to 0 to record every span again.
+ */
+export const DEFAULT_TRACE_MIN_DURATION_MS = 1;
+
 export interface LocalFileTracerOptions extends TraceSinkOptions {
   readonly delegate?: Tracer.Tracer;
   readonly sink?: TraceSink;
+  /**
+   * Spans faster than this are dropped unless they failed, were interrupted,
+   * are root spans, or carry events or links. Defaults to
+   * `DEFAULT_TRACE_MIN_DURATION_MS`; 0 keeps every span.
+   */
+  readonly minDurationMs?: number;
+}
+
+/**
+ * The write/drop rule for one finished span. Exported so the desktop stream and
+ * the tests can assert the same policy the server uses.
+ */
+export function shouldRecordTraceSpan(
+  record: Pick<EffectTraceRecord, "durationMs" | "exit" | "parentSpanId" | "events" | "links">,
+  minDurationMs: number,
+): boolean {
+  if (minDurationMs <= 0) return true;
+  if (record.durationMs >= minDurationMs) return true;
+  if (record.exit._tag !== "Success") return true;
+  if (record.parentSpanId === undefined) return true;
+  return record.events.length > 0 || record.links.length > 0;
 }
 
 type OtlpSpan = OtlpTracer.ScopeSpan["spans"][number];
@@ -446,14 +475,17 @@ class LocalFileSpan implements Tracer.Span {
   events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]>;
   private readonly delegate: Tracer.Span;
   private readonly push: (record: EffectTraceRecord) => void;
+  private readonly minDurationMs: number;
 
   constructor(
     options: Parameters<Tracer.Tracer["span"]>[0],
     delegate: Tracer.Span,
     push: (record: EffectTraceRecord) => void,
+    minDurationMs: number,
   ) {
     this.delegate = delegate;
     this.push = push;
+    this.minDurationMs = minDurationMs;
     this.name = delegate.name;
     this.spanId = delegate.spanId;
     this.traceId = delegate.traceId;
@@ -479,8 +511,12 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, exit);
 
-    if (this.sampled) {
-      this.push(spanToTraceRecord(this));
+    if (!this.sampled) {
+      return;
+    }
+    const record = spanToTraceRecord(this);
+    if (shouldRecordTraceSpan(record, this.minDurationMs)) {
+      this.push(record);
     }
   }
 
@@ -520,9 +556,11 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
       span: (spanOptions) => new Tracer.NativeSpan(spanOptions),
     });
 
+  const minDurationMs = options.minDurationMs ?? DEFAULT_TRACE_MIN_DURATION_MS;
+
   return Tracer.make({
     span(spanOptions) {
-      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), sink.push);
+      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), sink.push, minDurationMs);
     },
     ...(delegate.context ? { context: delegate.context } : {}),
   });

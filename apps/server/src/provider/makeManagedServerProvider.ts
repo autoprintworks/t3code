@@ -24,6 +24,23 @@ interface ProviderSnapshotState {
   readonly enrichmentGeneration: number;
 }
 
+/**
+ * A provider whose CLI is absent answers the same way every minute, and each
+ * answer costs a PATH walk plus a spawn. Back the poll off geometrically while
+ * the CLI stays missing; a settings change or an explicit refresh resets it, so
+ * installing the CLI is still picked up promptly.
+ */
+const MISSING_PROVIDER_MAX_REFRESH_INTERVAL = Duration.minutes(30);
+const MISSING_PROVIDER_MAX_BACKOFF_STEPS = 10;
+
+const resolveMissingProviderInterval = (baseMillis: number, consecutiveMisses: number) =>
+  consecutiveMisses <= 0
+    ? baseMillis
+    : Math.min(
+        baseMillis * 2 ** Math.min(consecutiveMisses, MISSING_PROVIDER_MAX_BACKOFF_STEPS),
+        Duration.toMillis(MISSING_PROVIDER_MAX_REFRESH_INTERVAL),
+      );
+
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
@@ -60,6 +77,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
+  const consecutiveMissingChecksRef = yield* Ref.make(0);
   const scope = yield* Effect.scope;
 
   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
@@ -183,35 +201,45 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   }
 
+  // Any settings change is a reason to re-probe now rather than after the
+  // missing-CLI backoff, so clear the backoff before applying.
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
-    Effect.asVoid(applySnapshot(nextSettings)),
-  ).pipe(Effect.forkScoped);
-
-  yield* Effect.forever(
-    getRefreshInterval.pipe(
-      Effect.flatMap((refreshInterval) =>
-        Effect.raceFirst(
-          Effect.sleep(
-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0
-              ? "60 seconds"
-              : refreshInterval,
-          ).pipe(Effect.as(true)),
-          Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
-        ).pipe(
-          Effect.flatMap((intervalElapsed) =>
-            intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
-              ? hasProviderStatusDemand.pipe(
-                  Effect.flatMap((shouldRefresh) =>
-                    shouldRefresh ? refreshSnapshot().pipe(Effect.asVoid) : Effect.void,
-                  ),
-                )
-              : Effect.void,
-          ),
-        ),
-      ),
-      Effect.ignoreCause({ log: true }),
+    Ref.set(consecutiveMissingChecksRef, 0).pipe(
+      Effect.andThen(Effect.asVoid(applySnapshot(nextSettings))),
     ),
   ).pipe(Effect.forkScoped);
+
+  const refreshTick = Effect.gen(function* () {
+    const refreshInterval = yield* getRefreshInterval;
+    const baseMillis = Duration.toMillis(Duration.fromInputUnsafe(refreshInterval));
+    const consecutiveMisses = yield* Ref.get(consecutiveMissingChecksRef);
+    const sleepMillis =
+      baseMillis <= 0 ? 60_000 : resolveMissingProviderInterval(baseMillis, consecutiveMisses);
+
+    const intervalElapsed = yield* Effect.raceFirst(
+      Effect.sleep(sleepMillis).pipe(Effect.as(true)),
+      Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
+    );
+    if (!intervalElapsed || baseMillis <= 0) {
+      return;
+    }
+
+    const shouldRefresh = yield* hasProviderStatusDemand;
+    if (!shouldRefresh) {
+      return;
+    }
+    const nextSnapshot = yield* refreshSnapshot();
+    yield* Ref.set(
+      consecutiveMissingChecksRef,
+      nextSnapshot.installed
+        ? 0
+        : Math.min(consecutiveMisses + 1, MISSING_PROVIDER_MAX_BACKOFF_STEPS),
+    );
+  });
+
+  yield* Effect.forever(refreshTick.pipe(Effect.ignoreCause({ log: true }))).pipe(
+    Effect.forkScoped,
+  );
 
   yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
     Effect.ignoreCause({ log: true }),
@@ -221,7 +249,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     maintenanceCapabilities: input.maintenanceCapabilities,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-    refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    refresh: Ref.set(consecutiveMissingChecksRef, 0).pipe(
+      Effect.andThen(refreshSnapshot()),
+      Effect.tapError(Effect.logError),
+      Effect.orDie,
+    ),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

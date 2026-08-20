@@ -63,6 +63,7 @@ export const ObservabilityLive = Layer.unwrap(
           maxBytes: config.traceMaxBytes,
           maxFiles: config.traceMaxFiles,
           batchWindowMs: config.traceBatchWindowMs,
+          minDurationMs: config.traceMinDurationMs,
           sink,
           ...(delegate ? { delegate } : {}),
         });

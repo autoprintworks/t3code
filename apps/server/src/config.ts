@@ -6,6 +6,7 @@
  *
  * @module ServerConfig
  */
+import { DEFAULT_TRACE_MIN_DURATION_MS } from "@t3tools/shared/observability";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -59,6 +60,8 @@ export class ServerConfig extends Context.Service<
     readonly traceMinLevel: LogLevel.LogLevel;
     readonly traceTimingEnabled: boolean;
     readonly traceBatchWindowMs: number;
+    /** Duration floor for writing a span; 0 records every span. */
+    readonly traceMinDurationMs: number;
     readonly traceMaxBytes: number;
     readonly traceMaxFiles: number;
     readonly otlpTracesUrl: string | undefined;
@@ -172,6 +175,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     traceMinLevel: "Info",
     traceTimingEnabled: true,
     traceBatchWindowMs: 200,
+    traceMinDurationMs: DEFAULT_TRACE_MIN_DURATION_MS,
     traceMaxBytes: 10 * 1024 * 1024,
     traceMaxFiles: 10,
     otlpTracesUrl: undefined,

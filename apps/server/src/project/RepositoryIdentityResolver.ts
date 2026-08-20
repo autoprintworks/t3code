@@ -13,13 +13,25 @@ import * as Layer from "effect/Layer";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
-const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(10);
+const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(2);
+/**
+ * A working directory's repository root is stable for the life of the
+ * directory, so resolving it deserves the same caching the identity gets.
+ * Without it every resolve spawned `git rev-parse --show-toplevel` before it
+ * could even look in the identity cache, which is one spawn per project on
+ * every projection snapshot.
+ */
+const DEFAULT_ROOT_PATH_CACHE_TTL = Duration.minutes(10);
+/** Shorter, so `git init` in a plain directory is picked up promptly. */
+const DEFAULT_UNRESOLVED_ROOT_PATH_CACHE_TTL = Duration.seconds(30);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  readonly rootPathCacheTtl?: Duration.Input;
+  readonly unresolvedRootPathCacheTtl?: Duration.Input;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
@@ -87,10 +99,14 @@ function buildRepositoryIdentity(input: {
   };
 }
 
-const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
+/**
+ * Resolves a working directory to its repository root, or `null` when the
+ * directory is not inside a repository. Callers fall back to the directory
+ * itself; `null` is kept distinct so the cache can expire it sooner.
+ */
+const resolveRepositoryRootPath = Effect.fn("RepositoryIdentityResolver.resolveRootPath")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
-    let cacheKey = cwd;
 
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
@@ -102,15 +118,11 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       })
       .pipe(Effect.option);
     if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-      return cacheKey;
+      return null;
     }
 
     const candidate = topLevelResult.value.stdout.trim();
-    if (candidate.length > 0) {
-      cacheKey = candidate;
-    }
-
-    return cacheKey;
+    return candidate.length > 0 ? candidate : null;
   },
 );
 
@@ -157,13 +169,28 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     },
   );
 
+  const repositoryRootPathCache = yield* Cache.makeWith<string, string | null>(
+    (cwd) =>
+      resolveRepositoryRootPath(cwd).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+      ),
+    {
+      capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
+      timeToLive: Exit.match({
+        onSuccess: (rootPath) =>
+          rootPath === null
+            ? (options.unresolvedRootPathCacheTtl ?? DEFAULT_UNRESOLVED_ROOT_PATH_CACHE_TTL)
+            : (options.rootPathCacheTtl ?? DEFAULT_ROOT_PATH_CACHE_TTL),
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd) {
-    const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
-      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-    );
-    return yield* Cache.get(repositoryIdentityCache, cacheKey);
+    const rootPath = yield* Cache.get(repositoryRootPathCache, cwd);
+    return yield* Cache.get(repositoryIdentityCache, rootPath ?? cwd);
   });
 
   return RepositoryIdentityResolver.of({ resolve });

@@ -19,6 +19,7 @@ import {
   errorTag,
   makeLocalFileTracer,
   makeTraceSink,
+  shouldRecordTraceSpan,
   type TraceRecord,
   type TraceSinkFlushStats,
   truncateTraceAttributes,
@@ -104,6 +105,8 @@ const makeTestLayer = (tracePath: string) =>
         maxBytes: 1024 * 1024,
         maxFiles: 2,
         batchWindowMs: 10_000,
+        // These tests assert on spans that finish in microseconds.
+        minDurationMs: 0,
       }),
     ),
     Logger.layer([Logger.tracerLogger], { mergeWithExisting: false }),
@@ -111,6 +114,54 @@ const makeTestLayer = (tracePath: string) =>
   );
 
 const nodeServicesIt = it.layer(NodeServices.layer);
+
+type TraceSpanCandidate = Parameters<typeof shouldRecordTraceSpan>[0];
+
+const traceSpanCandidate = (overrides?: Partial<TraceSpanCandidate>): TraceSpanCandidate => ({
+  durationMs: 0.05,
+  exit: { _tag: "Success" },
+  parentSpanId: "parent",
+  events: [],
+  links: [],
+  ...overrides,
+});
+
+describe("shouldRecordTraceSpan", () => {
+  it("drops fast successful child spans", () => {
+    assert.equal(shouldRecordTraceSpan(traceSpanCandidate(), 1), false);
+  });
+
+  it("keeps every span when the floor is zero", () => {
+    assert.equal(shouldRecordTraceSpan(traceSpanCandidate(), 0), true);
+  });
+
+  it("keeps spans at or above the floor", () => {
+    assert.equal(shouldRecordTraceSpan(traceSpanCandidate({ durationMs: 1 }), 1), true);
+  });
+
+  it("keeps failures, interrupts, roots, and spans carrying detail", () => {
+    const rootSpan: TraceSpanCandidate = {
+      durationMs: 0.05,
+      exit: { _tag: "Success" },
+      events: [],
+      links: [],
+    };
+    const kept: ReadonlyArray<TraceSpanCandidate> = [
+      traceSpanCandidate({ exit: { _tag: "Failure", cause: "boom" } }),
+      traceSpanCandidate({ exit: { _tag: "Interrupted", cause: "interrupted" } }),
+      rootSpan,
+      traceSpanCandidate({
+        events: [{ name: "retry", timeUnixNano: "0", attributes: {} }],
+      }),
+      traceSpanCandidate({
+        links: [{ traceId: "trace", spanId: "span", attributes: {} }],
+      }),
+    ];
+    for (const candidate of kept) {
+      assert.equal(shouldRecordTraceSpan(candidate, 1), true);
+    }
+  });
+});
 
 describe("truncateTraceAttributes", () => {
   it("clamps oversized strings at any depth without mutating the input", () => {
