@@ -21,6 +21,7 @@ import {
   ensureTailscaleServe,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
+import { DEFAULT_TRACE_MIN_DURATION_MS } from "@t3tools/shared/observability";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -326,6 +327,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
     traceMinLevel: "Info",
     traceTimingEnabled: false,
     traceBatchWindowMs: 1_000,
+    traceMinDurationMs: DEFAULT_TRACE_MIN_DURATION_MS,
     traceMaxBytes: 10 * 1024 * 1024,
     traceMaxFiles: 10,
     otlpTracesUrl: undefined,

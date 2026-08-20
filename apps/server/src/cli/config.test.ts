@@ -44,6 +44,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     traceMinLevel: "Info",
     traceTimingEnabled: true,
     traceBatchWindowMs: 1_000,
+    traceMinDurationMs: 1,
     traceMaxBytes: 10 * 1024 * 1024,
     traceMaxFiles: 10,
     otlpTracesUrl: undefined,

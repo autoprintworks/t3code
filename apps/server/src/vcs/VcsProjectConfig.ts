@@ -1,4 +1,6 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -21,6 +23,15 @@ const ProjectVcsConfigJson = fromLenientJson(ProjectVcsConfig);
 const decodeProjectVcsConfigJson = Schema.decodeUnknownEffect(ProjectVcsConfigJson);
 
 type ProjectVcsConfigFile = typeof ProjectVcsConfig.Type;
+
+/**
+ * `resolveKind` runs on every driver detection, and each miss stats
+ * `.t3code/vcs.json` at every ancestor directory up to the filesystem root.
+ * A project's VCS kind almost never changes, so cache the answer per working
+ * directory; the TTL keeps an edited config from needing a restart.
+ */
+const RESOLVED_KIND_CACHE_CAPACITY = 2_048;
+const RESOLVED_KIND_CACHE_TTL = Duration.minutes(5);
 
 export interface VcsProjectConfigResolveInput {
   readonly cwd: string;
@@ -127,18 +138,14 @@ export const make = Effect.gen(function* () {
     return configuredKind(parsed);
   });
 
-  const resolveKind: VcsProjectConfig["Service"]["resolveKind"] = Effect.fn(
-    "VcsProjectConfig.resolveKind",
-  )(function* (input) {
-    if (input.requestedKind !== undefined && input.requestedKind !== "auto") {
-      return input.requestedKind;
-    }
-
-    return yield* findConfigPath(input.cwd).pipe(
+  const resolveConfiguredKind = Effect.fn("VcsProjectConfig.resolveConfiguredKind")(function* (
+    cwd: string,
+  ) {
+    return yield* findConfigPath(cwd).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.succeed("auto" as const),
-          onSome: (configPath) => readConfiguredKind(input.cwd, configPath),
+          onSome: (configPath) => readConfiguredKind(cwd, configPath),
         }),
       ),
       Effect.catchTags({
@@ -146,6 +153,22 @@ export const make = Effect.gen(function* () {
           logVcsProjectConfigError(error).pipe(Effect.as("auto" as const)),
       }),
     );
+  });
+
+  const resolvedKindCache = yield* Cache.make({
+    lookup: resolveConfiguredKind,
+    capacity: RESOLVED_KIND_CACHE_CAPACITY,
+    timeToLive: RESOLVED_KIND_CACHE_TTL,
+  });
+
+  const resolveKind: VcsProjectConfig["Service"]["resolveKind"] = Effect.fn(
+    "VcsProjectConfig.resolveKind",
+  )(function* (input) {
+    if (input.requestedKind !== undefined && input.requestedKind !== "auto") {
+      return input.requestedKind;
+    }
+
+    return yield* Cache.get(resolvedKindCache, input.cwd);
   });
 
   return VcsProjectConfig.of({

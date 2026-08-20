@@ -93,6 +93,15 @@ const enrichedSnapshot: ServerProvider = {
   ],
 };
 
+const missingSnapshot: ServerProvider = {
+  ...refreshedSnapshot,
+  installed: false,
+  version: null,
+  status: "error",
+  auth: { status: "unknown" },
+  message: "Codex CLI (`codex`) is not installed or not on PATH.",
+};
+
 const refreshedSnapshotSecond: ServerProvider = {
   ...refreshedSnapshot,
   checkedAt: "2026-04-10T00:00:03.000Z",
@@ -246,6 +255,90 @@ describe("makeManagedServerProvider", () => {
         yield* Effect.yieldNow;
 
         assert.strictEqual(yield* Ref.get(checkCalls), 1);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(AlwaysRunTestLayer, TestClock.layer()))),
+  );
+
+  it.effect("backs the refresh loop off while the provider CLI stays missing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap(() => Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)),
+            Effect.as(missingSnapshot),
+          ),
+          refreshInterval: "1 second",
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+
+        // First tick still runs on the configured interval.
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+
+        // The CLI was missing, so the next tick waits twice as long.
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 3);
+
+        // And twice as long again after the second miss.
+        yield* TestClock.adjust("3 seconds");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 3);
+
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 4);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(AlwaysRunTestLayer, TestClock.layer()))),
+  );
+
+  it.effect("clears the missing-CLI backoff once the provider check succeeds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap(() => Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)),
+            // Missing on the first periodic tick, installed from then on.
+            Effect.map((count) => (count === 2 ? missingSnapshot : refreshedSnapshot)),
+          ),
+          refreshInterval: "1 second",
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+
+        // Backed off to two seconds, and that tick reports the CLI installed.
+        yield* TestClock.adjust("2 seconds");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 3);
+
+        // Back on the configured interval.
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 4);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(AlwaysRunTestLayer, TestClock.layer()))),
   );

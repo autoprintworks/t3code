@@ -1,6 +1,7 @@
 import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
+import { DEFAULT_TRACE_MIN_DURATION_MS } from "@t3tools/shared/observability";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -86,6 +87,9 @@ const EnvServerConfig = Config.all({
   traceMaxBytes: Config.int("T3CODE_TRACE_MAX_BYTES").pipe(Config.withDefault(10 * 1024 * 1024)),
   traceMaxFiles: Config.int("T3CODE_TRACE_MAX_FILES").pipe(Config.withDefault(10)),
   traceBatchWindowMs: Config.int("T3CODE_TRACE_BATCH_WINDOW_MS").pipe(Config.withDefault(1_000)),
+  traceMinDurationMs: Config.int("T3CODE_TRACE_MIN_DURATION_MS").pipe(
+    Config.withDefault(DEFAULT_TRACE_MIN_DURATION_MS),
+  ),
   otlpTracesUrl: Config.string("T3CODE_OTLP_TRACES_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -354,6 +358,7 @@ export const resolveServerConfig = (
       traceMinLevel: env.traceMinLevel,
       traceTimingEnabled: env.traceTimingEnabled,
       traceBatchWindowMs: env.traceBatchWindowMs,
+      traceMinDurationMs: env.traceMinDurationMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
       otlpTracesUrl:

@@ -597,6 +597,7 @@ const tracerLayer = Layer.unwrap(
       maxBytes: DESKTOP_LOG_FILE_MAX_BYTES,
       maxFiles: DESKTOP_LOG_FILE_MAX_FILES,
       batchWindowMs: DESKTOP_TRACE_BATCH_WINDOW_MS,
+      minDurationMs: environment.traceMinDurationMs,
       sink,
       ...(delegate ? { delegate } : {}),
     });

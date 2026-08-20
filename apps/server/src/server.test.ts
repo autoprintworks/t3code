@@ -431,6 +431,7 @@ const buildAppUnderTest = (options?: {
       traceMinLevel: "Info",
       traceTimingEnabled: true,
       traceBatchWindowMs: 200,
+      traceMinDurationMs: 0,
       traceMaxBytes: 10 * 1024 * 1024,
       traceMaxFiles: 10,
       otlpTracesUrl: undefined,

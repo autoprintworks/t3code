@@ -441,13 +441,53 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         : {}),
     });
 
+  /**
+   * `git rev-parse` answers several questions in one run and prints one line
+   * per question in order, so detection costs a single spawn instead of three.
+   * Spawning is the expensive part of detection on Windows, and detection runs
+   * for every watched project.
+   */
+  const detectRepositoryFromCombinedRevParse = Effect.fn("GitVcsDriver.detectRepository.combined")(
+    function* (cwd: string) {
+      const result = yield* gitCommand(
+        vcsProcess,
+        "GitVcsDriver.detectRepository",
+        cwd,
+        ["rev-parse", "--is-inside-work-tree", "--show-toplevel", "--git-common-dir"],
+        { allowNonZeroExit: true, timeoutMs: 10_000, maxOutputBytes: 16_384 },
+      );
+      const [insideWorkTree = "", rootPath = "", metadataPath = ""] = result.stdout
+        .split("\n")
+        .map((line) => line.trim());
+      // A bare repository prints "false" and then fails on --show-toplevel, so the
+      // first line decides even when the exit code is non-zero.
+      if (insideWorkTree !== "true") {
+        return { detected: null } as const;
+      }
+      if (result.exitCode !== 0 || rootPath.length === 0) {
+        return { detected: undefined } as const;
+      }
+      return {
+        detected: {
+          kind: "git" as const,
+          rootPath,
+          metadataPath: metadataPath.length > 0 ? metadataPath : null,
+          freshness: yield* nowFreshness(),
+        },
+      } as const;
+    },
+  );
+
   const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
   )(function* (cwd) {
-    if (!(yield* isInsideWorkTree(cwd))) {
-      return null;
+    const combined = yield* detectRepositoryFromCombinedRevParse(cwd);
+    if (combined.detected !== undefined) {
+      return combined.detected;
     }
 
+    // The combined run said "inside a work tree" but gave no root. Fall back to
+    // the per-question runs so the real git error surfaces.
     const root = yield* gitCommand(vcsProcess, "GitVcsDriver.detectRepository.root", cwd, [
       "rev-parse",
       "--show-toplevel",
