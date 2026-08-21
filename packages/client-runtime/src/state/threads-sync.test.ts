@@ -314,6 +314,8 @@ const deleted = (): OrchestrationThreadStreamItem => ({
   },
 });
 
+const archived = (): OrchestrationThreadStreamItem => ({ kind: "archived" });
+
 describe("EnvironmentThreads", () => {
   it.effect("publishes cached data immediately from a warm cache", () =>
     Effect.gen(function* () {
@@ -484,6 +486,32 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect(
+    "reaches a terminal archived state instead of retrying, and keeps the loaded data",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ cached: BASE_THREAD });
+        yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+        yield* Queue.offer(harness.inputs, archived());
+
+        const state = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "archived",
+        );
+
+        // Unlike a delete, the loaded thread data survives: an archived
+        // thread is still viewable, just no longer live.
+        expect(Option.isSome(state.data)).toBe(true);
+
+        // The server completed the subscription stream normally (no error)
+        // on archiving, so nothing here should have triggered a retry.
+        const subscriptionCountAtArchive = yield* Ref.get(harness.subscriptionCount);
+        yield* TestClock.adjust("1 hour");
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(subscriptionCountAtArchive);
+      }),
+  );
+
   it.effect("preserves data after a domain failure and resumes on a replacement session", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });
@@ -523,6 +551,36 @@ describe("EnvironmentThreads", () => {
       expect(Option.isNone(recovered.error)).toBe(true);
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
     }),
+  );
+
+  it.effect(
+    "stops retrying an expected failure after a bounded number of attempts instead of hammering forever",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Queue.offer(harness.inputs, new Error("Thread thread-1 was not found"));
+
+        // Keep failing every retry and advance virtual time far past what any
+        // reasonable backoff schedule needs to reach its cap. A fixed 250ms
+        // retry with no cap would produce thousands of attempts here,
+        // matching the measured production incident (4,800 failures in 20.9
+        // minutes against two archived threads).
+        for (let i = 0; i < 4000; i += 1) {
+          yield* TestClock.adjust("250 millis");
+          yield* Effect.yieldNow;
+          yield* Queue.offer(harness.inputs, new Error("Thread thread-1 was not found"));
+        }
+        yield* Effect.yieldNow;
+
+        const attemptsAfterLongFailureRun = yield* Ref.get(harness.subscriptionCount);
+        expect(attemptsAfterLongFailureRun).toBeLessThan(50);
+
+        // Advancing further produces no additional attempts: the retry gave
+        // up for good instead of continuing to hammer the server.
+        yield* TestClock.adjust("1 hour");
+        yield* Effect.yieldNow;
+        expect(yield* Ref.get(harness.subscriptionCount)).toBe(attemptsAfterLongFailureRun);
+      }),
   );
 
   it.effect("recovers from a transient domain failure without replacing the session", () =>

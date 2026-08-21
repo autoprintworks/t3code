@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -584,6 +585,30 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         [ThreadId.make("thread-archived")],
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
+
+      // getThreadDetailById filters archived rows out (like the shell
+      // snapshot above), so a caller that only checks "was it found" cannot
+      // tell an archived thread from one that never existed.
+      assert.deepEqual(
+        yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-archived")),
+        Option.none(),
+      );
+
+      // getThreadLifecycleById is how a caller distinguishes the two: it
+      // reports "archived" for a thread that exists but is archived, and
+      // reports nothing at all for a thread that never existed.
+      assert.deepEqual(
+        yield* snapshotQuery.getThreadLifecycleById(ThreadId.make("thread-archived")),
+        Option.some({ archived: true }),
+      );
+      assert.deepEqual(
+        yield* snapshotQuery.getThreadLifecycleById(ThreadId.make("thread-active")),
+        Option.some({ archived: false }),
+      );
+      assert.deepEqual(
+        yield* snapshotQuery.getThreadLifecycleById(ThreadId.make("thread-does-not-exist")),
+        Option.none(),
+      );
     }),
   );
 

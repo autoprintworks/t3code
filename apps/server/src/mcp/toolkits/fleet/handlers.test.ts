@@ -82,6 +82,7 @@ const makeProjectionLayer = (
     getThreadShellById: () => Effect.die("unused"),
     getThreadDetailById: () => Effect.die("unused"),
     getThreadDetailSnapshot: () => Effect.die("unused"),
+    getThreadLifecycleById: () => Effect.die("unused"),
   });
 
 it.effect("reports the calling thread's identity from the invocation scope", () => {

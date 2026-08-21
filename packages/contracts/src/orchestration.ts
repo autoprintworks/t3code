@@ -1432,6 +1432,13 @@ export const OrchestrationThreadStreamItem = Schema.Union([
     kind: Schema.Literal("event"),
     event: OrchestrationEvent,
   }),
+  // Terminal: the thread exists but is archived, distinct from "not found"
+  // (which can mean "not ready yet" for a thread still being created). A
+  // subscriber should stop retrying on receiving this, not treat it as a
+  // transient failure.
+  Schema.Struct({
+    kind: Schema.Literal("archived"),
+  }),
 ]);
 export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem.Type;
 

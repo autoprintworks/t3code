@@ -1,7 +1,7 @@
 import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import type * as Duration from "effect/Duration";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -175,6 +175,22 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
 
+// A subscription that fails immediately every time (e.g. the target no
+// longer exists) must not retry forever at a fixed interval: that turns a
+// permanent failure into a self-inflicted load test against the server. Back
+// off exponentially from `retryExpectedFailureAfter`, capped per delay and
+// per total attempt count; a caller whose target is merely not ready yet
+// (e.g. a thread still being created) resolves well inside this budget,
+// while one whose target is gone for good gives up instead of hammering.
+const MAX_EXPECTED_FAILURE_RETRY_ATTEMPTS = 20;
+const MAX_EXPECTED_FAILURE_RETRY_DELAY_MILLIS = 30_000;
+
+function expectedFailureRetryDelay(base: Duration.Input, attempt: number): Duration.Duration {
+  const baseMillis = Duration.toMillis(base);
+  const millis = Math.min(baseMillis * 2 ** (attempt - 1), MAX_EXPECTED_FAILURE_RETRY_DELAY_MILLIS);
+  return Duration.millis(millis);
+}
+
 export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
   tag: TTag,
   makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
@@ -209,6 +225,10 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                 EnvironmentRpcStreamValue<TTag>,
                 EnvironmentRpcStreamFailure<TTag>
               >;
+              // Counts consecutive expected-failure retries against this
+              // session; a successful item resets it, so a flaky target that
+              // eventually recovers doesn't inherit a stale, long backoff.
+              let expectedFailureAttempt = 0;
               const subscribeToSession = (): Stream.Stream<
                 EnvironmentRpcStreamValue<TTag>,
                 EnvironmentRpcStreamFailure<TTag>
@@ -224,6 +244,11 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                       });
                       return method(input).pipe(
                         Stream.ensuring(completeObservation),
+                        Stream.tap(() =>
+                          Effect.sync(() => {
+                            expectedFailureAttempt = 0;
+                          }),
+                        ),
                         Stream.catchCause((cause) => {
                           const hasOnlyExpectedFailures =
                             cause.reasons.length > 0 &&
@@ -252,11 +277,20 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                             if (options.retryExpectedFailureAfter === undefined) {
                               return handled;
                             }
+                            expectedFailureAttempt += 1;
+                            if (expectedFailureAttempt > MAX_EXPECTED_FAILURE_RETRY_ATTEMPTS) {
+                              // Gave up for good: the target has failed every
+                              // attempt across the whole backoff budget, so
+                              // further retries would only keep hammering it.
+                              return handled;
+                            }
+                            const delay = expectedFailureRetryDelay(
+                              options.retryExpectedFailureAfter,
+                              expectedFailureAttempt,
+                            );
                             return handled.pipe(
                               Stream.concat(
-                                Stream.fromEffect(
-                                  Effect.sleep(options.retryExpectedFailureAfter),
-                                ).pipe(Stream.drain),
+                                Stream.fromEffect(Effect.sleep(delay)).pipe(Stream.drain),
                               ),
                               Stream.concat(subscribeToSession()),
                             );

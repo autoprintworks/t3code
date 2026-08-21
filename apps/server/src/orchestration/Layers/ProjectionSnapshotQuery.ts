@@ -980,6 +980,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  // Distinguishes "archived" from "genuinely doesn't exist" for a thread
+  // whose row `getActiveThreadRowById` filtered out. Deliberately narrow: one
+  // boolean column, no joins, so a lookup against an archived (or missing)
+  // thread stays cheap even when it happens repeatedly.
+  const getThreadLifecycleByIdRow = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    // SQLite has no boolean type: `archived_at IS NOT NULL` comes back as
+    // the integer 0 or 1, not a native boolean.
+    Result: Schema.Struct({ archived: Schema.Number }),
+    execute: ({ threadId }) =>
+      sql`
+        SELECT archived_at IS NOT NULL AS "archived"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+  });
+
   const listThreadMessageRowsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadMessageDbRowSchema,
@@ -2294,6 +2313,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const getThreadLifecycleById: ProjectionSnapshotQueryShape["getThreadLifecycleById"] = (
+    threadId,
+  ) =>
+    getThreadLifecycleByIdRow({ threadId }).pipe(
+      Effect.map(Option.map((row) => ({ archived: row.archived !== 0 }))),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadLifecycleById:query",
+          "ProjectionSnapshotQuery.getThreadLifecycleById:decodeRow",
+        ),
+      ),
+    );
+
   const getFullThreadDiffContext: NonNullable<
     ProjectionSnapshotQueryShape["getFullThreadDiffContext"]
   > = (threadId, toTurnCount) =>
@@ -2399,8 +2431,23 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const getThreadDetailByIdBounded = (threadId: ThreadId, bounds: ThreadDetailBounds | undefined) =>
     Effect.gen(function* () {
+      // Short-circuit before the other seven reads: a thread that is
+      // archived, deleted, or simply doesn't exist yet is a common lookup
+      // (a caller resubscribing to a since-archived thread) and should cost
+      // one row lookup, not eight reads plus their decode.
+      const threadRow = yield* getActiveThreadRowById({ threadId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getThreadDetailById:getThread:query",
+            "ProjectionSnapshotQuery.getThreadDetailById:getThread:decodeRow",
+          ),
+        ),
+      );
+      if (Option.isNone(threadRow)) {
+        return Option.none<OrchestrationThread>();
+      }
+
       const [
-        threadRow,
         messageRows,
         proposedPlanRows,
         activityRows,
@@ -2408,14 +2455,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         latestTurnRow,
         sessionRow,
       ] = yield* Effect.all([
-        getActiveThreadRowById({ threadId }).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadDetailById:getThread:query",
-              "ProjectionSnapshotQuery.getThreadDetailById:getThread:decodeRow",
-            ),
-          ),
-        ),
         (bounds === undefined
           ? listThreadMessageRowsByThread({ threadId })
           : listThreadMessageRowsByThreadWindow({ threadId, ...bounds })
@@ -2471,10 +2510,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ),
         ),
       ]);
-
-      if (Option.isNone(threadRow)) {
-        return Option.none<OrchestrationThread>();
-      }
 
       const thread = {
         id: threadRow.value.threadId,
@@ -2719,6 +2754,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadShellById,
     getThreadDetailById,
     getThreadDetailSnapshot,
+    getThreadLifecycleById,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

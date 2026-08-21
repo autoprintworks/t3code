@@ -197,6 +197,20 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
     window?: OrchestrationThreadDetailWindow,
   ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>, ProjectionRepositoryError>;
+
+  /**
+   * Read whether a thread is archived, without the row-hydration cost of the
+   * other thread queries.
+   *
+   * Unlike `getThreadDetailById` and friends, this does not filter out
+   * archived rows: it exists specifically to distinguish "archived" from
+   * "genuinely doesn't exist" for a caller whose lookup otherwise came back
+   * empty, so it can stop retrying instead of treating the archived thread
+   * as merely not ready yet.
+   */
+  readonly getThreadLifecycleById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<{ readonly archived: boolean }>, ProjectionRepositoryError>;
 }
 
 /**
