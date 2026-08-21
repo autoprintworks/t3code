@@ -1371,6 +1371,26 @@ const makeWsRpcLayer = (
                 );
 
               if (Option.isNone(snapshot)) {
+                // Archived and "genuinely doesn't exist" both read as a miss
+                // above; distinguish them so a subscriber whose thread was
+                // archived gets a terminal item it can stop on, instead of an
+                // error it retries forever against (the retry storm this
+                // guards against: an archived thread hammered at a fixed
+                // interval because "not found" looked transient).
+                const lifecycle = yield* projectionSnapshotQuery
+                  .getThreadLifecycleById(input.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to load thread ${input.threadId} lifecycle`,
+                          cause,
+                        }),
+                    ),
+                  );
+                if (Option.isSome(lifecycle) && lifecycle.value.archived) {
+                  return Stream.make({ kind: "archived" as const });
+                }
                 return yield* new OrchestrationGetSnapshotError({
                   message: `Thread ${input.threadId} was not found`,
                   cause: input.threadId,

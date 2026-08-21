@@ -1,7 +1,13 @@
 import type { OrchestrationThread } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
-export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
+export type EnvironmentThreadStatus =
+  | "empty"
+  | "cached"
+  | "synchronizing"
+  | "live"
+  | "deleted"
+  | "archived";
 
 /**
  * Pagination state for a windowed thread. Present only when the loaded thread

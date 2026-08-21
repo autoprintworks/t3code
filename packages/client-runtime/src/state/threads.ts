@@ -40,6 +40,13 @@ function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): Enviro
   return Option.isSome(data) ? "cached" : "empty";
 }
 
+// Deleted and archived are both terminal: once set, nothing should flip the
+// thread back into "empty"/"synchronizing"/"live", and no further
+// subscription attempt should run against it.
+function isTerminalStatus(status: EnvironmentThreadStatus): boolean {
+  return status === "deleted" || status === "archived";
+}
+
 /**
  * Turn window sizes for paginated thread loads: the initial page covers the
  * last 10 user-anchored turns (subagent/fan-out turns ride along), each
@@ -210,7 +217,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
 
   const setSynchronizing = SubscriptionRef.update(state, (current) =>
-    current.status === "deleted"
+    isTerminalStatus(current.status)
       ? current
       : {
           ...current,
@@ -219,7 +226,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         },
   );
   const setReady = SubscriptionRef.update(state, (current) =>
-    current.status === "live" || current.status === "deleted"
+    current.status === "live" || isTerminalStatus(current.status)
       ? current
       : {
           ...current,
@@ -237,7 +244,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     yield* Ref.set(paginationSupported, false);
     yield* SubscriptionRef.update(state, (current) => ({
       ...current,
-      status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
+      status: isTerminalStatus(current.status)
+        ? current.status
+        : statusWithoutLiveData(current.data),
     }));
   });
   const setStreamError = (cause: Cause.Cause<unknown>) =>
@@ -245,8 +254,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       Effect.andThen(
         SubscriptionRef.update(state, (current) => ({
           ...current,
-          status:
-            current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
+          status: isTerminalStatus(current.status)
+            ? current.status
+            : statusWithoutLiveData(current.data),
           error: Option.some(formatThreadError(cause)),
         })),
       ),
@@ -313,6 +323,20 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  // Unlike setDeleted, this keeps the loaded data: an archived thread is
+  // still viewable, just not "live" and not worth retrying a subscription
+  // against. Mirrors the deleted path structurally (threads.ts:302) so both
+  // terminal states are handled the same shape, but does not touch the
+  // cache or bump historyEpoch since nothing here invalidates prior data.
+  const setArchived = Effect.fn("EnvironmentThreadState.setArchived")(function* () {
+    yield* Ref.set(awaitingCompletion, false);
+    yield* SubscriptionRef.update(state, (current) => ({
+      ...current,
+      status: "archived" as const,
+      error: Option.none(),
+    }));
+  });
+
   // Body of applyItem, running under applyLock.
   const applyItemLocked = Effect.fn("EnvironmentThreadState.applyItemLocked")(function* (
     item: OrchestrationThreadStreamItem,
@@ -320,10 +344,19 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
       yield* SubscriptionRef.update(state, (current) =>
-        Option.isSome(current.data) && current.status !== "deleted"
+        Option.isSome(current.data) && !isTerminalStatus(current.status)
           ? { ...current, status: "live" as const, error: Option.none() }
           : current,
       );
+      return;
+    }
+
+    if (item.kind === "archived") {
+      // Terminal: the server confirmed the thread is archived rather than
+      // merely not found yet, so there is nothing to retry (see
+      // subscribeDynamic's expected-failure backoff, which this item never
+      // triggers since it arrives on a normally completing stream).
+      yield* setArchived();
       return;
     }
 
@@ -584,13 +617,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           yield* SubscriptionRef.update(state, (value) => ({
             ...value,
             data: Option.none(),
-            status: value.status === "deleted" ? value.status : ("empty" as const),
+            status: isTerminalStatus(value.status) ? value.status : ("empty" as const),
             page: Option.none(),
           }));
           yield* SubscriptionRef.set(lastSequence, 0);
           current = yield* SubscriptionRef.get(state);
         }
-        if (Option.isNone(current.data) && current.status !== "deleted") {
+        if (Option.isNone(current.data) && !isTerminalStatus(current.status)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -621,7 +654,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         if (!supportsCompletionMarker && canResume) {
           yield* SubscriptionRef.update(state, (value) => ({
             ...value,
-            status: value.status === "deleted" ? value.status : ("live" as const),
+            status: isTerminalStatus(value.status) ? value.status : ("live" as const),
             error: Option.none(),
           }));
         }
