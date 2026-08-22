@@ -5,6 +5,7 @@
  * @module SqliteClient
  */
 import * as NodeSqlite from "node:sqlite";
+import * as NodePerfHooks from "node:perf_hooks";
 
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
@@ -18,6 +19,8 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Context from "effect/Context";
 import * as Stream from "effect/Stream";
+import * as Option from "effect/Option";
+import * as Tracer from "effect/Tracer";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as Client from "effect/unstable/sql/SqlClient";
 import type { Connection } from "effect/unstable/sql/SqlConnection";
@@ -25,6 +28,139 @@ import { SqlError, classifySqliteError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
+
+/**
+ * One completed hold of the single transaction connection permit.
+ *
+ * `sqlMs` is time spent inside SQLite on this connection while the permit was
+ * held. `holdMs - sqlMs` is the interesting number: it is time the one writer
+ * was reserved while nothing was being asked of the database, which happens
+ * whenever a transaction body yields to the scheduler.
+ */
+export interface SqlPermitHold {
+  readonly holdMs: number;
+  readonly sqlMs: number;
+  readonly statements: number;
+  /**
+   * Span names from the transaction outwards, e.g.
+   * `["sql.transaction", "ProjectionSnapshotQuery.getShellSnapshot"]`. The JS
+   * stack cannot name the caller here because the acquirer runs inside the
+   * Effect fiber loop, so the span chain is the call site.
+   */
+  readonly origin: ReadonlyArray<string>;
+  /** Raw JS stack at acquisition, kept for the rare non-Effect caller. */
+  readonly stack: string;
+}
+
+export type SqlPermitObserver = (hold: SqlPermitHold) => void;
+
+interface ActiveSqlPermitHold {
+  readonly startedAt: number;
+  readonly origin: ReadonlyArray<string>;
+  readonly stack: string;
+  sqlMs: number;
+  statements: number;
+}
+
+export interface SqlPermitObserverOptions {
+  /**
+   * Capture a JS stack and the Effect span chain at acquisition. Costs roughly
+   * ten microseconds per transaction, so a long-running observer that only
+   * needs the numbers should leave it off.
+   */
+  readonly captureStacks?: boolean;
+}
+
+let permitObserver: SqlPermitObserver | undefined;
+let permitStacks = true;
+let activeHold: ActiveSqlPermitHold | undefined;
+
+/**
+ * Attach an observer for transaction permit holds. Off by design: with no
+ * observer the client does not read the clock, capture a stack, or allocate.
+ * Returns a function that detaches it again.
+ */
+export const observeSqlPermits = (
+  observer: SqlPermitObserver,
+  options: SqlPermitObserverOptions = {},
+): (() => void) => {
+  permitObserver = observer;
+  permitStacks = options.captureStacks ?? true;
+  return () => {
+    if (permitObserver === observer) {
+      permitObserver = undefined;
+      permitStacks = true;
+      activeHold = undefined;
+    }
+  };
+};
+
+const EMPTY_ORIGIN: ReadonlyArray<string> = [];
+
+function captureHoldStack(): string {
+  const holder: { stack?: string } = {};
+  Error.captureStackTrace(holder, captureHoldStack);
+  return holder.stack ?? "";
+}
+
+const captureHoldOrigin = (context: Context.Context<never>): ReadonlyArray<string> => {
+  const names: Array<string> = [];
+  let span = Context.getOption(context, Tracer.ParentSpan);
+  while (Option.isSome(span) && names.length < 8) {
+    const current = span.value;
+    // An external span carries an id from another process and no name, so the
+    // chain ends there.
+    if (current._tag !== "Span") {
+      break;
+    }
+    names.push(current.name);
+    span = current.parent;
+  }
+  return names;
+};
+
+const beginPermitHold = (context: Context.Context<never>): void => {
+  if (permitObserver === undefined) {
+    return;
+  }
+  activeHold = {
+    startedAt: NodePerfHooks.performance.now(),
+    origin: permitStacks ? captureHoldOrigin(context) : EMPTY_ORIGIN,
+    stack: permitStacks ? captureHoldStack() : "",
+    sqlMs: 0,
+    statements: 0,
+  };
+};
+
+const endPermitHold = (): void => {
+  const hold = activeHold;
+  const observer = permitObserver;
+  activeHold = undefined;
+  if (hold === undefined || observer === undefined) {
+    return;
+  }
+  observer({
+    holdMs: NodePerfHooks.performance.now() - hold.startedAt,
+    sqlMs: hold.sqlMs,
+    statements: hold.statements,
+    origin: hold.origin,
+    stack: hold.stack,
+  });
+};
+
+/**
+ * Attribute one statement's wall time to the hold in progress. The permit is
+ * exclusive and there is one connection, so statements running during a hold
+ * belong to it.
+ */
+const recordPermitStatement = (startedAt: number): void => {
+  const hold = activeHold;
+  if (hold === undefined) {
+    return;
+  }
+  hold.sqlMs += NodePerfHooks.performance.now() - startedAt;
+  hold.statements += 1;
+};
 
 export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
@@ -163,6 +299,7 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
       raw: boolean,
     ) =>
       Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
+        const sqlStartedAt = activeHold === undefined ? 0 : NodePerfHooks.performance.now();
         try {
           statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
           if (hasRows(statement)) {
@@ -179,6 +316,10 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
               }),
             }),
           );
+        } finally {
+          if (activeHold !== undefined) {
+            recordPermitStatement(sqlStartedAt);
+          }
         }
       });
 
@@ -194,15 +335,22 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
         (statement) =>
           Effect.try({
             try: () => {
-              if (hasRows(statement)) {
-                statement.setReturnArrays(true);
-                // Safe to cast to array after we've setReturnArrays(true)
-                return statement.all(...(params as any)) as unknown as ReadonlyArray<
-                  ReadonlyArray<unknown>
-                >;
+              const sqlStartedAt = activeHold === undefined ? 0 : NodePerfHooks.performance.now();
+              try {
+                if (hasRows(statement)) {
+                  statement.setReturnArrays(true);
+                  // Safe to cast to array after we've setReturnArrays(true)
+                  return statement.all(...(params as any)) as unknown as ReadonlyArray<
+                    ReadonlyArray<unknown>
+                  >;
+                }
+                statement.run(...(params as any));
+                return [];
+              } finally {
+                if (activeHold !== undefined) {
+                  recordPermitStatement(sqlStartedAt);
+                }
               }
-              statement.run(...(params as any));
-              return [];
             },
             catch: (cause) =>
               new SqlError({
@@ -265,11 +413,19 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
   const connection = yield* makeConnection;
 
   const acquirer = semaphore.withPermits(1)(Effect.succeed(connection));
+  const releasePermit = Effect.suspend(() => {
+    endPermitHold();
+    return semaphore.release(1);
+  });
+
   const transactionAcquirer = Effect.uninterruptibleMask((restore) => {
     const fiber = Fiber.getCurrent()!;
     const scope = Context.getUnsafe(fiber.context, Scope.Scope);
     return Effect.as(
-      Effect.tap(restore(semaphore.take(1)), () => Scope.addFinalizer(scope, semaphore.release(1))),
+      Effect.tap(restore(semaphore.take(1)), () => {
+        beginPermitHold(fiber.context);
+        return Scope.addFinalizer(scope, releasePermit);
+      }),
       connection,
     );
   });
