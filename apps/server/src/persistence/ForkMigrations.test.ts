@@ -40,6 +40,7 @@ isolatedLayer()("ForkMigrations - fresh database", (it) => {
         { migration_id: 1, name: "ProjectionTranscriptSequence" },
         { migration_id: 2, name: "ProjectionThreadActivitySequenceNotNull" },
         { migration_id: 3, name: "ProjectionProjectRepositoryIdentity" },
+        { migration_id: 4, name: "ProjectionTurnsActivityAnchorBackfill" },
       ]);
     }),
   );
@@ -78,6 +79,7 @@ isolatedLayer()("ForkMigrations - legacy id 38 already applied", (it) => {
         { migration_id: 1, name: "ProjectionTranscriptSequence" },
         { migration_id: 2, name: "ProjectionThreadActivitySequenceNotNull" },
         { migration_id: 3, name: "ProjectionProjectRepositoryIdentity" },
+        { migration_id: 4, name: "ProjectionTurnsActivityAnchorBackfill" },
       ]);
 
       const activitySequence = yield* sequenceColumnInfo(sql, "projection_thread_activities");
@@ -149,6 +151,90 @@ isolatedLayer()("ForkMigrations - activity sequence backfill", (it) => {
         SELECT sequence FROM projection_thread_activities WHERE activity_id = 'activity-1'
       `;
       assert.strictEqual(rows[0]?.sequence, 1);
+    }),
+  );
+});
+
+// Fork migration 001 anchors a turn on its pending user message, then on a
+// message bound to the turn, then on an activity bound to the turn. That last
+// branch reads `projection_thread_activities.sequence`, which fork migration
+// 002 does not populate until afterwards, so before migration 004 a turn with
+// only activities to anchor on was stranded at sentinel 0 — sorting it above
+// every real turn in its thread.
+isolatedLayer()("ForkMigrations - turn anchored only by its activities", (it) => {
+  it.effect("anchors the turn on its earliest activity instead of sentinel 0", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* runMigrations();
+
+      // Two activity events, so the turn has a clear earliest sequence (1).
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json
+        ) VALUES
+          (
+            'evt-1', 'thread', 'thread-1', 1, 'thread.activity-appended',
+            '2026-08-01T00:00:00.000Z', 'system',
+            '{"threadId":"thread-1","activity":{"id":"activity-1"}}', '{}'
+          ),
+          (
+            'evt-2', 'thread', 'thread-1', 2, 'thread.activity-appended',
+            '2026-08-01T00:00:01.000Z', 'system',
+            '{"threadId":"thread-1","activity":{"id":"activity-2"}}', '{}'
+          )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        ) VALUES
+          ('activity-1', 'thread-1', 'turn-1', 'info', 'test.kind', 'a', '{}', NULL, '2026-08-01T00:00:00.000Z'),
+          ('activity-2', 'thread-1', 'turn-1', 'info', 'test.kind', 'b', '{}', NULL, '2026-08-01T00:00:01.000Z')
+      `;
+
+      // The stranding case: no pending message, and no message bound to the
+      // turn, so only the activity branch can anchor it.
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id, turn_id, pending_message_id, assistant_message_id,
+          state, requested_at, checkpoint_files_json
+        ) VALUES (
+          'thread-1', 'turn-1', NULL, NULL, 'completed', '2026-08-01T00:00:00.000Z', '[]'
+        )
+      `;
+
+      yield* runForkMigrations();
+
+      const turns = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence FROM projection_turns WHERE turn_id = 'turn-1'
+      `;
+      assert.strictEqual(turns[0]?.sequence, 1);
+    }),
+  );
+});
+
+isolatedLayer()("ForkMigrations - turn with nothing to anchor on", (it) => {
+  it.effect("leaves a turn with no messages and no activities at sentinel 0", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* runMigrations();
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id, turn_id, pending_message_id, assistant_message_id,
+          state, requested_at, checkpoint_files_json
+        ) VALUES (
+          'thread-1', 'turn-1', NULL, NULL, 'completed', '2026-08-01T00:00:00.000Z', '[]'
+        )
+      `;
+
+      yield* runForkMigrations();
+
+      const turns = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence FROM projection_turns WHERE turn_id = 'turn-1'
+      `;
+      assert.strictEqual(turns[0]?.sequence, 0);
     }),
   );
 });
