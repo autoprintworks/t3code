@@ -12,6 +12,7 @@ import {
   OrchestrationThread,
   OrchestrationThreadDetailSnapshot,
   ProjectScript,
+  RepositoryIdentity,
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
@@ -56,7 +57,6 @@ import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
 } from "../threadDetailCursor.ts";
-import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -71,6 +71,7 @@ const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapsho
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
+    repositoryIdentity: Schema.NullOr(Schema.fromJsonString(RepositoryIdentity)),
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
@@ -319,15 +320,28 @@ function mapSessionRow(
   };
 }
 
+/**
+ * The repository identity a read may serve for a project row.
+ *
+ * `RepositoryIdentityReactor` resolves identities off the read path and records
+ * the workspace root each one came from, so reads never run `git`. A project
+ * that moved folders has a stale stored root; its identity is withheld until
+ * the reactor records the new one.
+ */
+function storedRepositoryIdentity(
+  row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
+): OrchestrationProject["repositoryIdentity"] {
+  return row.repositoryIdentityWorkspaceRoot === row.workspaceRoot ? row.repositoryIdentity : null;
+}
+
 function mapProjectShellRow(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
-  repositoryIdentity: OrchestrationProject["repositoryIdentity"],
 ): OrchestrationProjectShell {
   return {
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
-    repositoryIdentity,
+    repositoryIdentity: storedRepositoryIdentity(row),
     defaultModelSelection: row.defaultModelSelection,
     scripts: row.scripts,
     createdAt: row.createdAt,
@@ -361,40 +375,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const sql = yield* SqlClient.SqlClient;
-  const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-  const repositoryIdentityResolutionConcurrency = 4;
-  const resolveRepositoryIdentitiesForProjects = Effect.fn(
-    "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
-  )(function* (
-    projectRows: ReadonlyArray<Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>>,
-    options?: {
-      readonly includeDeleted?: boolean;
-    },
-  ) {
-    const filteredProjectRows =
-      options?.includeDeleted === true
-        ? projectRows
-        : projectRows.filter((row) => row.deletedAt === null);
-    const uniqueWorkspaceRoots = [...new Set(filteredProjectRows.map((row) => row.workspaceRoot))];
-    const repositoryIdentityByWorkspaceRoot = new Map(
-      yield* Effect.forEach(
-        uniqueWorkspaceRoots,
-        (workspaceRoot) =>
-          repositoryIdentityResolver
-            .resolve(workspaceRoot)
-            .pipe(Effect.map((identity) => [workspaceRoot, identity] as const)),
-        { concurrency: repositoryIdentityResolutionConcurrency },
-      ),
-    );
-
-    return new Map(
-      filteredProjectRows.map((row) => [
-        row.projectId,
-        repositoryIdentityByWorkspaceRoot.get(row.workspaceRoot) ?? null,
-      ]),
-    );
-  });
-
   const listProjectRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionProjectDbRowSchema,
@@ -404,6 +384,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          repository_identity_json AS "repositoryIdentity",
+          repository_identity_workspace_root AS "repositoryIdentityWorkspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -856,6 +838,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          repository_identity_json AS "repositoryIdentity",
+          repository_identity_workspace_root AS "repositoryIdentityWorkspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -878,6 +862,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          repository_identity_json AS "repositoryIdentity",
+          repository_identity_workspace_root AS "repositoryIdentityWorkspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -1586,16 +1572,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 });
               }
 
-              const repositoryIdentities = yield* resolveRepositoryIdentitiesForProjects(
-                projectRows,
-                { includeDeleted: true },
-              );
-
               const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) => ({
                 id: row.projectId,
                 title: row.title,
                 workspaceRoot: row.workspaceRoot,
-                repositoryIdentity: repositoryIdentities.get(row.projectId) ?? null,
+                repositoryIdentity: storedRepositoryIdentity(row),
                 defaultModelSelection: row.defaultModelSelection,
                 scripts: row.scripts,
                 createdAt: row.createdAt,
@@ -1923,7 +1904,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               updatedAt = maxIso(updatedAt, row.updatedAt);
             }
 
-            const repositoryIdentities = yield* resolveRepositoryIdentitiesForProjects(projectRows);
             const latestTurnByThread = new Map(
               latestTurnRows.map((row) => [row.threadId, mapLatestTurn(row)] as const),
             );
@@ -1934,11 +1914,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             const snapshot = {
               snapshotSequence: computeSnapshotSequence(stateRows),
               projects: Arr.filterMap(projectRows, (row) =>
-                row.deletedAt === null
-                  ? Result.succeed(
-                      mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
-                    )
-                  : Result.failVoid,
+                row.deletedAt === null ? Result.succeed(mapProjectShellRow(row)) : Result.failVoid,
               ),
               threads: Arr.filterMap(threadRows, (row) =>
                 row.deletedAt === null
@@ -2066,9 +2042,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             }
 
             const activeProjectIds = new Set(threadRows.map((row) => row.projectId));
-            const repositoryIdentities = yield* resolveRepositoryIdentitiesForProjects(
-              projectRows.filter((row) => activeProjectIds.has(row.projectId)),
-            );
             const latestTurnByThread = new Map(
               latestTurnRows.map((row) => [row.threadId, mapLatestTurn(row)] as const),
             );
@@ -2080,9 +2053,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               snapshotSequence: computeSnapshotSequence(stateRows),
               projects: Arr.filterMap(projectRows, (row) =>
                 row.deletedAt === null && activeProjectIds.has(row.projectId)
-                  ? Result.succeed(
-                      mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
-                    )
+                  ? Result.succeed(mapProjectShellRow(row))
                   : Result.failVoid,
               ),
               threads: threadRows.map(
@@ -2205,20 +2176,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.flatMap((option) =>
           Option.isNone(option)
             ? Effect.succeed(Option.none<OrchestrationProject>())
-            : repositoryIdentityResolver.resolve(option.value.workspaceRoot).pipe(
-                Effect.map((repositoryIdentity) =>
-                  Option.some({
-                    id: option.value.projectId,
-                    title: option.value.title,
-                    workspaceRoot: option.value.workspaceRoot,
-                    repositoryIdentity,
-                    defaultModelSelection: option.value.defaultModelSelection,
-                    scripts: option.value.scripts,
-                    createdAt: option.value.createdAt,
-                    updatedAt: option.value.updatedAt,
-                    deletedAt: option.value.deletedAt,
-                  } satisfies OrchestrationProject),
-                ),
+            : Effect.succeed(
+                Option.some({
+                  id: option.value.projectId,
+                  title: option.value.title,
+                  workspaceRoot: option.value.workspaceRoot,
+                  repositoryIdentity: storedRepositoryIdentity(option.value),
+                  defaultModelSelection: option.value.defaultModelSelection,
+                  scripts: option.value.scripts,
+                  createdAt: option.value.createdAt,
+                  updatedAt: option.value.updatedAt,
+                  deletedAt: option.value.deletedAt,
+                } satisfies OrchestrationProject),
               ),
         ),
       );
@@ -2234,13 +2203,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       Effect.flatMap((option) =>
         Option.isNone(option)
           ? Effect.succeed(Option.none<OrchestrationProjectShell>())
-          : repositoryIdentityResolver
-              .resolve(option.value.workspaceRoot)
-              .pipe(
-                Effect.map((repositoryIdentity) =>
-                  Option.some(mapProjectShellRow(option.value, repositoryIdentity)),
-                ),
-              ),
+          : Effect.succeed(Option.some(mapProjectShellRow(option.value))),
       ),
     );
 

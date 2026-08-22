@@ -3,36 +3,11 @@ import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
 } from "@t3tools/shared/git";
-import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
-
-const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(10);
-const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(2);
-/**
- * A working directory's repository root is stable for the life of the
- * directory, so resolving it deserves the same caching the identity gets.
- * Without it every resolve spawned `git rev-parse --show-toplevel` before it
- * could even look in the identity cache, which is one spawn per project on
- * every projection snapshot.
- */
-const DEFAULT_ROOT_PATH_CACHE_TTL = Duration.minutes(10);
-/** Shorter, so `git init` in a plain directory is picked up promptly. */
-const DEFAULT_UNRESOLVED_ROOT_PATH_CACHE_TTL = Duration.seconds(30);
-
-export interface RepositoryIdentityResolverOptions {
-  readonly cacheCapacity?: number;
-  readonly positiveCacheTtl?: Duration.Input;
-  readonly negativeCacheTtl?: Duration.Input;
-  readonly rootPathCacheTtl?: Duration.Input;
-  readonly unresolvedRootPathCacheTtl?: Duration.Input;
-}
 
 export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
@@ -102,7 +77,7 @@ function buildRepositoryIdentity(input: {
 /**
  * Resolves a working directory to its repository root, or `null` when the
  * directory is not inside a repository. Callers fall back to the directory
- * itself; `null` is kept distinct so the cache can expire it sooner.
+ * itself.
  */
 const resolveRepositoryRootPath = Effect.fn("RepositoryIdentityResolver.resolveRootPath")(
   function* (cwd: string) {
@@ -126,16 +101,16 @@ const resolveRepositoryRootPath = Effect.fn("RepositoryIdentityResolver.resolveR
   },
 );
 
-const resolveRepositoryIdentityFromCacheKey = Effect.fn(
-  "RepositoryIdentityResolver.resolveFromCacheKey",
+const resolveRepositoryIdentityForRootPath = Effect.fn(
+  "RepositoryIdentityResolver.resolveForRootPath",
 )(function* (
-  cacheKey: string,
+  rootPath: string,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const remoteResult = yield* processRunner
     .run({
       command: "git",
-      args: ["-C", cacheKey, "remote", "-v"],
+      args: ["-C", rootPath, "remote", "-v"],
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
@@ -144,54 +119,27 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   }
 
   const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
-  return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
+  return remote ? buildRepositoryIdentity({ ...remote, rootPath }) : null;
 });
 
-export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
-  options: RepositoryIdentityResolverOptions = {},
-) {
+/**
+ * Resolving spawns `git` twice, and on Windows creating a child process blocks
+ * the Node event loop even through the asynchronous API. Only
+ * `RepositoryIdentityReactor` may call this, off the request path; read paths
+ * serve the identity recorded on the project row.
+ */
+export const make = Effect.fn("RepositoryIdentityResolver.make")(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-
-  const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
-    (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-      ),
-    {
-      capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
-      timeToLive: Exit.match({
-        onSuccess: (value) =>
-          value === null
-            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
-            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
-        onFailure: () => Duration.zero,
-      }),
-    },
-  );
-
-  const repositoryRootPathCache = yield* Cache.makeWith<string, string | null>(
-    (cwd) =>
-      resolveRepositoryRootPath(cwd).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-      ),
-    {
-      capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
-      timeToLive: Exit.match({
-        onSuccess: (rootPath) =>
-          rootPath === null
-            ? (options.unresolvedRootPathCacheTtl ?? DEFAULT_UNRESOLVED_ROOT_PATH_CACHE_TTL)
-            : (options.rootPathCacheTtl ?? DEFAULT_ROOT_PATH_CACHE_TTL),
-        onFailure: () => Duration.zero,
-      }),
-    },
-  );
 
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
-  )(function* (cwd) {
-    const rootPath = yield* Cache.get(repositoryRootPathCache, cwd);
-    return yield* Cache.get(repositoryIdentityCache, rootPath ?? cwd);
-  });
+  )(
+    function* (cwd) {
+      const rootPath = yield* resolveRepositoryRootPath(cwd);
+      return yield* resolveRepositoryIdentityForRootPath(rootPath ?? cwd);
+    },
+    Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+  );
 
   return RepositoryIdentityResolver.of({ resolve });
 });

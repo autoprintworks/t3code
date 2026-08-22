@@ -116,6 +116,12 @@ Controls how assistant text reaches the thread timeline. In [the contracts][1], 
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
 
+#### Repository identity
+
+The repository a project's workspace root belongs to, keyed by its canonical git remote. It is derived state, not user input: [RepositoryIdentityReactor.ts][26] resolves it with `git` on a background worker and records it through the `project.repository-identity-recorded` event, and [ProjectionProjects.ts][27] stores it on the project row next to the workspace root it came from.
+
+Reads never resolve it. [ProjectionSnapshotQuery.ts][10] serves the stored identity only while its recorded workspace root still equals the project's current one, so moving a project invalidates its identity with no extra write. The reactor re-resolves on project creation, on any project meta update that carries a workspace root (re-saving the folder is the user's manual refresh), and on a start-up sweep over rows whose recorded root no longer matches.
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -182,3 +188,5 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
 [25]: ../../apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts
+[26]: ../../apps/server/src/orchestration/Layers/RepositoryIdentityReactor.ts
+[27]: ../../apps/server/src/persistence/Services/ProjectionProjects.ts

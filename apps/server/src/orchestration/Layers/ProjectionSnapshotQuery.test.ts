@@ -15,7 +15,6 @@ import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
@@ -33,7 +32,6 @@ const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
-    Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -1859,31 +1857,27 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 });
 
 it.effect(
-  "ProjectionSnapshotQuery dedupes repository identity resolution by workspace root and skips deleted projects for shell snapshots",
+  "ProjectionSnapshotQuery serves stored repository identities without resolving any on the read path",
   () => {
-    const resolveCalls: string[] = [];
+    // No `RepositoryIdentityResolver` in this stack at all. The read path cannot
+    // resolve an identity, so it can only serve what `RepositoryIdentityReactor`
+    // already recorded on the row.
     const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(ThreadPlanProgress.layer),
-      Layer.provideMerge(
-        Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
-          resolve: (cwd: string) =>
-            Effect.sync(() => {
-              resolveCalls.push(cwd);
-              return {
-                canonicalKey: `github.com/acme${cwd}`,
-                locator: {
-                  source: "git-remote" as const,
-                  remoteName: "origin",
-                  remoteUrl: `https://github.com/acme${cwd}.git`,
-                },
-                rootPath: cwd,
-              };
-            }),
-        }),
-      ),
       Layer.provideMerge(SqlitePersistenceMemory),
     );
+
+    const identityJson = (rootPath: string) =>
+      JSON.stringify({
+        canonicalKey: `github.com/acme${rootPath}`,
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: `https://github.com/acme${rootPath}.git`,
+        },
+        rootPath,
+      });
 
     return Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
@@ -1899,6 +1893,8 @@ it.effect(
           project_id,
           title,
           workspace_root,
+          repository_identity_json,
+          repository_identity_workspace_root,
           default_model_selection_json,
           scripts_json,
           created_at,
@@ -1908,7 +1904,9 @@ it.effect(
         VALUES
           (
             'project-1',
-            'Shared Project 1',
+            'Resolved Project',
+            '/tmp/shared-root',
+            ${identityJson("/tmp/shared-root")},
             '/tmp/shared-root',
             '{"provider":"codex","model":"gpt-5-codex"}',
             '[]',
@@ -1918,7 +1916,9 @@ it.effect(
           ),
           (
             'project-2',
-            'Shared Project 2',
+            'Moved Project',
+            '/tmp/moved-root',
+            ${identityJson("/tmp/shared-root")},
             '/tmp/shared-root',
             '{"provider":"codex","model":"gpt-5-codex"}',
             '[]',
@@ -1930,6 +1930,8 @@ it.effect(
             'project-3',
             'Deleted Project',
             '/tmp/deleted-root',
+            ${identityJson("/tmp/deleted-root")},
+            '/tmp/deleted-root',
             '{"provider":"codex","model":"gpt-5-codex"}',
             '[]',
             '2026-04-04T00:00:04.000Z',
@@ -1939,17 +1941,28 @@ it.effect(
       `;
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
-      assert.deepStrictEqual(resolveCalls.toSorted(), ["/tmp/shared-root"]);
       assert.equal(shellSnapshot.projects.length, 2);
       assert.equal(shellSnapshot.projects[0]?.repositoryIdentity?.rootPath, "/tmp/shared-root");
-      assert.equal(shellSnapshot.projects[1]?.repositoryIdentity?.rootPath, "/tmp/shared-root");
-
-      resolveCalls.length = 0;
+      // The stored identity came from a folder this project no longer lives in,
+      // so it is withheld until the reactor records the new one.
+      assert.equal(shellSnapshot.projects[1]?.repositoryIdentity, null);
 
       const fullSnapshot = yield* snapshotQuery.getSnapshot();
-      assert.deepStrictEqual(resolveCalls.toSorted(), ["/tmp/deleted-root", "/tmp/shared-root"]);
       assert.equal(fullSnapshot.projects.length, 3);
+      assert.equal(fullSnapshot.projects[0]?.repositoryIdentity?.rootPath, "/tmp/shared-root");
+      assert.equal(fullSnapshot.projects[1]?.repositoryIdentity, null);
       assert.equal(fullSnapshot.projects[2]?.repositoryIdentity?.rootPath, "/tmp/deleted-root");
+
+      const byId = yield* snapshotQuery.getProjectShellById(asProjectId("project-2"));
+      assert.equal(Option.isSome(byId), true);
+      assert.equal(Option.isSome(byId) ? byId.value.repositoryIdentity : undefined, null);
+
+      const byRoot = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/tmp/shared-root");
+      assert.equal(Option.isSome(byRoot), true);
+      assert.equal(
+        Option.isSome(byRoot) ? byRoot.value.repositoryIdentity?.rootPath : undefined,
+        "/tmp/shared-root",
+      );
     }).pipe(Effect.provide(layer));
   },
 );

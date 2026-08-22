@@ -14,7 +14,10 @@ import * as NodeSqliteClient from "./NodeSqliteClient.ts";
 const isolatedLayer = () => it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
 const sequenceColumnInfo = (sql: SqlClient.SqlClient, table: string) =>
-  sql<{ readonly name: string; readonly notnull: number }>`PRAGMA table_info(${sql.literal(table)})`.pipe(
+  sql<{
+    readonly name: string;
+    readonly notnull: number;
+  }>`PRAGMA table_info(${sql.literal(table)})`.pipe(
     Effect.map((columns) => columns.find((column) => column.name === "sequence")),
   );
 
@@ -36,6 +39,7 @@ isolatedLayer()("ForkMigrations - fresh database", (it) => {
       assert.deepStrictEqual(forkMigrations, [
         { migration_id: 1, name: "ProjectionTranscriptSequence" },
         { migration_id: 2, name: "ProjectionThreadActivitySequenceNotNull" },
+        { migration_id: 3, name: "ProjectionProjectRepositoryIdentity" },
       ]);
     }),
   );
@@ -73,6 +77,7 @@ isolatedLayer()("ForkMigrations - legacy id 38 already applied", (it) => {
       assert.deepStrictEqual(forkMigrations, [
         { migration_id: 1, name: "ProjectionTranscriptSequence" },
         { migration_id: 2, name: "ProjectionThreadActivitySequenceNotNull" },
+        { migration_id: 3, name: "ProjectionProjectRepositoryIdentity" },
       ]);
 
       const activitySequence = yield* sequenceColumnInfo(sql, "projection_thread_activities");

@@ -6752,6 +6752,82 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("subscribeShell pushes the project after its repository identity is recorded", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-identity");
+      const now = "2026-01-01T00:00:00.000Z";
+      const repositoryIdentity = {
+        canonicalKey: "github.com/acme/widgets",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "https://github.com/acme/widgets.git",
+        },
+        rootPath: "/tmp/widgets",
+      };
+
+      const identityRecorded: OrchestrationEvent = {
+        sequence: 1,
+        eventId: EventId.make("event-identity-1"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.repository-identity-recorded",
+        payload: {
+          projectId,
+          workspaceRoot: "/tmp/widgets",
+          repositoryIdentity,
+          recordedAt: now,
+        },
+      } as OrchestrationEvent;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(1),
+            readEvents: () => Stream.fromIterable([identityRecorded]),
+          },
+          projectionSnapshotQuery: {
+            getProjectShellById: () =>
+              Effect.succeed(
+                Option.some({
+                  id: projectId,
+                  title: "Widgets",
+                  workspaceRoot: "/tmp/widgets",
+                  repositoryIdentity,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: now,
+                  updatedAt: now,
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({ afterSequence: 0 }).pipe(
+            Stream.take(1),
+            Stream.runCollect,
+          ),
+        ),
+      );
+
+      const [first] = Array.from(items);
+      assert.equal(first?.kind, "project-upserted");
+      assert.deepEqual(
+        first?.kind === "project-upserted" ? first.project.repositoryIdentity : null,
+        repositoryIdentity,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("stops the provider session and closes thread terminals after archive", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-archive");
