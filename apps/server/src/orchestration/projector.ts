@@ -14,6 +14,7 @@ import {
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
+  ProjectRepositoryIdentityRecordedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
@@ -240,7 +241,7 @@ export function projectEvent(
                   ...project,
                   ...(payload.title !== undefined ? { title: payload.title } : {}),
                   ...(payload.workspaceRoot !== undefined
-                    ? { workspaceRoot: payload.workspaceRoot }
+                    ? { workspaceRoot: payload.workspaceRoot, repositoryIdentity: null }
                     : {}),
                   ...(payload.defaultModelSelection !== undefined
                     ? { defaultModelSelection: payload.defaultModelSelection }
@@ -248,6 +249,23 @@ export function projectEvent(
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,
                 }
+              : project,
+          ),
+        })),
+      );
+
+    case "project.repository-identity-recorded":
+      return decodeForEvent(
+        ProjectRepositoryIdentityRecordedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          projects: nextBase.projects.map((project) =>
+            project.id === payload.projectId && project.workspaceRoot === payload.workspaceRoot
+              ? { ...project, repositoryIdentity: payload.repositoryIdentity }
               : project,
           ),
         })),

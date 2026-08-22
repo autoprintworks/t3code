@@ -328,6 +328,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    /**
+     * Issued by `RepositoryIdentityReactor` after it resolves a workspace root
+     * off the read path. Both misses are ordinary races with the user, not
+     * faults, so both drop the write instead of failing the batch: the project
+     * can be deleted, or moved to another folder, while `git` was running.
+     */
+    case "project.repository-identity.record": {
+      const project = readModel.projects.find((entry) => entry.id === command.projectId);
+      if (!project || project.workspaceRoot !== command.workspaceRoot) {
+        return [];
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.projectId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "project.repository-identity-recorded",
+        payload: {
+          projectId: command.projectId,
+          workspaceRoot: command.workspaceRoot,
+          repositoryIdentity: command.repositoryIdentity,
+          recordedAt: occurredAt,
+        },
+      };
+    }
+
     case "project.delete": {
       yield* requireProject({
         readModel,

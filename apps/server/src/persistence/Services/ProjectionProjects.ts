@@ -6,7 +6,13 @@
  *
  * @module ProjectionProjectRepository
  */
-import { IsoDateTime, ModelSelection, ProjectId, ProjectScript } from "@t3tools/contracts";
+import {
+  IsoDateTime,
+  ModelSelection,
+  ProjectId,
+  ProjectScript,
+  RepositoryIdentity,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -18,6 +24,19 @@ export const ProjectionProject = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
   workspaceRoot: Schema.String,
+  /**
+   * Repository identity resolved off the read path by
+   * `RepositoryIdentityReactor` and recorded through
+   * `project.repository-identity-recorded`. `null` means "no repository", not
+   * "not resolved yet" - `repositoryIdentityWorkspaceRoot` carries that.
+   */
+  repositoryIdentity: Schema.NullOr(RepositoryIdentity),
+  /**
+   * The workspace root `repositoryIdentity` was resolved from, or `null` when
+   * it has never been resolved. Reads serve the identity only while this
+   * equals `workspaceRoot`, so moving a project invalidates it by itself.
+   */
+  repositoryIdentityWorkspaceRoot: Schema.NullOr(Schema.String),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,

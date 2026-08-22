@@ -637,6 +637,21 @@ const ProjectDeleteCommand = Schema.Struct({
   force: Schema.optional(Schema.Boolean),
 });
 
+/**
+ * Records the repository identity a background reactor resolved for a project.
+ *
+ * Server-issued only. `workspaceRoot` is the directory the identity was
+ * resolved from; the decider drops the record when the project has since
+ * moved, so a slow resolve can never overwrite a newer one.
+ */
+const ProjectRepositoryIdentityRecordCommand = Schema.Struct({
+  type: Schema.Literal("project.repository-identity.record"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  workspaceRoot: TrimmedNonEmptyString,
+  repositoryIdentity: Schema.NullOr(RepositoryIdentity),
+});
+
 const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
@@ -988,6 +1003,7 @@ const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
 });
 
 const InternalOrchestrationCommand = Schema.Union([
+  ProjectRepositoryIdentityRecordCommand,
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
@@ -1008,6 +1024,7 @@ export type OrchestrationCommand = typeof OrchestrationCommand.Type;
 export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
+  "project.repository-identity-recorded",
   "project.deleted",
   "thread.created",
   "thread.deleted",
@@ -1060,6 +1077,22 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
+});
+
+export const ProjectRepositoryIdentityRecordedPayload = Schema.Struct({
+  projectId: ProjectId,
+  /**
+   * The workspace root the identity was resolved from. Reads serve the stored
+   * identity only while this still matches the project's workspace root, so
+   * moving a project invalidates its identity without a second write.
+   */
+  workspaceRoot: TrimmedNonEmptyString,
+  repositoryIdentity: Schema.NullOr(RepositoryIdentity),
+  /**
+   * When the resolution ran. Deliberately not the project's `updatedAt`: this
+   * is background bookkeeping, not a user-visible edit.
+   */
+  recordedAt: IsoDateTime,
 });
 
 export const ProjectDeletedPayload = Schema.Struct({
@@ -1286,6 +1319,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("project.meta-updated"),
     payload: ProjectMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.repository-identity-recorded"),
+    payload: ProjectRepositoryIdentityRecordedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
