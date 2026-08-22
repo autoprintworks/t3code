@@ -1,13 +1,69 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
 const repoRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Command to run the release workflow's shell steps with. Those steps mirror
+ * `.github/workflows/release.yml`, so they must keep running under a real bash
+ * rather than being ported to Node — otherwise this check stops testing the shell
+ * logic it exists to cover.
+ *
+ * On Windows a bare `"bash"` resolves to WSL's `System32\bash.exe`, which cannot
+ * read the Windows temp path these steps are pointed at, so the step fails with
+ * `Command failed: bash -lc`. Git for Windows ships a bash that understands those
+ * paths, hence looking it up by install location instead of by `PATH`.
+ */
+function resolveBashCommand(): string {
+  if (Effect.runSync(HostProcessPlatform) !== "win32") {
+    return "bash";
+  }
+
+  const programFilesRoots = [process.env.ProgramFiles, process.env.ProgramW6432].filter(
+    (root): root is string => root !== undefined,
+  );
+  const candidates = [
+    ...programFilesRoots.map((root) => NodePath.resolve(root, "Git/bin/bash.exe")),
+    NodePath.resolve(NodeOS.homedir(), "AppData/Local/Programs/Git/bin/bash.exe"),
+  ];
+  const gitBash = candidates.find((candidate) => NodeFS.existsSync(candidate));
+  if (gitBash === undefined) {
+    throw new Error(
+      `Release smoke needs Git for Windows' bash to run the release workflow's shell steps. Looked in:\n${candidates.join("\n")}`,
+    );
+  }
+  return gitBash;
+}
+
+/**
+ * Absolute path to vite-plus's `vp` entry script, for spawning through
+ * {@link process.execPath} rather than the `node_modules/.bin/vp` shim. On Windows
+ * that shim is `vp.CMD`, which `execFileSync` cannot run without a shell, so
+ * spawning `"vp"` by name fails there with `spawnSync vp ENOENT`. The entry is a
+ * plain Node script, so running it under this process's Node needs no shell and
+ * no argument escaping. vite-plus's `exports` hides `./bin/vp`, hence resolving
+ * its manifest and reading the `bin` field instead of the deep path.
+ */
+function resolveVpEntryPath(): string {
+  const require = NodeModule.createRequire(import.meta.url);
+  const manifestPath = require.resolve("vite-plus/package.json");
+  const manifest: { bin?: Record<string, string> } = JSON.parse(
+    NodeFS.readFileSync(manifestPath, "utf8"),
+  );
+  const relativeEntry = manifest.bin?.vp;
+  if (relativeEntry === undefined) {
+    throw new Error(`Expected a "vp" bin entry in ${manifestPath}.`);
+  }
+  return NodePath.resolve(NodePath.dirname(manifestPath), relativeEntry);
+}
 
 const workspaceFiles = [
   "package.json",
@@ -206,10 +262,14 @@ try {
 
   NodeFS.rmSync(NodePath.resolve(tempRoot, "pnpm-lock.yaml"), { force: true });
 
-  NodeChildProcess.execFileSync("vp", ["install", "--lockfile-only", "--ignore-scripts"], {
-    cwd: tempRoot,
-    stdio: "inherit",
-  });
+  NodeChildProcess.execFileSync(
+    process.execPath,
+    [resolveVpEntryPath(), "install", "--lockfile-only", "--ignore-scripts"],
+    {
+      cwd: tempRoot,
+      stdio: "inherit",
+    },
+  );
 
   const lockfile = NodeFS.readFileSync(NodePath.resolve(tempRoot, "pnpm-lock.yaml"), "utf8");
   assertContains(lockfile, "lockfileVersion:", "Expected pnpm-lock.yaml to be regenerated.");
@@ -299,7 +359,7 @@ try {
   const { arm64Path: winDebugArm64Path, x64Path: winDebugX64Path } =
     writeWindowsBuilderDebugFixtures(tempRoot);
   NodeChildProcess.execFileSync(
-    "bash",
+    resolveBashCommand(),
     [
       "-lc",
       `
