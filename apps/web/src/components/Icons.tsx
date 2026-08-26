@@ -663,6 +663,31 @@ export const OpenCodeIcon: Icon = (props) => (
   </svg>
 );
 
+/**
+ * FORK DELTA (fm provider) - icon for the First Mate ACP door.
+ *
+ * A ship's anchor, drawn with `currentColor` strokes so it inherits the same
+ * text colour as the surrounding row in both themes rather than shipping a
+ * brand palette we would have to keep in step with First Mate.
+ */
+export const FirstMateIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.75}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={cn("text-black dark:text-white", className)}
+  >
+    <path d="M12 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4" />
+    <path d="M12 6.5v14.5" />
+    <path d="M7.5 9.5h9" />
+    <path d="M3.5 13a8.5 8.5 0 0 0 17 0" />
+  </svg>
+);
+
 export const GithubCopilotIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}

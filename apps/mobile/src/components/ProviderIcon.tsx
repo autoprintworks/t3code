@@ -58,6 +58,29 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  // FORK DELTA (fm provider): a ship's anchor in the row's own text colour.
+  if (props.provider === "fm") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path
+          stroke={mono}
+          strokeWidth={1.75}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M12 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4"
+        />
+        <Path stroke={mono} strokeWidth={1.75} strokeLinecap="round" d="M12 6.5v14.5" />
+        <Path stroke={mono} strokeWidth={1.75} strokeLinecap="round" d="M7.5 9.5h9" />
+        <Path
+          stroke={mono}
+          strokeWidth={1.75}
+          strokeLinecap="round"
+          d="M3.5 13a8.5 8.5 0 0 0 17 0"
+        />
+      </Svg>
+    );
+  }
+
   // codex (and unknown drivers)
   return (
     <Svg width={size} height={size} viewBox="0 0 256 260" fill="none">

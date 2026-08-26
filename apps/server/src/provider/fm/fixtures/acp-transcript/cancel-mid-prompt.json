@@ -1,0 +1,131 @@
+{
+  "why": "A person changed their mind. The cancel arrives while the prompt is still waiting, and the prompt still answers - with cancelled, which is a stop reason and not an error.",
+  "session": "fm-1a2b3c4d5e6f7a8b",
+  "allocates": true,
+  "supervisor": {
+    "awaits_interrupt": true,
+    "models": {
+      "available": [
+        {
+          "description": "needs no terminal; reports what it refused the model",
+          "id": "claude",
+          "name": "claude"
+        }
+      ],
+      "current": "claude",
+      "live": null
+    },
+    "reads": [
+      {
+        "ending": {
+          "stopped": "cancelled"
+        },
+        "said": [
+          "Reading the queue"
+        ],
+        "through": 2
+      }
+    ],
+    "turn": "t-20"
+  },
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/new",
+      "params": {
+        "cwd": "C:/Users/captain/projects/firstmate",
+        "mcpServers": []
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "method": "session/prompt",
+      "params": {
+        "prompt": [
+          {
+            "text": "read every task note and summarise them",
+            "type": "text"
+          }
+        ],
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/cancel",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "door": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "models": {
+          "availableModels": [
+            {
+              "description": "needs no terminal; reports what it refused the model",
+              "modelId": "claude",
+              "name": "claude"
+            }
+          ],
+          "currentModelId": "claude"
+        },
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "Reading the queue",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "result": {
+        "stopReason": "cancelled"
+      }
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "why": "The daemon is not running. session/new still answers, with no model list rather than an invented one, so the fifteen-second probe does not fail; session/load does fail, because a person shown an empty conversation would believe nothing had been said.",
+  "session": "fm-1a2b3c4d5e6f7a8b",
+  "allocates": false,
+  "supervisor": {
+    "history_fault": "nothing is serving C:/Users/captain/.firstmate/v2: start it with fm-daemon --home C:/Users/captain/.firstmate/v2",
+    "models_fault": "nothing is serving C:/Users/captain/.firstmate/v2: start it with fm-daemon --home C:/Users/captain/.firstmate/v2"
+  },
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/new",
+      "params": {
+        "cwd": "C:/Users/captain/projects/firstmate",
+        "mcpServers": []
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "method": "session/load",
+      "params": {
+        "cwd": "C:/Users/captain/projects/firstmate",
+        "mcpServers": [],
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "door": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "error": {
+        "code": -32603,
+        "message": "nothing is serving C:/Users/captain/.firstmate/v2: start it with fm-daemon --home C:/Users/captain/.firstmate/v2"
+      },
+      "id": 2,
+      "jsonrpc": "2.0"
+    }
+  ]
+}

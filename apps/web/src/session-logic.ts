@@ -52,6 +52,15 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  // FORK DELTA (fm provider): this is what makes `fm` a first-class agent
+  // choice in the new-thread picker rather than a driver you can only reach
+  // through Settings.
+  {
+    value: ProviderDriverKind.make("fm"),
+    label: "First Mate",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
 
 export type WorkLogToolLifecycleStatus =

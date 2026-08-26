@@ -421,6 +421,53 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
+/**
+ * FORK DELTA (fm provider). Settings for the First Mate ACP door.
+ *
+ * The door is `fm-acp`, a binary spawned once per provider connection. It
+ * serves exactly one First Mate home, and the home is chosen when the process
+ * starts, so `homePath` is per-instance rather than per-session: a second mate
+ * is a second `providerInstances` entry pointing at a second home.
+ *
+ * See `apps/server/src/provider/fm/` and
+ * `docs/internals/fm-provider-fork-delta.md`.
+ */
+export const FmSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("fm-acp").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the First Mate ACP door binary.",
+        providerSettingsForm: { placeholder: "fm-acp", clearWhenEmpty: "omit" },
+      }),
+    ),
+    homePath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "First Mate home",
+        description:
+          "Which First Mate home this instance serves. Leave empty to use the door's own default (FM_V2_HOME, else ~/.firstmate/v2).",
+        providerSettingsForm: {
+          placeholder: "~/.firstmate/v2",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "homePath"],
+  },
+);
+export type FmSettings = typeof FmSettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -596,6 +643,11 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    // FORK DELTA (fm provider): the First Mate ACP door. Listed last because
+    // the text generation fallback takes the first enabled provider in this
+    // order, and `fm` refuses generated text. Any other enabled provider is a
+    // better answer than a refusal.
+    fm: FmSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -691,6 +743,14 @@ const GrokSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+// FORK DELTA (fm provider).
+const FmSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  homePath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -739,6 +799,8 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      // FORK DELTA (fm provider).
+      fm: Schema.optionalKey(FmSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

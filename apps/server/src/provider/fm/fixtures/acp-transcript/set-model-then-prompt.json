@@ -1,0 +1,147 @@
+{
+  "why": "The person picked a different model before saying anything. The choice has to reach the launch, not only the answer to session/set_model: a setting that changed nothing would be worse than one that refused.",
+  "session": "fm-1a2b3c4d5e6f7a8b",
+  "allocates": true,
+  "supervisor": {
+    "models": {
+      "available": [
+        {
+          "description": "needs no terminal; reports what it refused the model",
+          "id": "claude",
+          "name": "claude"
+        },
+        {
+          "description": "needs no terminal; reports what it refused the model",
+          "id": "opencode",
+          "name": "opencode"
+        }
+      ],
+      "current": "claude",
+      "live": null
+    },
+    "reads": [
+      {
+        "ending": {
+          "stopped": "end_turn"
+        },
+        "said": [
+          "Aye."
+        ],
+        "through": 4
+      }
+    ],
+    "turn": "t-21"
+  },
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/new",
+      "params": {
+        "cwd": "C:/Users/captain/projects/firstmate",
+        "mcpServers": []
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "method": "session/set_model",
+      "params": {
+        "modelId": "opencode",
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "id": 3,
+      "jsonrpc": "2.0",
+      "method": "session/prompt",
+      "params": {
+        "prompt": [
+          {
+            "text": "stand by",
+            "type": "text"
+          }
+        ],
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "door": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "models": {
+          "availableModels": [
+            {
+              "description": "needs no terminal; reports what it refused the model",
+              "modelId": "claude",
+              "name": "claude"
+            },
+            {
+              "description": "needs no terminal; reports what it refused the model",
+              "modelId": "opencode",
+              "name": "opencode"
+            }
+          ],
+          "currentModelId": "claude"
+        },
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "result": {}
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "Aye.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "jsonrpc": "2.0",
+      "result": {
+        "stopReason": "end_turn"
+      }
+    }
+  ]
+}
