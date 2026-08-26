@@ -601,17 +601,23 @@ function normalizeProtocolFailure(
   message: RpcMessage.ResponseExitEncoded,
 ): RpcMessage.ResponseExitEncoded {
   const exit = message.exit;
-  if (exit._tag !== "Failure" || exit.cause.length !== 1) {
+  if (exit._tag !== "Failure") {
     return message;
   }
-  const entry = exit.cause[0];
-  if (entry === undefined || entry._tag !== "Die" || !isProtocolError(entry.defect)) {
-    return message;
-  }
-  return {
-    ...message,
-    exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: entry.defect }] },
-  };
+  // Rewritten wherever it sits, rather than only when the decoder produced a
+  // cause of exactly one entry. A defect that carries the agent's own code and
+  // message is the agent's failure however many entries came with it, and
+  // pinning the shape of someone else's decoder is how this stops working
+  // quietly.
+  let rewrote = false;
+  const cause = exit.cause.map((entry) => {
+    if (entry._tag !== "Die" || !isProtocolError(entry.defect)) {
+      return entry;
+    }
+    rewrote = true;
+    return { _tag: "Fail", error: entry.defect } as const;
+  });
+  return rewrote ? { ...message, exit: { _tag: "Failure", cause } } : message;
 }
 
 function isProtocolError(

@@ -269,6 +269,12 @@ export interface TranscriptDoor {
   readonly spawnedCommands: ReadonlyArray<ChildProcess.StandardCommand>;
   /** Methods written across every ACP connection, `authenticate` excluded. */
   readonly observedMethods: () => ReadonlyArray<string>;
+  /**
+   * Kills the most recent ACP door the way a crash does: the process exits
+   * with a code nobody asked for, and its stdout ends where it stood. Answers
+   * `false` when no ACP connection is open.
+   */
+  readonly crash: (exitCode?: number) => Effect.Effect<boolean>;
 }
 
 export interface TranscriptDoorOptions {
@@ -312,6 +318,7 @@ export const makeTranscriptDoor = (
       command: ChildProcess.StandardCommand;
     }> = [];
     const spawnedCommands: Array<ChildProcess.StandardCommand> = [];
+    const crashHooks: Array<(exitCode: number) => Effect.Effect<void>> = [];
 
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
@@ -436,6 +443,13 @@ export const makeTranscriptDoor = (
             }
           });
 
+        crashHooks.push((code) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(code));
+            yield* Queue.end(outbound);
+          }).pipe(Effect.asVoid),
+        );
+
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(4242),
           exitCode: Deferred.await(exited),
@@ -468,6 +482,10 @@ export const makeTranscriptDoor = (
               (method): method is string => method !== undefined && method !== "authenticate",
             ),
         ),
+      crash: (exitCode = 137) => {
+        const hook = crashHooks.at(-1);
+        return hook === undefined ? Effect.succeed(false) : Effect.as(hook(exitCode), true);
+      },
     } satisfies TranscriptDoor;
   });
 

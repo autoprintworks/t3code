@@ -38,12 +38,17 @@ Almost all of it is in one directory, on purpose.
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `FmDriver.ts`                    | The `ProviderDriver` registration. This is the file `builtInDrivers.ts` imports.                                                                          |
 | `FmAdapter.ts`                   | The adapter: sessions, turns, cancel, resume, model selection, notification fan-out.                                                                      |
-| `FmAcpSupport.ts`                | The spawn contract and the small pure helpers around it (argv, client capabilities, model id resolution).                                                 |
+| `FmAcpSupport.ts`                | The spawn contract and the small pure helpers around it (argv, client capabilities, model id resolution), plus the door-exit handle the adapter watches.  |
+| `FmHome.ts`                      | Which home this instance serves: the door's own resolution order, `~` expanded, and a normalised key for the claim below.                                 |
 | `FmProvider.ts`                  | Provider status and model discovery, including `checkFmProviderStatus`.                                                                                   |
 | `FmTextGeneration.ts`            | Refuses commit messages, PR text, branch names and thread titles. See below.                                                                              |
 | `FmTranscriptDoor.ts`            | Test-only. A fake door built from a golden transcript, served over a `ChildProcessSpawner` stub. Also hosts `watchProviderEvents`, shared by both suites. |
 | `FmAcpSupport.test.ts`           | The spawn contract: the argv the driver would hand the operating system.                                                                                  |
-| `FmAdapter.test.ts`              | Behaviour the transcripts cannot record: local refusals, the idle-cancel guard, the `session/load` replay guard.                                          |
+| `FmAdapter.test.ts`              | Behaviour the transcripts cannot record: local refusals, the idle-cancel guard, the `session/load` replay guard, and the three session-end paths.         |
+| `FmHome.test.ts`                 | Home resolution, including the tilde a user is invited to type into the settings placeholder.                                                             |
+| `FmDriver.test.ts`               | The one-instance-per-home claim, and that a fleet of mates on separate homes is still allowed.                                                            |
+| `FmProvider.test.ts`             | What a failed discovery probe tells the user: the door's own words, and the home it tried.                                                                |
+| `FmTextGeneration.test.ts`       | The four refusals, and the declaration-order invariant that keeps `fm` the fallback of last resort.                                                       |
 | `FmTranscript.test.ts`           | The certification suite. One test per golden transcript.                                                                                                  |
 | `fixtures/acp-transcript/*.json` | The ten golden transcripts, vendored **verbatim** from the First Mate repository, plus `DOOR-README.md`.                                                  |
 
@@ -76,8 +81,10 @@ provider in this repository benefits from them.
    with the `{code, message, data}` that JSON-RPC 2.0 specifies, and the
    decoder filed that under `Die`. The agent's own refusal then reached callers
    as a defect and `AcpRequestError` was never built.
-   `normalizeProtocolFailure` rewrites the single unrecognised `Die` back into
-   a `Fail`.
+   `normalizeProtocolFailure` rewrites an unrecognised `Die` back into a `Fail`
+   wherever it sits in the decoded cause. Two tests in `protocol.test.ts` cover
+   it: one for the plain error a non-Effect agent sends, one for an error
+   buried in a cause of more than one entry.
 
 2. **Notifications were written with an `id`.** The transport uses `id: ""` as
    its internal sentinel for a notification, but Effect's encoder has no notion
@@ -142,6 +149,50 @@ The driver never interprets a model id. It reads the door's menu from
 `session/new`, sends the id back unchanged, and lets the door refuse an unknown
 one with its own words and its own menu. A home's model list is that home's
 business.
+
+That is why the driver ships **no** built-in model list and **no** fallback
+model id. `resolveFmModelId` trims and answers `undefined` rather than naming a
+model the door never offered, and the snapshot's built-in list is empty, the
+way `OpenCodeProvider` ships its own. Until the discovery probe answers, the
+snapshot's "Checking the First Mate ACP door..." message is the discovering
+state; when the probe fails the snapshot is `error`, and there is no session to
+pick a model for anyway.
+
+One placeholder does survive, in `DEFAULT_MODEL_BY_PROVIDER`. That table is the
+composer's starting point for a driver kind, and its miss case is Codex's
+default model, which the door would certainly refuse. `claude` is at least the
+model a fresh First Mate home runs on.
+
+### One instance per home
+
+`supportsMultipleInstances` is `true`, and that is about homes: one instance per
+home is exactly how a fleet of mates is expressed. Two instances on the **same**
+home is the one shape that is refused, in `claimFmHome` in `FmDriver.ts`.
+
+The refusal belongs on this side. First Mate's own turn runner stops the
+existing process tree only when the unit has no live turn, and takes no lock
+against a second concurrent `POST /turns`, so two doors prompting one home start
+two harnesses against one conversation. Nothing on the First Mate side refuses
+that. Two empty configs both resolve to the same default home, so this is not a
+theoretical shape.
+
+The claim is at instance level, not session level. Two concurrent sessions from
+one instance on one home are legitimate, and the `daemon-not-there` certification
+case depends on it.
+
+### A door that exits on its own
+
+Nothing else notices. The ACP runtime keeps the child handle to itself and its
+event queue is not shut down when the process dies, so before this the session
+sat `ready` forever and a live turn spun with no terminal event.
+`makeFmAcpRuntime` wraps the injected `ChildProcessSpawner` to capture the
+handle on the way through, exposes `awaitDoorExit`, and the adapter forks a
+watcher on it. An unexpected exit settles the live turn `failed`, emits
+`runtime.error`, and emits `session.exited` with `exitKind: "error"`.
+
+The watcher is forked into the **adapter** scope, not the session scope, because
+its job is to close the session scope; forked into it, it would interrupt itself
+half way through the teardown.
 
 ## Certification
 

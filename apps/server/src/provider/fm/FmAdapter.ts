@@ -67,6 +67,7 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
 import {
   currentFmModelIdFromSessionSetup,
+  type FmDoorExit,
   makeFmAcpRuntime,
   resolveFmModelId,
 } from "./FmAcpSupport.ts";
@@ -106,7 +107,27 @@ interface FmSessionContext {
   readonly cancelRequestedTurnIds: Set<TurnId>;
   currentModelId: string | undefined;
   stopped: boolean;
+  /**
+   * Set for the span of a live turn so a door that dies mid-prompt can settle
+   * it. Idempotent: the same guard that stops a late door answer resurrecting
+   * a cancelled turn also stops this double-settling one.
+   */
+  settleActiveTurn: FmTurnSettler | undefined;
+  /**
+   * Fires once this session is over, whether it was stopped or the door died.
+   * A prompt request outliving its door is never answered and is never failed
+   * by the ACP client either, so without this the `sendTurn` caller waits
+   * forever on a process that no longer exists.
+   */
+  readonly sessionEnded: Deferred.Deferred<void>;
 }
+
+/** Settles the turn a `sendTurn` call owns; safe to call more than once. */
+type FmTurnSettler = (outcome: {
+  readonly state: "completed" | "cancelled" | "failed";
+  readonly stopReason?: EffectAcpSchema.StopReason | null;
+  readonly errorMessage?: string;
+}) => Effect.Effect<void, ProviderAdapterRequestError>;
 
 interface FmResumeCursor {
   readonly schemaVersion: typeof FM_RESUME_VERSION;
@@ -155,6 +176,10 @@ export function fmLiveTurnForNotification(input: {
 export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOptions) {
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("fm");
+    // Door watchers are forked here rather than into the session scope,
+    // because the watcher's own job is to close that scope; forking into it
+    // would have the watcher interrupt itself half way through the teardown.
+    const adapterScope = yield* Effect.scope;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* Crypto.Crypto;
     const cancelGrace: Duration.Input = options?.cancelGrace ?? FM_CANCEL_GRACE;
@@ -273,10 +298,27 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
         ctx.session = { ...readySession, status: "ready", updatedAt };
       });
 
+    /**
+     * Settles whatever turn is still live, then releases the prompt fiber
+     * waiting on the door. Order matters twice: `settleTurn` recognises its
+     * turn by looking the session up in `sessions`, so it has to run before
+     * the session is removed; and it has to win the race against the prompt's
+     * own failure, so the user is told why the turn ended rather than which
+     * transport error happened to surface.
+     */
+    const settleActiveTurnOnEnd = (ctx: FmSessionContext, outcome: Parameters<FmTurnSettler>[0]) =>
+      Effect.gen(function* () {
+        if (ctx.settleActiveTurn) {
+          yield* Effect.ignore(ctx.settleActiveTurn(outcome));
+        }
+        yield* Deferred.succeed(ctx.sessionEnded, undefined);
+      });
+
     const stopSessionInternal = (ctx: FmSessionContext) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        yield* settleActiveTurnOnEnd(ctx, { state: "cancelled", stopReason: "cancelled" });
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -289,6 +331,45 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
           threadId: ctx.threadId,
           payload: { exitKind: "graceful" },
         });
+      });
+
+    /**
+     * The door died without anyone asking it to. Both events go out before the
+     * scope is torn down, and the live turn is settled while the session is
+     * still in `sessions`, because that map is how `settleTurn` recognises the
+     * turn it owns.
+     */
+    const handleUnexpectedDoorExit = (ctx: FmSessionContext, exit: FmDoorExit) =>
+      Effect.gen(function* () {
+        if (ctx.stopped) return;
+        ctx.stopped = true;
+        const reason =
+          exit.code === null
+            ? "The First Mate ACP door exited unexpectedly."
+            : `The First Mate ACP door exited unexpectedly with code ${exit.code}.`;
+        yield* Effect.logWarning(reason, { threadId: ctx.threadId });
+        const turnId = ctx.activeTurnId;
+        yield* settleActiveTurnOnEnd(ctx, { state: "failed", errorMessage: reason });
+        sessions.delete(ctx.threadId);
+        yield* offerRuntimeEvent({
+          type: "runtime.error",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          ...(turnId ? { turnId } : {}),
+          payload: { message: reason, class: "transport_error" },
+        });
+        yield* offerRuntimeEvent({
+          type: "session.exited",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          payload: { reason, recoverable: false, exitKind: "error" },
+        });
+        if (ctx.notificationFiber) {
+          yield* Fiber.interrupt(ctx.notificationFiber);
+        }
+        yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
       });
 
     const startSession: FmAdapterShape["startSession"] = (input) =>
@@ -329,7 +410,7 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
             threadId: input.threadId,
           });
 
-          const acp = yield* makeFmAcpRuntime({
+          const runtime = yield* makeFmAcpRuntime({
             fmSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
@@ -351,6 +432,7 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
             ),
           );
 
+          const acp = runtime.acp;
           const started = yield* acp
             .start()
             .pipe(
@@ -367,9 +449,7 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
           const fmModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const currentModelId = currentFmModelIdFromSessionSetup(started.sessionSetupResult);
-          const requestedModelId = fmModelSelection?.model
-            ? resolveFmModelId(fmModelSelection.model)
-            : undefined;
+          const requestedModelId = resolveFmModelId(fmModelSelection?.model);
           let boundModelId = currentModelId;
           if (requestedModelId !== undefined && requestedModelId !== currentModelId) {
             yield* acp
@@ -389,7 +469,7 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
-            ...(boundModelId ? { model: resolveFmModelId(boundModelId) } : {}),
+            ...(boundModelId ? { model: boundModelId } : {}),
             threadId: input.threadId,
             resumeCursor: {
               schemaVersion: FM_RESUME_VERSION,
@@ -411,6 +491,8 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
             cancelRequestedTurnIds: new Set(),
             currentModelId: boundModelId,
             stopped: false,
+            settleActiveTurn: undefined,
+            sessionEnded: yield* Deferred.make<void>(),
           };
 
           const notificationFiber = yield* Stream.runDrain(
@@ -481,6 +563,20 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
           sessions.set(input.threadId, ctx);
           sessionScopeTransferred = true;
 
+          // Nothing else notices a door that dies on its own: the ACP event
+          // queue is never shut down on process death, so without this the
+          // session would sit `ready` forever and a live turn would spin.
+          yield* runtime.awaitDoorExit.pipe(
+            Effect.flatMap((exit) => handleUnexpectedDoorExit(ctx, exit)),
+            Effect.catchCause((cause) =>
+              Effect.logError("Failed to report a First Mate door exit.", {
+                cause,
+                threadId: ctx.threadId,
+              }),
+            ),
+            Effect.forkIn(adapterScope),
+          );
+
           yield* offerRuntimeEvent({
             type: "session.started",
             ...(yield* makeEventStamp()),
@@ -536,9 +632,7 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
               }
 
               const turnId = TurnId.make(yield* randomUUIDv4);
-              const displayModel = ctx.currentModelId
-                ? resolveFmModelId(ctx.currentModelId)
-                : undefined;
+              const displayModel = resolveFmModelId(ctx.currentModelId);
               ctx.activeTurnId = turnId;
               ctx.session = {
                 ...ctx.session,
@@ -556,6 +650,7 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
                 payload: displayModel ? { model: displayModel } : {},
               });
               return {
+                ctx,
                 acp: ctx.acp,
                 acpSessionId: ctx.acpSessionId,
                 displayModel,
@@ -568,52 +663,64 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
           );
 
           const settled = yield* Deferred.make<void>();
-          const settleTurn = (outcome: {
-            readonly state: "completed" | "cancelled" | "failed";
-            readonly stopReason?: EffectAcpSchema.StopReason | null;
-            readonly errorMessage?: string;
-          }) =>
-            withStateLock(
-              input.threadId,
-              Effect.gen(function* () {
-                if (yield* Deferred.isDone(settled)) return;
-                yield* Deferred.succeed(settled, undefined);
-                const ctx = sessions.get(input.threadId);
-                if (!ctx || ctx.acpSessionId !== prepared.acpSessionId) {
-                  return;
-                }
-                if (ctx.activeTurnId === prepared.turnId) {
-                  yield* markSessionReady(ctx);
-                }
-                ctx.cancelRequestedTurnIds.delete(prepared.turnId);
-                yield* offerRuntimeEvent({
-                  type: "turn.completed",
-                  ...(yield* makeEventStamp()),
-                  provider: PROVIDER,
-                  threadId: input.threadId,
-                  turnId: prepared.turnId,
-                  payload:
-                    outcome.state === "failed"
-                      ? {
-                          state: "failed",
-                          errorMessage: outcome.errorMessage ?? "First Mate prompt failed.",
-                        }
-                      : {
-                          state: outcome.state,
-                          stopReason: outcome.stopReason ?? null,
-                        },
-                });
-              }),
-            );
+          // Split in two on purpose. The session-end paths already hold the
+          // state lock or run outside it deliberately, and this semaphore is
+          // not re-entrant, so they settle through the unlocked body while the
+          // ordinary turn path takes the lock exactly once.
+          const settleTurnUnlocked: FmTurnSettler = (outcome) =>
+            Effect.gen(function* () {
+              if (yield* Deferred.isDone(settled)) return;
+              yield* Deferred.succeed(settled, undefined);
+              const ctx = sessions.get(input.threadId);
+              if (!ctx || ctx.acpSessionId !== prepared.acpSessionId) {
+                return;
+              }
+              if (ctx.activeTurnId === prepared.turnId) {
+                yield* markSessionReady(ctx);
+              }
+              ctx.cancelRequestedTurnIds.delete(prepared.turnId);
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId: prepared.turnId,
+                payload:
+                  outcome.state === "failed"
+                    ? {
+                        state: "failed",
+                        errorMessage: outcome.errorMessage ?? "First Mate prompt failed.",
+                      }
+                    : {
+                        state: outcome.state,
+                        stopReason: outcome.stopReason ?? null,
+                      },
+              });
+            });
+          const settleTurn: FmTurnSettler = (outcome) =>
+            withStateLock(input.threadId, settleTurnUnlocked(outcome));
+          prepared.ctx.settleActiveTurn = settleTurnUnlocked;
 
           return yield* Effect.gen(function* () {
-            const result = yield* prepared.acp
-              .prompt({ prompt: prepared.promptParts })
-              .pipe(
-                Effect.mapError((error) =>
-                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+            const result = yield* prepared.acp.prompt({ prompt: prepared.promptParts }).pipe(
+              Effect.mapError((error) =>
+                mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+              ),
+              Effect.raceFirst(
+                Deferred.await(prepared.ctx.sessionEnded).pipe(
+                  Effect.flatMap(() =>
+                    Effect.fail(
+                      new ProviderAdapterProcessError({
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        detail:
+                          "The First Mate ACP session ended while this prompt was still running.",
+                      }),
+                    ),
+                  ),
                 ),
-              );
+              ),
+            );
             // Every notification the door queued for this turn must reach the
             // UI before the turn is reported complete; otherwise the last
             // chunk of the answer races the terminal event.
@@ -653,6 +760,13 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
                 state: "cancelled",
                 stopReason: "cancelled",
               }).pipe(Effect.catchCause(() => Effect.void)),
+            ),
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (prepared.ctx.settleActiveTurn === settleTurnUnlocked) {
+                  prepared.ctx.settleActiveTurn = undefined;
+                }
+              }),
             ),
           );
         }),

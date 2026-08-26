@@ -21,6 +21,7 @@
  */
 import type { FmSettings } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -29,12 +30,10 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import { resolveFmHome } from "./FmHome.ts";
 
 /** The door publishes no auth methods, and answers `authenticate` with `{}`. */
 export const FM_AUTH_METHOD_ID = "none";
-
-/** Model the door falls back to when the home has never chosen one. */
-export const FM_FALLBACK_MODEL_ID = "claude";
 
 /**
  * ID-10 host invariants, stated once so the certification suite can assert
@@ -64,7 +63,11 @@ export function buildFmAcpSpawnInput(
     command: fmSettings?.binaryPath || "fm-acp",
     // Omitting `--home` is meaningful: the door then resolves FM_V2_HOME, and
     // failing that `~/.firstmate/v2`, which is what a single-home install wants.
-    args: homePath ? ["--home", homePath] : [],
+    //
+    // A spawned process gets no shell, so a `~` that reached the door verbatim
+    // would become a literal directory named `~`. The settings placeholder is
+    // `~/.firstmate/v2`, so this is the value users are invited to type.
+    args: homePath ? ["--home", resolveFmHome(fmSettings, environment).path] : [],
     cwd,
     ...(environment ? { env: environment } : {}),
   };
@@ -79,14 +82,42 @@ interface FmAcpRuntimeInput extends Omit<
   readonly environment?: NodeJS.ProcessEnv;
 }
 
+/** What a First Mate door exit looks like once the platform error is folded in. */
+export interface FmDoorExit {
+  /** The process exit code, or `null` when the platform could not report one. */
+  readonly code: number | null;
+}
+
+export interface FmAcpRuntime {
+  readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  /**
+   * Resolves when the door process backing this runtime exits, for any reason.
+   *
+   * `AcpSessionRuntime` keeps the child handle to itself, and its event queue
+   * is not shut down when the process dies, so nothing downstream notices a
+   * door that crashed. Capturing the handle on its way through the spawner
+   * gets the fork an exit signal without widening the shared upstream service.
+   */
+  readonly awaitDoorExit: Effect.Effect<FmDoorExit>;
+}
+
+/**
+ * Wraps a spawner so the first process it spawns is handed to `onHandle`.
+ * `AcpSessionRuntime` spawns exactly one child per runtime.
+ */
+const captureSpawnedDoor = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  onHandle: (handle: ChildProcessSpawner.ChildProcessHandle) => Effect.Effect<void>,
+): ChildProcessSpawner.ChildProcessSpawner["Service"] => ({
+  ...spawner,
+  spawn: (command) => Effect.tap(spawner.spawn(command), onHandle),
+});
+
 export const makeFmAcpRuntime = (
   input: FmAcpRuntimeInput,
-): Effect.Effect<
-  AcpSessionRuntime.AcpSessionRuntime["Service"],
-  EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
-> =>
+): Effect.Effect<FmAcpRuntime, EffectAcpErrors.AcpError, Crypto.Crypto | Scope.Scope> =>
   Effect.gen(function* () {
+    const doorHandle = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
@@ -96,22 +127,43 @@ export const makeFmAcpRuntime = (
         authMethodId: FM_AUTH_METHOD_ID,
       }).pipe(
         Layer.provide(
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            captureSpawnedDoor(input.childProcessSpawner, (handle) =>
+              Effect.asVoid(Deferred.succeed(doorHandle, handle)),
+            ),
+          ),
         ),
       ),
     );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+    const acp = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
       Effect.provide(acpContext),
     );
+    const awaitDoorExit = Deferred.await(doorHandle).pipe(
+      Effect.flatMap((handle) =>
+        handle.exitCode.pipe(
+          Effect.map((code): FmDoorExit => ({ code })),
+          // A platform error means the exit status could not be read, not that
+          // the door is alive; reporting it as an exit of unknown code is the
+          // honest reading.
+          Effect.catchCause(() => Effect.succeed<FmDoorExit>({ code: null })),
+        ),
+      ),
+    );
+    return { acp, awaitDoorExit };
   });
 
 /**
  * Model ids are opaque strings owned by the door's menu (`claude`, `opencode`,
  * `pi`, ...), so they are only trimmed - never expanded through T3 Code's
  * per-provider alias table, which knows nothing about First Mate.
+ *
+ * There is deliberately no fallback id. Naming one would be T3 Code inventing
+ * a model the door never offered, and the caller that has nothing to resolve
+ * wants "no model" rather than a guess.
  */
-export function resolveFmModelId(model: string | null | undefined): string {
-  return model?.trim() || FM_FALLBACK_MODEL_ID;
+export function resolveFmModelId(model: string | null | undefined): string | undefined {
+  return model?.trim() || undefined;
 }
 
 export function currentFmModelIdFromSessionSetup(

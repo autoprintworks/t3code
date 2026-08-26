@@ -15,7 +15,6 @@ import {
   buildFmAcpSpawnInput,
   FM_AUTH_METHOD_ID,
   FM_CLIENT_CAPABILITIES,
-  FM_FALLBACK_MODEL_ID,
   FM_MCP_SERVERS,
   currentFmModelIdFromSessionSetup,
   resolveFmModelId,
@@ -67,10 +66,11 @@ it("declares no filesystem and no terminal capability to the door", () => {
   assert.equal(FM_AUTH_METHOD_ID, "none");
 });
 
-it("treats door model ids as opaque and falls back to the door's own default", () => {
+it("treats door model ids as opaque and invents none of its own", () => {
   assert.equal(resolveFmModelId(" opencode "), "opencode");
-  assert.equal(resolveFmModelId(""), FM_FALLBACK_MODEL_ID);
-  assert.equal(resolveFmModelId(undefined), "claude");
+  // No fallback id: a model T3 Code names is a model the door never offered.
+  assert.equal(resolveFmModelId(""), undefined);
+  assert.equal(resolveFmModelId(undefined), undefined);
 
   assert.equal(
     currentFmModelIdFromSessionSetup({

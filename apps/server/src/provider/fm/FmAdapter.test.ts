@@ -16,6 +16,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -287,6 +288,115 @@ it.effect("stops the door process when the session stops", () =>
         .pipe(Effect.flip);
       assert.equal(error._tag, "ProviderAdapterSessionNotFoundError");
     }),
+  ),
+);
+
+it.effect("reports a door that exits on its own instead of leaving the session alive", () =>
+  driveDoor(readTranscriptFixture("first-prompt-allocates"), ({ adapter, door, events }) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("fm-door-crash");
+      yield* started(adapter, "fm-door-crash");
+      assert.isTrue(yield* adapter.hasSession(threadId));
+
+      assert.isTrue(yield* door.crash(137));
+
+      const exited = yield* events.awaitType("session.exited");
+      assert.equal(exited.type === "session.exited" ? exited.payload.exitKind : undefined, "error");
+      assert.include(
+        exited.type === "session.exited" ? (exited.payload.reason ?? "") : "",
+        "exited unexpectedly with code 137",
+      );
+      // A crash is a transport failure the user should see, not just a
+      // lifecycle event the sidebar quietly swallows.
+      assert.include(events.types(), "runtime.error");
+
+      // The session is gone, so the UI cannot keep talking to a dead door.
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      const error = yield* adapter
+        .sendTurn({ threadId, input: "still there?", attachments: [] })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterSessionNotFoundError");
+    }),
+  ),
+);
+
+it.effect("fails the live turn when the door dies mid-prompt", () =>
+  driveDoor(
+    readTranscriptFixture("cancel-mid-prompt"),
+    ({ adapter, door, events }) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("fm-door-crash-mid-turn");
+        yield* started(adapter, "fm-door-crash-mid-turn");
+
+        const turnFiber = yield* adapter
+          .sendTurn({
+            threadId,
+            input: "read every task note and summarise them",
+            attachments: [],
+          })
+          .pipe(Effect.forkChild);
+
+        // The fixture withholds the prompt answer until a cancel arrives, so
+        // the turn is genuinely in flight when the door dies.
+        yield* events.awaitType("content.delta");
+        assert.isTrue(yield* door.crash(1));
+
+        const completed = yield* events.awaitEvent((event) => event.type === "turn.completed");
+        assert.equal(
+          completed.type === "turn.completed" ? completed.payload.state : undefined,
+          "failed",
+        );
+
+        const exited = yield* events.awaitType("session.exited");
+        assert.equal(
+          exited.type === "session.exited" ? exited.payload.exitKind : undefined,
+          "error",
+        );
+
+        // Exactly one terminal turn event: the door-exit watcher and the
+        // prompt's own failure both settle, and the second must be a no-op.
+        assert.equal(events.types().filter((type) => type === "turn.completed").length, 1);
+
+        yield* Effect.exit(Fiber.join(turnFiber));
+        const sessions = yield* adapter.listSessions();
+        assert.deepStrictEqual(sessions, []);
+      }),
+    // Far enough out that the local cancel fallback cannot be what ends this
+    // turn; only the crash can.
+    { cancelGrace: "5 minutes" },
+  ),
+);
+
+it.effect("settles the live turn when the session is stopped mid-prompt", () =>
+  driveDoor(
+    readTranscriptFixture("cancel-mid-prompt"),
+    ({ adapter, events }) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("fm-stop-mid-turn");
+        yield* started(adapter, "fm-stop-mid-turn");
+
+        const turnFiber = yield* adapter
+          .sendTurn({
+            threadId,
+            input: "read every task note and summarise them",
+            attachments: [],
+          })
+          .pipe(Effect.forkChild);
+        yield* events.awaitType("content.delta");
+
+        // Closing the door's scope kills the process, and the prompt request
+        // it was holding is never answered. Without an explicit settle the
+        // caller waits on a process that no longer exists.
+        yield* adapter.stopSession(threadId);
+
+        const completed = yield* events.awaitEvent((event) => event.type === "turn.completed");
+        assert.equal(
+          completed.type === "turn.completed" ? completed.payload.state : undefined,
+          "cancelled",
+        );
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(Fiber.join(turnFiber))));
+      }),
+    { cancelGrace: "5 minutes" },
   ),
 );
 

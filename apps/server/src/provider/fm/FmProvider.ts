@@ -18,6 +18,7 @@ import type {
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -41,6 +42,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { makeFmAcpRuntime, resolveFmModelId } from "./FmAcpSupport.ts";
+import { describeFmHome, type FmHome, resolveFmHome } from "./FmHome.ts";
 
 /**
  * `requiresNewThreadForModelChange` is not decoration: the door refuses
@@ -66,14 +68,47 @@ const VERSION_PROBE_TIMEOUT_MS = 4_000;
  */
 const FM_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
-const FM_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
-  {
-    slug: "claude",
-    name: "Claude",
-    isCustom: false,
-    capabilities: EMPTY_CAPABILITIES,
-  },
-];
+/**
+ * Empty on purpose. Model ids are opaque strings owned by the door's menu, so
+ * T3 Code has no honest built-in list to ship: the real one arrives from
+ * `session/new` and replaces this. Until the probe answers, the snapshot's own
+ * "Checking the First Mate ACP door..." message is the discovering state, and
+ * a probe that fails ends `error`, where there is no session to pick a model
+ * for anyway. `OpenCodeProvider` ships the same empty list for the same
+ * reason.
+ */
+const FM_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [];
+
+interface FmSnapshotInput {
+  readonly enabled: boolean;
+  readonly checkedAt: string;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly installed: boolean;
+  readonly version?: string | null;
+  readonly status: "ready" | "warning" | "error";
+  readonly message?: string;
+}
+
+/**
+ * Every `fm` snapshot carries the same presentation and the same "auth is not
+ * a thing the door has" answer, so only the probe is ever interesting. Naming
+ * the envelope once keeps each branch below to the sentence it is about.
+ */
+function fmSnapshot(input: FmSnapshotInput): ServerProviderDraft {
+  return buildServerProvider({
+    presentation: FM_PRESENTATION,
+    enabled: input.enabled,
+    checkedAt: input.checkedAt,
+    models: input.models,
+    probe: {
+      installed: input.installed,
+      version: input.version ?? null,
+      status: input.status,
+      auth: { status: "unknown" },
+      ...(input.message === undefined ? {} : { message: input.message }),
+    },
+  });
+}
 
 function fmModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
@@ -92,7 +127,7 @@ export function buildFmDiscoveredModels(
   return modelState.availableModels
     .map((model): ServerProviderModel | undefined => {
       const slug = resolveFmModelId(model.modelId);
-      if (seen.has(slug)) {
+      if (slug === undefined || seen.has(slug)) {
         return undefined;
       }
       seen.add(slug);
@@ -114,33 +149,23 @@ export function buildInitialFmProviderSnapshot(
     const models = fmModelsFromSettings(fmSettings.customModels);
 
     if (!fmSettings.enabled) {
-      return buildServerProvider({
-        presentation: FM_PRESENTATION,
+      return fmSnapshot({
         enabled: false,
         checkedAt,
         models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message: "First Mate is disabled in T3 Code settings.",
-        },
+        installed: false,
+        status: "warning",
+        message: "First Mate is disabled in T3 Code settings.",
       });
     }
 
-    return buildServerProvider({
-      presentation: FM_PRESENTATION,
+    return fmSnapshot({
       enabled: true,
       checkedAt,
       models,
-      probe: {
-        installed: true,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Checking the First Mate ACP door...",
-      },
+      installed: true,
+      status: "warning",
+      message: "Checking the First Mate ACP door...",
     });
   });
 }
@@ -169,16 +194,38 @@ const discoverFmModelsViaAcp = (
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const acp = yield* makeFmAcpRuntime({
+    const runtime = yield* makeFmAcpRuntime({
       fmSettings,
       environment,
       childProcessSpawner,
       cwd: process.cwd(),
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
-    const started = yield* acp.start();
+    const started = yield* runtime.acp.start();
     return buildFmDiscoveredModels(started.sessionSetupResult.models);
   }).pipe(Effect.scoped);
+
+function errorMessageOf(error: unknown): string {
+  if (typeof error !== "object" || error === null) return "";
+  const { message } = error as { readonly message?: unknown };
+  return typeof message === "string" ? message.trim() : "";
+}
+
+/**
+ * The failure a misconfigured user actually hits is "no daemon is serving that
+ * home", and the door already says so in its own words. Reporting one generic
+ * sentence instead threw away both the diagnosis and the directory, which left
+ * the user with nothing to check. So: the door's message when there is one,
+ * and the home path either way.
+ */
+export function buildFmDiscoveryFailureMessage(home: FmHome, cause: Cause.Cause<unknown>): string {
+  const where = `Home: ${describeFmHome(home)}.`;
+  const failure = Cause.findErrorOption(cause);
+  const detail = Option.isSome(failure) ? errorMessageOf(failure.value) : "";
+  return detail
+    ? `The First Mate ACP door did not open a session: ${detail} ${where}`
+    : `The First Mate ACP door is installed but did not open a session. Check that a First Mate daemon is serving this home. ${where}`;
+}
 
 export const checkFmProviderStatus = Effect.fn("checkFmProviderStatus")(function* (
   fmSettings: FmSettings,
@@ -192,20 +239,17 @@ export const checkFmProviderStatus = Effect.fn("checkFmProviderStatus")(function
   const fallbackModels = fmModelsFromSettings(fmSettings.customModels);
 
   if (!fmSettings.enabled) {
-    return buildServerProvider({
-      presentation: FM_PRESENTATION,
+    return fmSnapshot({
       enabled: false,
       checkedAt,
       models: fallbackModels,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "First Mate is disabled in T3 Code settings.",
-      },
+      installed: false,
+      status: "warning",
+      message: "First Mate is disabled in T3 Code settings.",
     });
   }
+
+  const home = resolveFmHome(fmSettings, environment);
 
   const versionResult = yield* runFmVersionCommand(fmSettings, environment).pipe(
     Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
@@ -217,36 +261,26 @@ export const checkFmProviderStatus = Effect.fn("checkFmProviderStatus")(function
     yield* Effect.logWarning("First Mate ACP door health check failed.", {
       errorTag: error._tag,
     });
-    return buildServerProvider({
-      presentation: FM_PRESENTATION,
+    return fmSnapshot({
       enabled: fmSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      probe: {
-        installed: !isCommandMissingCause(error),
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "The First Mate ACP door (`fm-acp`) is not installed or not on PATH."
-          : "Failed to run the First Mate ACP door health check.",
-      },
+      installed: !isCommandMissingCause(error),
+      status: "error",
+      message: isCommandMissingCause(error)
+        ? "The First Mate ACP door (`fm-acp`) is not installed or not on PATH."
+        : "Failed to run the First Mate ACP door health check.",
     });
   }
 
   if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
-      presentation: FM_PRESENTATION,
+    return fmSnapshot({
       enabled: fmSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "The First Mate ACP door timed out while running `fm-acp --version`.",
-      },
+      installed: true,
+      status: "error",
+      message: "The First Mate ACP door timed out while running `fm-acp --version`.",
     });
   }
 
@@ -256,18 +290,14 @@ export const checkFmProviderStatus = Effect.fn("checkFmProviderStatus")(function
     yield* Effect.logWarning("First Mate ACP door version probe exited with a non-zero status.", {
       exitCode: versionOutput.code,
     });
-    return buildServerProvider({
-      presentation: FM_PRESENTATION,
+    return fmSnapshot({
       enabled: fmSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "The First Mate ACP door is installed but failed to run.",
-      },
+      installed: true,
+      version,
+      status: "error",
+      message: "The First Mate ACP door is installed but failed to run.",
     });
   }
 
@@ -278,38 +308,30 @@ export const checkFmProviderStatus = Effect.fn("checkFmProviderStatus")(function
   if (Exit.isFailure(discoveryExit)) {
     yield* Effect.logWarning("First Mate ACP model discovery failed", {
       errorTag: causeErrorTag(discoveryExit.cause),
+      homePath: home.path,
     });
-    return buildServerProvider({
-      presentation: FM_PRESENTATION,
+    return fmSnapshot({
       enabled: fmSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message:
-          "The First Mate ACP door is installed but did not open a session. Check that a First Mate daemon is serving this home.",
-      },
+      installed: true,
+      version,
+      status: "error",
+      message: buildFmDiscoveryFailureMessage(home, discoveryExit.cause),
     });
   }
   if (Option.isNone(discoveryExit.value)) {
     yield* Effect.logWarning(
       `First Mate ACP model discovery timed out after ${FM_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
     );
-    return buildServerProvider({
-      presentation: FM_PRESENTATION,
+    return fmSnapshot({
       enabled: fmSettings.enabled,
       checkedAt,
       models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: `The First Mate ACP door did not answer within ${FM_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
-      },
+      installed: true,
+      version,
+      status: "error",
+      message: `The First Mate ACP door did not answer within ${FM_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
     });
   }
 
@@ -319,17 +341,13 @@ export const checkFmProviderStatus = Effect.fn("checkFmProviderStatus")(function
       ? fmModelsFromSettings(fmSettings.customModels, discoveredModels)
       : fallbackModels;
 
-  return buildServerProvider({
-    presentation: FM_PRESENTATION,
+  return fmSnapshot({
     enabled: fmSettings.enabled,
     checkedAt,
     models,
-    probe: {
-      installed: true,
-      version,
-      status: "ready",
-      auth: { status: "unknown" },
-    },
+    installed: true,
+    version,
+    status: "ready",
   });
 });
 

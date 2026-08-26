@@ -13,6 +13,7 @@
  * @module provider/fm/FmDriver
  */
 import { FmSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -45,6 +46,7 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { makeFmAdapter } from "./FmAdapter.ts";
+import { describeFmHome, type FmHome, fmHomeKey, resolveFmHome } from "./FmHome.ts";
 import {
   buildInitialFmProviderSnapshot,
   checkFmProviderStatus,
@@ -75,6 +77,50 @@ export type FmDriverEnv =
   | ServerConfig
   | ServerSettingsService;
 
+/**
+ * Which instance currently owns which First Mate home, keyed by the normalised
+ * home path.
+ *
+ * `supportsMultipleInstances` is about homes, not about doors on one home. Two
+ * doors on one home is not a benign duplicate: the daemon's turn runner only
+ * stops the existing process tree when the unit has no live turn, and takes no
+ * lock against a second concurrent `POST /turns`, so a second instance
+ * prompting the same home starts a second harness against one conversation.
+ * Nothing on the First Mate side refuses that, so the refusal belongs here.
+ *
+ * See `docs/internals/fm-provider-fork-delta.md`.
+ */
+const fmHomeClaims = new Map<string, ProviderInstance["instanceId"]>();
+
+export const claimFmHome = (input: {
+  readonly home: FmHome;
+  readonly instanceId: ProviderInstance["instanceId"];
+}) =>
+  Effect.gen(function* () {
+    const key = fmHomeKey(input.home, yield* HostProcessPlatform);
+    const holder = fmHomeClaims.get(key);
+    if (holder !== undefined && holder !== input.instanceId) {
+      return yield* new ProviderDriverError({
+        driver: DRIVER_KIND,
+        instanceId: input.instanceId,
+        detail: `First Mate instance '${holder}' is already serving ${describeFmHome(input.home)}. Point this instance at a different home, or remove the other one.`,
+      });
+    }
+    fmHomeClaims.set(key, input.instanceId);
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (fmHomeClaims.get(key) === input.instanceId) {
+          fmHomeClaims.delete(key);
+        }
+      }),
+    );
+  });
+
+/** Test seam: the claim table outlives any one instance by design. */
+export const resetFmHomeClaims = (): void => {
+  fmHomeClaims.clear();
+};
+
 const withInstanceIdentity =
   (input: {
     readonly instanceId: ProviderInstance["instanceId"];
@@ -95,7 +141,9 @@ export const FmDriver: ProviderDriver<FmSettings, FmDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "First Mate",
-    // One instance per home is exactly how a fleet of mates is expressed.
+    // One instance per home is exactly how a fleet of mates is expressed. Two
+    // instances on the *same* home is the one shape that is not allowed, and
+    // `claimFmHome` below is what refuses it.
     supportsMultipleInstances: true,
   },
   configSchema: FmSettings,
@@ -119,6 +167,10 @@ export const FmDriver: ProviderDriver<FmSettings, FmDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies FmSettings;
+      yield* claimFmHome({
+        home: resolveFmHome(effectiveConfig, processEnv),
+        instanceId,
+      });
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
