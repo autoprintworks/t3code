@@ -1,0 +1,160 @@
+{
+  "why": "The Desktop was restarted. It sends session/load with the id it kept, and gets the same first mate back with enough of the conversation replayed to read, rather than a second one started beside it.",
+  "session": "fm-1a2b3c4d5e6f7a8b",
+  "allocates": false,
+  "derives_session": true,
+  "supervisor": {
+    "history": [
+      {
+        "answered": "Nine slices have landed.",
+        "asked": "how is the rewrite going?"
+      },
+      {
+        "answered": "One pull request is ready for you.",
+        "asked": "anything waiting on me?"
+      }
+    ],
+    "models": {
+      "available": [
+        {
+          "description": "needs no terminal; reports what it refused the model",
+          "id": "claude",
+          "name": "claude"
+        },
+        {
+          "description": "needs no terminal; reports what it refused the model",
+          "id": "opencode",
+          "name": "opencode"
+        }
+      ],
+      "current": "claude",
+      "live": {
+        "harness": "claude",
+        "unit": "u-7"
+      }
+    }
+  },
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "clientCapabilities": {
+          "fs": {},
+          "terminal": false
+        },
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/load",
+      "params": {
+        "cwd": "C:/Users/captain/projects/firstmate",
+        "mcpServers": [],
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "door": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "how is the rewrite going?",
+            "type": "text"
+          },
+          "sessionUpdate": "user_message_chunk"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "Nine slices have landed.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "anything waiting on me?",
+            "type": "text"
+          },
+          "sessionUpdate": "user_message_chunk"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "One pull request is ready for you.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "models": {
+          "availableModels": [
+            {
+              "description": "needs no terminal; reports what it refused the model",
+              "modelId": "claude",
+              "name": "claude"
+            },
+            {
+              "description": "needs no terminal; reports what it refused the model",
+              "modelId": "opencode",
+              "name": "opencode"
+            }
+          ],
+          "currentModelId": "claude"
+        }
+      }
+    }
+  ]
+}

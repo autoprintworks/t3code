@@ -48,6 +48,10 @@ export default defineConfig({
       // Throwaway probes and the transcripts they captured. Reformatting a
       // recorded result rewrites evidence, so spikes stay as they landed.
       "experiments/**",
+      // FORK DELTA (fm provider): the door's golden transcripts, vendored
+      // verbatim. Reformatting them would break byte-equality with the First
+      // Mate repository's own copies, which is what the drift check compares.
+      "apps/server/src/provider/fm/fixtures/**",
     ],
     sortPackageJson: {},
     overrides: [

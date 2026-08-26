@@ -211,8 +211,11 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         {
           direction: "outgoing",
           stage: "raw",
+          // No `id` field at all. JSON-RPC 2.0 says that is what makes a
+          // message a notification, and an agent that saw `"id": ""` would
+          // read a request and owe an answer for it.
           payload:
-            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"},"id":"","headers":[]}\n',
+            '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"}}\n',
         },
       ]);
     }),

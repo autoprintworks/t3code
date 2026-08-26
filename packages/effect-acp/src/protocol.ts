@@ -120,8 +120,18 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           ? message.requestId
           : undefined;
     const requestId = encodedRequestId === "" ? undefined : encodedRequestId;
+    // The empty id is this protocol's sentinel for a notification, but Effect's
+    // JSON-RPC encoder has no notion of one and would write the sentinel out as
+    // a real `"id": ""`. An agent then reads a request, owes an answer for it,
+    // and may act on the message a second time. JSON-RPC 2.0 says a
+    // notification is the message with no id at all, so it is written here.
+    const notification =
+      message._tag === "Request" && message.id === ""
+        ? { jsonrpc: "2.0" as const, method: message.tag, params: message.payload }
+        : undefined;
     const encoded = yield* Effect.try({
-      try: () => parser.encode(message),
+      try: () =>
+        notification === undefined ? parser.encode(message) : encodeNotificationLine(notification),
       catch: (cause) => AcpError.AcpProtocolParseError.fromEncodingError(method, requestId, cause),
     });
 
@@ -378,7 +388,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       case "Request":
         return handleRequestEncoded(message);
       case "Exit":
-        return handleExitEncoded(message);
+        return handleExitEncoded(normalizeProtocolFailure(message));
       case "Chunk":
         return Ref.get(extPending).pipe(
           Effect.flatMap((pending) => {
@@ -559,6 +569,50 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     notify: sendNotification,
   } satisfies AcpPatchedProtocol;
 });
+
+/**
+ * Writes one JSON-RPC notification line.
+ *
+ * A schema would only re-describe a three-field envelope around a payload that
+ * is already `unknown`, and `parser.encode` is what does that job for every
+ * other message shape. The throw on an unserialisable payload is wanted: the
+ * caller turns it into the declared encoding error.
+ */
+function encodeNotificationLine(notification: {
+  readonly jsonrpc: "2.0";
+  readonly method: string;
+  readonly params: unknown;
+}): string {
+  return `${JSON.stringify(notification)}\n`;
+}
+
+/**
+ * Rewrites an agent's plain JSON-RPC error back into the failure the error
+ * channel promises.
+ *
+ * Effect's ndjson JSON-RPC decoder only recognises a failure it encoded itself,
+ * which carries `_tag: "Cause"` beside the code and the message. An agent that
+ * is not built on Effect answers with the `{code, message, data}` that JSON-RPC
+ * 2.0 specifies, and the decoder files that single unrecognised error under
+ * `Die`. Left alone it reaches callers as a defect, so `AcpRequestError` never
+ * gets built and the agent's own words are lost on the way out.
+ */
+function normalizeProtocolFailure(
+  message: RpcMessage.ResponseExitEncoded,
+): RpcMessage.ResponseExitEncoded {
+  const exit = message.exit;
+  if (exit._tag !== "Failure" || exit.cause.length !== 1) {
+    return message;
+  }
+  const entry = exit.cause[0];
+  if (entry === undefined || entry._tag !== "Die" || !isProtocolError(entry.defect)) {
+    return message;
+  }
+  return {
+    ...message,
+    exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: entry.defect }] },
+  };
+}
 
 function isProtocolError(
   value: unknown,

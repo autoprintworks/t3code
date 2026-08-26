@@ -1,0 +1,158 @@
+{
+  "why": "The ordinary first conversation: initialize, open the session, and prompt. The prompt is the first call that allocates anything, and its answer arrives in pieces.",
+  "session": "fm-1a2b3c4d5e6f7a8b",
+  "allocates": true,
+  "supervisor": {
+    "models": {
+      "available": [
+        {
+          "description": "needs no terminal; reports what it refused the model",
+          "id": "claude",
+          "name": "claude"
+        },
+        {
+          "description": "needs no terminal; reports what it refused the model",
+          "id": "opencode",
+          "name": "opencode"
+        }
+      ],
+      "current": "claude",
+      "live": null
+    },
+    "reads": [
+      {
+        "ending": null,
+        "said": [
+          "Two tasks are running"
+        ],
+        "through": 3
+      },
+      {
+        "ending": {
+          "stopped": "end_turn"
+        },
+        "said": [
+          " and one is waiting on you."
+        ],
+        "through": 5
+      }
+    ],
+    "turn": "t-19"
+  },
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "clientCapabilities": {
+          "fs": {},
+          "terminal": false
+        },
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/new",
+      "params": {
+        "cwd": "C:/Users/captain/projects/firstmate",
+        "mcpServers": []
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "method": "session/prompt",
+      "params": {
+        "prompt": [
+          {
+            "text": "what is the fleet doing?",
+            "type": "text"
+          }
+        ],
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "door": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "models": {
+          "availableModels": [
+            {
+              "description": "needs no terminal; reports what it refused the model",
+              "modelId": "claude",
+              "name": "claude"
+            },
+            {
+              "description": "needs no terminal; reports what it refused the model",
+              "modelId": "opencode",
+              "name": "opencode"
+            }
+          ],
+          "currentModelId": "claude"
+        },
+        "sessionId": "fm-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "Two tasks are running",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "fm-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": " and one is waiting on you.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "result": {
+        "stopReason": "end_turn"
+      }
+    }
+  ]
+}

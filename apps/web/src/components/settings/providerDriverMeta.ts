@@ -2,12 +2,23 @@ import {
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
+  // FORK DELTA (fm provider).
+  FmSettings,
   GrokSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ClaudeAI,
+  CursorIcon,
+  // FORK DELTA (fm provider).
+  FirstMateIcon,
+  GrokIcon,
+  type Icon,
+  OpenAI,
+  OpenCodeIcon,
+} from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -66,6 +77,16 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  // FORK DELTA (fm provider): without this entry the settings panel falls back
+  // to the generic card and never renders `binaryPath` / `homePath`, so there
+  // would be no way to point an instance at a second mate's home.
+  {
+    value: ProviderDriverKind.make("fm"),
+    label: "First Mate",
+    icon: FirstMateIcon,
+    badgeLabel: "Fork",
+    settingsSchema: FmSettings,
   },
 ];
 

@@ -94,7 +94,15 @@ The live backend agent implementation and its event stream. The main service is 
 
 #### Provider
 
-The backend agent runtime that actually performs work. Five drivers ship built in: Codex, Claude, Cursor, Grok, and OpenCode. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
+The backend agent runtime that actually performs work. Five drivers ship built in upstream: Codex, Claude, Cursor, Grok, and OpenCode. This fork adds a sixth, `fm`. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
+
+#### First Mate home (fork only)
+
+One first mate: its conversation, its tasks, its model. A home is a directory, chosen with `FM_V2_HOME` or `--home`, defaulting to `~/.firstmate/v2`. In the `fm` provider one provider connection serves exactly one home, and a second mate is a second connection pointed at a second home. See [the fork delta][28].
+
+#### ACP door (fork only)
+
+`fm-acp`, the First Mate binary that speaks the Agent Client Protocol over stdio. The `fm` driver spawns one per provider connection. Its golden transcripts are both the specification of its wire behaviour and this driver's certification suite. See [the fork delta][28].
 
 #### Session
 
@@ -160,6 +168,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 
 - [Architecture overview][24]
 - [Provider architecture][16]
+- [The `fm` provider fork delta][28]
 - [Permission modes][18]
 - [Workspace layout][2]
 
@@ -190,3 +199,4 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [25]: ../../apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts
 [26]: ../../apps/server/src/orchestration/Layers/RepositoryIdentityReactor.ts
 [27]: ../../apps/server/src/persistence/Services/ProjectionProjects.ts
+[28]: ./fm-provider-fork-delta.md
