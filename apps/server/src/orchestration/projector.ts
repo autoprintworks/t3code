@@ -306,6 +306,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            readOnly: payload.readOnly,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,

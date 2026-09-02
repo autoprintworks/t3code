@@ -8,8 +8,10 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -21,6 +23,13 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import {
+  advertisesSessionList,
+  type AcpPeerSession,
+  type AcpPeerSessionDiff,
+  diffPeerSessions,
+  peerSessionsFromListResponse,
+} from "./AcpPeerSessions.ts";
 import {
   collectSessionConfigOptionValues,
   extractModelConfigId,
@@ -47,8 +56,24 @@ export interface AcpSessionEventStreamBarrier {
 
 export type AcpSessionRuntimeEvent = AcpParsedSessionEvent | AcpSessionEventStreamBarrier;
 
+/**
+ * A parsed event that belongs to a peer session rather than this runtime's own.
+ *
+ * The session id travels with the event because one queue carries every peer:
+ * a consumer routes on this field, and a peer whose id it does not recognise is
+ * simply not its problem.
+ */
+export interface AcpPeerSessionEvent {
+  readonly _tag: "PeerSessionEvent";
+  readonly sessionId: string;
+  readonly event: AcpParsedSessionEvent;
+}
+
+export type AcpPeerSessionStreamEvent = AcpPeerSessionEvent | AcpSessionEventStreamBarrier;
+
 const defaultSessionLoadTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
+const defaultPeerSessionPollInterval = Duration.seconds(2);
 
 export interface AcpSpawnInput {
   readonly command: string;
@@ -70,6 +95,16 @@ export interface AcpSessionRuntimeOptions {
   };
   readonly authMethodId: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /**
+   * Opts this runtime into tracking the other sessions on the same connection.
+   *
+   * Both this option and the agent's advertised `sessionCapabilities.list` must
+   * be present before a single `session/list` goes out: an agent that can list
+   * is not a reason to poll one that nothing is watching.
+   */
+  readonly peerSessions?: {
+    readonly pollInterval?: Duration.Input;
+  };
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -183,6 +218,41 @@ export class AcpSessionRuntime extends Context.Service<
     readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
     /** Waits until the current event consumer has processed every queued event. */
     readonly drainEvents: Effect.Effect<void>;
+    /**
+     * The peer sessions seen by the most recent `session/list`.
+     *
+     * Empty when the runtime was not opted in, or when the agent never said it
+     * answers `session/list`.
+     */
+    readonly getPeerSessions: Effect.Effect<ReadonlyArray<AcpPeerSession>>;
+    /**
+     * Peer-session appearances and disappearances, one item per poll that saw a
+     * change.
+     *
+     * The subscription is acquired in the caller's own fiber, before this
+     * effect returns, so a poll landing while the consumer fiber is still
+     * being scheduled cannot fall into a gap. Build a stream over it with
+     * `Stream.fromSubscription`; `Stream.fromPubSub` would subscribe on stream
+     * start and reopen exactly that race.
+     *
+     * Every item also carries the whole `present` set, so a consumer that
+     * reconciles against `present` recovers from a dropped item as well.
+     */
+    readonly subscribePeerSessions: Effect.Effect<
+      PubSub.Subscription<AcpPeerSessionDiff>,
+      never,
+      Scope.Scope
+    >;
+    /**
+     * Loads a peer session so its history and later updates arrive on
+     * {@link getPeerSessionEvents}. Idempotent: the second call for one session
+     * id is a no-op rather than a second `session/load`.
+     */
+    readonly loadPeerSession: (sessionId: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /** Parsed events for every loaded peer session, tagged with the session id. */
+    readonly getPeerSessionEvents: () => Stream.Stream<AcpPeerSessionStreamEvent, never>;
+    /** Waits until the current peer event consumer has processed every queued event. */
+    readonly drainPeerSessionEvents: Effect.Effect<void>;
     /** Latest mode state observed from session setup and `session/update` notifications. */
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
     /** Latest configuration options observed from session setup and configuration writes. */
@@ -261,6 +331,17 @@ interface AcpAssistantSegmentState {
   readonly activeItemId?: string;
 }
 
+/**
+ * Per-peer parse state. Assistant segmenting and tool-call merging are
+ * per-session concerns, so a peer gets its own refs rather than sharing the
+ * root session's and interleaving two conversations into one item id space.
+ */
+interface AcpPeerRoute {
+  readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
+  readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
+  readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
+}
+
 interface EnsureActiveAssistantSegmentResult {
   readonly itemId: string;
   readonly startedEvent?: Extract<AcpParsedSessionEvent, { readonly _tag: "AssistantItemStarted" }>;
@@ -297,6 +378,12 @@ export const make = (
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
     >(Option.none());
     const sessionLoadGateRef = yield* Ref.make<Option.Option<SessionLoadGate>>(Option.none());
+
+    const peerEventQueue = yield* Queue.unbounded<AcpPeerSessionStreamEvent>();
+    const peerSessionsRef = yield* Ref.make<ReadonlyArray<AcpPeerSession>>([]);
+    const peerSessionsPubSub = yield* PubSub.unbounded<AcpPeerSessionDiff>();
+    const peerRoutesRef = yield* Ref.make(new Map<string, AcpPeerRoute>());
+    const rootEventSink: AcpParsedSessionEventSink = (event) => Queue.offer(eventQueue, event);
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
       options.requestLogger ? options.requestLogger(event) : Effect.void;
@@ -381,20 +468,40 @@ export const make = (
           );
           return;
         }
+        const startState = yield* Ref.get(startStateRef);
+        if (startState._tag !== "Started") {
+          return;
+        }
+        // One runtime projects one root ACP session. A notification for any
+        // other session belongs to a peer, and reaches a stream only once that
+        // peer has been explicitly loaded. Peer routing comes before the replay
+        // check on purpose: replay is the peer's history, which is the whole
+        // reason a worker thread is worth opening.
+        if (notification.sessionId !== startState.result.sessionId) {
+          const route = (yield* Ref.get(peerRoutesRef)).get(notification.sessionId);
+          if (route === undefined) {
+            return;
+          }
+          yield* handleSessionUpdate({
+            offer: (event) =>
+              Queue.offer(peerEventQueue, {
+                _tag: "PeerSessionEvent",
+                sessionId: notification.sessionId,
+                event,
+              }),
+            modeStateRef: route.modeStateRef,
+            toolCallsRef: route.toolCallsRef,
+            assistantSegmentRef: route.assistantSegmentRef,
+            assistantItemRuntimeId,
+            params: notification,
+          });
+          return;
+        }
         if (sessionUpdateIsReplay(notification)) {
           return;
         }
-        const startState = yield* Ref.get(startStateRef);
-        // One runtime projects one root ACP session. Child-session updates need
-        // explicit lineage routing and must never be flattened into this stream.
-        if (
-          startState._tag !== "Started" ||
-          notification.sessionId !== startState.result.sessionId
-        ) {
-          return;
-        }
         yield* handleSessionUpdate({
-          queue: eventQueue,
+          offer: rootEventSink,
           modeStateRef,
           toolCallsRef,
           assistantSegmentRef,
@@ -528,6 +635,90 @@ export const make = (
         ),
       );
 
+    const forgetPeerRoute = (sessionId: string) =>
+      Ref.update(peerRoutesRef, (current) => {
+        if (!current.has(sessionId)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.delete(sessionId);
+        return next;
+      });
+
+    const loadPeerSession = (sessionId: string): Effect.Effect<void, EffectAcpErrors.AcpError> =>
+      Effect.gen(function* () {
+        const started = yield* getStartedState;
+        if (sessionId === started.sessionId) {
+          return;
+        }
+        const route = {
+          modeStateRef: yield* Ref.make<AcpSessionModeState | undefined>(undefined),
+          toolCallsRef: yield* Ref.make(new Map<string, AcpToolCallState>()),
+          assistantSegmentRef: yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 }),
+        } satisfies AcpPeerRoute;
+        // Claiming the route before the request is what makes the replay
+        // usable: `session/load` streams the history back as notifications,
+        // and there is nowhere to put them until this map has the session id.
+        const claimed = yield* Ref.modify(peerRoutesRef, (current) => {
+          if (current.has(sessionId)) {
+            return [false, current] as const;
+          }
+          const next = new Map(current);
+          next.set(sessionId, route);
+          return [true, next] as const;
+        });
+        if (!claimed) {
+          return;
+        }
+        const loadPayload = {
+          sessionId,
+          cwd: options.cwd,
+          mcpServers: options.mcpServers ?? [],
+        } satisfies EffectAcpSchema.LoadSessionRequest;
+        yield* runLoggedRequest(
+          "session/load",
+          loadPayload,
+          acp.agent.loadSession(loadPayload),
+        ).pipe(
+          Effect.onError(() => forgetPeerRoute(sessionId)),
+          Effect.asVoid,
+        );
+      });
+
+    const pollPeerSessionsOnce = (ownSessionId: string) =>
+      Effect.gen(function* () {
+        const listPayload = {} satisfies EffectAcpSchema.ListSessionsRequest;
+        const response = yield* acp.agent.listSessions(listPayload);
+        const next = peerSessionsFromListResponse({ response, ownSessionId });
+        const diff = yield* Ref.modify(
+          peerSessionsRef,
+          (previous) => [diffPeerSessions({ previous, next }), next] as const,
+        );
+        if (diff.appeared.length === 0 && diff.disappeared.length === 0) {
+          return;
+        }
+        for (const sessionId of diff.disappeared) {
+          yield* forgetPeerRoute(sessionId);
+        }
+        yield* PubSub.publish(peerSessionsPubSub, diff);
+      });
+
+    /**
+     * ACP has no agent-to-client notification for a session appearing, so a
+     * poll is the protocol's own answer. A failed poll is not a failed runtime
+     * - the agent may be busy or restarting - and the next tick re-reads the
+     * whole set, so nothing is lost by ignoring one.
+     */
+    const peerSessionPollLoop = (input: {
+      readonly ownSessionId: string;
+      readonly interval: Duration.Duration;
+    }) =>
+      pollPeerSessionsOnce(input.ownSessionId).pipe(
+        Effect.catchCause(() => Effect.void),
+        Effect.repeat(Schedule.spaced(input.interval)),
+        Effect.asVoid,
+      );
+
     const startOnce = Effect.gen(function* () {
       const initializePayload = {
         protocolVersion: 1,
@@ -647,6 +838,18 @@ export const make = (
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
       yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
 
+      // Both halves are required: the caller has to want peer sessions, and
+      // the agent has to say it answers `session/list`. An agent that can list
+      // is not a reason to poll on behalf of nobody.
+      if (options.peerSessions && advertisesSessionList(initializeResult)) {
+        yield* peerSessionPollLoop({
+          ownSessionId: sessionId,
+          interval: Duration.fromInputUnsafe(
+            options.peerSessions.pollInterval ?? defaultPeerSessionPollInterval,
+          ),
+        }).pipe(Effect.forkIn(runtimeScope));
+      }
+
       const nextState = {
         sessionId,
         initializeResult,
@@ -714,6 +917,20 @@ export const make = (
         });
         yield* Deferred.await(acknowledge);
       }),
+      getPeerSessions: Ref.get(peerSessionsRef),
+      get subscribePeerSessions() {
+        return PubSub.subscribe(peerSessionsPubSub);
+      },
+      loadPeerSession,
+      getPeerSessionEvents: () => Stream.fromQueue(peerEventQueue),
+      drainPeerSessionEvents: Effect.gen(function* () {
+        const acknowledge = yield* Deferred.make<void>();
+        yield* Queue.offer(peerEventQueue, {
+          _tag: "EventStreamBarrier",
+          acknowledge,
+        });
+        yield* Deferred.await(acknowledge);
+      }),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
       prompt: (payload) =>
@@ -721,7 +938,7 @@ export const make = (
           Effect.gen(function* () {
             const started = yield* getStartedState;
             yield* closeActiveAssistantSegment({
-              queue: eventQueue,
+              offer: rootEventSink,
               assistantSegmentRef,
             });
             const requestPayload = {
@@ -751,7 +968,7 @@ export const make = (
               ),
               Effect.tap(() =>
                 closeActiveAssistantSegment({
-                  queue: eventQueue,
+                  offer: rootEventSink,
                   assistantSegmentRef,
                 }),
               ),
@@ -842,14 +1059,14 @@ function configOptionCurrentValueMatches(
 }
 
 const handleSessionUpdate = ({
-  queue,
+  offer,
   modeStateRef,
   toolCallsRef,
   assistantSegmentRef,
   assistantItemRuntimeId,
   params,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly offer: AcpParsedSessionEventSink;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
@@ -866,7 +1083,7 @@ const handleSessionUpdate = ({
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
         yield* closeActiveAssistantSegment({
-          queue,
+          offer,
           assistantSegmentRef,
         });
         const { previous, merged } = yield* Ref.modify(toolCallsRef, (current) => {
@@ -883,7 +1100,7 @@ const handleSessionUpdate = ({
         if (!shouldEmitToolCallUpdate(previous, merged)) {
           continue;
         }
-        yield* Queue.offer(queue, {
+        yield* offer({
           _tag: "ToolCallUpdated",
           toolCall: merged,
           rawPayload: event.rawPayload,
@@ -898,18 +1115,18 @@ const handleSessionUpdate = ({
           }
         }
         const itemId = yield* ensureActiveAssistantSegment({
-          queue,
+          offer,
           assistantSegmentRef,
           sessionId: params.sessionId,
           assistantItemRuntimeId,
         });
-        yield* Queue.offer(queue, {
+        yield* offer({
           ...event,
           itemId,
         });
         continue;
       }
-      yield* Queue.offer(queue, event);
+      yield* offer(event);
     }
   });
 
@@ -942,13 +1159,20 @@ function shouldEmitToolCallUpdate(
 const assistantItemId = (sessionId: string, runtimeId: string, segmentIndex: number) =>
   `assistant:${sessionId}:runtime:${runtimeId}:segment:${segmentIndex}`;
 
+/**
+ * Where parsed events go. One session's events are one sink, so the same
+ * parsing code serves this runtime's own session and every peer session
+ * without either stream learning about the other.
+ */
+type AcpParsedSessionEventSink = (event: AcpParsedSessionEvent) => Effect.Effect<void>;
+
 const ensureActiveAssistantSegment = ({
-  queue,
+  offer,
   assistantSegmentRef,
   sessionId,
   assistantItemRuntimeId,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly offer: AcpParsedSessionEventSink;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly sessionId: string;
   readonly assistantItemRuntimeId: string;
@@ -977,16 +1201,16 @@ const ensureActiveAssistantSegment = ({
   ).pipe(
     Effect.flatMap((result) =>
       result.startedEvent
-        ? Queue.offer(queue, result.startedEvent).pipe(Effect.as(result.itemId))
+        ? offer(result.startedEvent).pipe(Effect.as(result.itemId))
         : Effect.succeed(result.itemId),
     ),
   );
 
 const closeActiveAssistantSegment = ({
-  queue,
+  offer,
   assistantSegmentRef,
 }: {
-  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly offer: AcpParsedSessionEventSink;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
 }) =>
   Ref.modify(assistantSegmentRef, (current) => {
@@ -1002,4 +1226,4 @@ const closeActiveAssistantSegment = ({
         nextSegmentIndex: current.nextSegmentIndex,
       } satisfies AcpAssistantSegmentState,
     ] as const;
-  }).pipe(Effect.flatMap((event) => (event ? Queue.offer(queue, event) : Effect.void)));
+  }).pipe(Effect.flatMap((event) => (event ? offer(event) : Effect.void)));

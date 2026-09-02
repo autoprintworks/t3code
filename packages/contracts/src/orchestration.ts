@@ -391,6 +391,11 @@ export const OrchestrationThread = Schema.Struct({
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  // A window onto work being driven somewhere else. The agent that owns this
+  // conversation refuses to be prompted through it, so the client shows no way
+  // to type. Set once at creation and never cleared: a thread does not become
+  // promptable later. Optional so old servers/clients interop; absent = false.
+  readOnly: Schema.optional(Schema.Boolean),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -445,6 +450,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  // See OrchestrationThread.readOnly. Carried on the shell too so a list row
+  // can say so without loading the transcript.
+  readOnly: Schema.optional(Schema.Boolean),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -665,6 +673,10 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // Server-issued threads that mirror work owned elsewhere set this. Optional
+  // so every existing caller, including clients, keeps creating ordinary
+  // promptable threads without saying so.
+  readOnly: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 
@@ -1111,6 +1123,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  readOnly: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

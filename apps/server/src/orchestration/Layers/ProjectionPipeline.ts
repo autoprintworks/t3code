@@ -635,6 +635,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            readOnly: event.payload.readOnly ? 1 : 0,
             deletedAt: null,
           });
           return;

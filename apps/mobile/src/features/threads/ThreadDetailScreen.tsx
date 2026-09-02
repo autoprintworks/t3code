@@ -203,7 +203,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   })();
   const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
-  const composerOverlapHeight = composerChrome + composerBottomInset;
+  // A window onto work being driven somewhere else - a First Mate worker, say.
+  // There is nothing to type here, so there is no composer at all rather than
+  // a disabled one, and the feed reclaims the space it would have taken. The
+  // bottom inset stays: the home indicator is still there.
+  const isReadOnlyThread = props.selectedThread.readOnly === true;
+  const composerOverlapHeight = isReadOnlyThread
+    ? composerBottomInset
+    : composerChrome + composerBottomInset;
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
@@ -381,7 +388,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       )}
 
       {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
-      {showContent ? (
+      {showContent && !isReadOnlyThread ? (
         <KeyboardStickyView
           style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
           offset={{ closed: 0, opened: 0 }}

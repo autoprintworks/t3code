@@ -54,6 +54,7 @@ import {
   makeAcpContentDeltaEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import type { AcpPeerSessionDiff } from "../acp/AcpPeerSessions.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   ProviderAdapterProcessError,
@@ -71,9 +72,36 @@ import {
   makeFmAcpRuntime,
   resolveFmModelId,
 } from "./FmAcpSupport.ts";
+import {
+  type FmWorkerObservation,
+  fmWorkerMessageIdFor,
+  reconcileFmWorkers,
+} from "./FmWorkerSessions.ts";
 
 /** FmAdapterShape - per-instance First Mate adapter contract. */
-export interface FmAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {}
+export interface FmAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {
+  /**
+   * The workers this instance's doors are hosting, and the text they produce.
+   *
+   * `FmWorkerThreadReactor` is the only consumer; it turns these into
+   * read-only threads. The subscription is acquired in the caller's own fiber
+   * so an observation published while the consumer is still being scheduled
+   * cannot fall into a gap - build a stream over it with
+   * `Stream.fromSubscription`, never `Stream.fromPubSub`.
+   */
+  readonly subscribeWorkerObservations: Effect.Effect<
+    PubSub.Subscription<FmWorkerObservation>,
+    never,
+    Scope.Scope
+  >;
+}
+
+/** Narrows a registry adapter to the First Mate one. */
+export function isFmAdapter(
+  adapter: ProviderAdapterShape<ProviderAdapterError>,
+): adapter is FmAdapterShape {
+  return adapter.provider === PROVIDER && "subscribeWorkerObservations" in adapter;
+}
 
 const PROVIDER = ProviderDriverKind.make("fm");
 const FM_RESUME_VERSION = 1 as const;
@@ -92,6 +120,11 @@ export interface FmAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   /** Overrides the cancel grace period; the certification suite shortens it. */
   readonly cancelGrace?: Duration.Input;
+  /**
+   * Overrides how often `session/list` is polled for workers. The worker suite
+   * shortens it so a test does not wait out the shipping interval.
+   */
+  readonly peerSessionPollInterval?: Duration.Input;
 }
 
 interface FmSessionContext {
@@ -194,6 +227,7 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
 
     const sessions = new Map<ThreadId, FmSessionContext>();
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+    const workerObservationPubSub = yield* PubSub.unbounded<FmWorkerObservation>();
     // Two locks, always taken in this order: `turnGate` for the whole span of a
     // turn (so a queued `sendTurn` waits exactly like the door's own request
     // queue), `stateLock` for the short bookkeeping sections. `interruptTurn`
@@ -246,6 +280,145 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
     const withStateLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getSemaphore(stateLocksRef, threadId), (semaphore) =>
         semaphore.withPermit(effect),
+      );
+
+    const publishWorkerObservation = (observation: FmWorkerObservation) =>
+      PubSub.publish(workerObservationPubSub, observation).pipe(Effect.asVoid);
+
+    /**
+     * Turns one door's peer sessions into worker observations for the reactor.
+     *
+     * Two pumps run for the life of the session: one over the poll diffs, which
+     * decides what a worker thread is; one over the peer event queue, which
+     * decides what is written into it. Neither ever prompts - a worker is
+     * steered through First Mate itself, never through this adapter.
+     */
+    const watchWorkerSessions = (input: {
+      readonly supervisorThreadId: ThreadId;
+      readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+      readonly peerDiffs: PubSub.Subscription<AcpPeerSessionDiff>;
+    }) =>
+      Effect.gen(function* () {
+        // Reconciled against `present` on every diff, so a dropped item costs
+        // one poll of latency rather than a worker nobody ever hears about.
+        const known = new Set<string>();
+        const messageState = new Map<
+          string,
+          { currentMessageId: string | undefined; fallbackCount: number }
+        >();
+
+        const diffPump = Stream.runForEach(Stream.fromSubscription(input.peerDiffs), (diff) =>
+          Effect.gen(function* () {
+            const changed = reconcileFmWorkers({ known, present: diff.present });
+            for (const session of changed.appeared) {
+              known.add(session.sessionId);
+              yield* publishWorkerObservation({
+                _tag: "WorkerAppeared",
+                supervisorThreadId: input.supervisorThreadId,
+                workerSessionId: session.sessionId,
+                title: session.title,
+                cwd: session.cwd,
+              });
+              // Loading on appearance rather than on open is deliberate: a
+              // worker that starts and finishes before anyone looks must still
+              // leave a readable thread behind, and an archived thread has no
+              // later moment at which to fetch its own history.
+              yield* input.acp.loadPeerSession(session.sessionId).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("fm.worker.session-load-failed", {
+                    cause,
+                    threadId: input.supervisorThreadId,
+                    workerSessionId: session.sessionId,
+                  }),
+                ),
+              );
+            }
+            for (const workerSessionId of changed.disappeared) {
+              known.delete(workerSessionId);
+              messageState.delete(workerSessionId);
+              yield* publishWorkerObservation({
+                _tag: "WorkerDisappeared",
+                supervisorThreadId: input.supervisorThreadId,
+                workerSessionId,
+              });
+            }
+          }),
+        );
+
+        const eventPump = Stream.runForEach(input.acp.getPeerSessionEvents(), (item) =>
+          Effect.gen(function* () {
+            if (item._tag === "EventStreamBarrier") {
+              yield* Deferred.succeed(item.acknowledge, undefined);
+              return;
+            }
+            const workerSessionId = item.sessionId;
+            const state = messageState.get(workerSessionId) ?? {
+              currentMessageId: undefined,
+              fallbackCount: 0,
+            };
+            switch (item.event._tag) {
+              case "AssistantItemStarted": {
+                messageState.set(workerSessionId, {
+                  currentMessageId: item.event.itemId,
+                  fallbackCount: state.fallbackCount,
+                });
+                return;
+              }
+              case "AssistantItemCompleted": {
+                messageState.set(workerSessionId, {
+                  currentMessageId:
+                    state.currentMessageId === item.event.itemId
+                      ? undefined
+                      : state.currentMessageId,
+                  fallbackCount: state.fallbackCount,
+                });
+                yield* publishWorkerObservation({
+                  _tag: "WorkerTextCompleted",
+                  supervisorThreadId: input.supervisorThreadId,
+                  workerSessionId,
+                  messageId: item.event.itemId,
+                });
+                return;
+              }
+              case "ContentDelta": {
+                const itemId = item.event.itemId;
+                const messageId = fmWorkerMessageIdFor({
+                  workerSessionId,
+                  itemId,
+                  currentMessageId: state.currentMessageId,
+                  fallbackCount: state.fallbackCount,
+                });
+                const synthesised = !itemId?.trim() && state.currentMessageId === undefined;
+                messageState.set(workerSessionId, {
+                  currentMessageId: messageId,
+                  fallbackCount: synthesised ? state.fallbackCount + 1 : state.fallbackCount,
+                });
+                yield* publishWorkerObservation({
+                  _tag: "WorkerText",
+                  supervisorThreadId: input.supervisorThreadId,
+                  workerSessionId,
+                  messageId,
+                  text: item.event.text,
+                });
+                return;
+              }
+              // A worker's modes, plans and tool calls belong to richer agents
+              // than the door; ignoring them here is a statement about the
+              // door, not an oversight.
+              default:
+                return;
+            }
+          }),
+        );
+
+        yield* Effect.all([diffPump, eventPump], { concurrency: 2, discard: true });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("Failed to watch First Mate worker sessions.", {
+            cause,
+            threadId: input.supervisorThreadId,
+          }),
+        ),
       );
 
     const logNative = (threadId: ThreadId, method: string, payload: unknown) =>
@@ -417,6 +590,14 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
+            // Opting in is what starts the `session/list` poll, and only if
+            // the door also advertises the capability. Without this the
+            // runtime never asks, which is how every other ACP provider in
+            // this build behaves.
+            peerSessions:
+              options?.peerSessionPollInterval === undefined
+                ? {}
+                : { pollInterval: options.peerSessionPollInterval },
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
@@ -433,6 +614,19 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
           );
 
           const acp = runtime.acp;
+
+          // Before `start`, because `start` is what forks the `session/list`
+          // poll. A subscription taken afterwards could miss the first worker,
+          // and nothing would ever republish it.
+          const peerDiffs = yield* acp.subscribePeerSessions.pipe(
+            Effect.provideService(Scope.Scope, sessionScope),
+          );
+          yield* watchWorkerSessions({
+            supervisorThreadId: input.threadId,
+            acp,
+            peerDiffs,
+          }).pipe(Effect.forkIn(sessionScope));
+
           const started = yield* acp
             .start()
             .pipe(
@@ -896,6 +1090,7 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
     yield* Effect.addFinalizer(() =>
       Effect.ignore(stopAll()).pipe(
         Effect.tap(() => PubSub.shutdown(runtimeEventPubSub)),
+        Effect.tap(() => PubSub.shutdown(workerObservationPubSub)),
         Effect.tap(() => managedNativeEventLogger?.close() ?? Effect.void),
       ),
     );
@@ -920,6 +1115,9 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
       hasSession,
       stopAll,
       streamEvents,
+      get subscribeWorkerObservations() {
+        return PubSub.subscribe(workerObservationPubSub);
+      },
     } satisfies FmAdapterShape;
   });
 }

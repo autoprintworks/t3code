@@ -41,6 +41,7 @@ isolatedLayer()("ForkMigrations - fresh database", (it) => {
         { migration_id: 2, name: "ProjectionThreadActivitySequenceNotNull" },
         { migration_id: 3, name: "ProjectionProjectRepositoryIdentity" },
         { migration_id: 4, name: "ProjectionTurnsActivityAnchorBackfill" },
+        { migration_id: 5, name: "ProjectionThreadsReadOnly" },
       ]);
     }),
   );
@@ -80,6 +81,7 @@ isolatedLayer()("ForkMigrations - legacy id 38 already applied", (it) => {
         { migration_id: 2, name: "ProjectionThreadActivitySequenceNotNull" },
         { migration_id: 3, name: "ProjectionProjectRepositoryIdentity" },
         { migration_id: 4, name: "ProjectionTurnsActivityAnchorBackfill" },
+        { migration_id: 5, name: "ProjectionThreadsReadOnly" },
       ]);
 
       const activitySequence = yield* sequenceColumnInfo(sql, "projection_thread_activities");
