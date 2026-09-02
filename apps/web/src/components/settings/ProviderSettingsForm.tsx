@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type {
   ProviderSettingsFormAnnotation,
+  ProviderSettingsFormChoice,
   ProviderSettingsFormControl,
   ProviderSettingsFormSchemaAnnotation,
 } from "@t3tools/contracts";
@@ -12,6 +13,7 @@ import type {
 import { cn } from "../../lib/utils";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import type { ProviderClientDefinition } from "./providerDriverMeta";
@@ -24,6 +26,8 @@ export interface ProviderSettingsFieldModel {
   readonly placeholder?: string | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
   readonly defaultBooleanValue?: boolean | undefined;
+  /** Menu for a `select` field. Empty for every other control. */
+  readonly choices?: ReadonlyArray<ProviderSettingsFormChoice> | undefined;
 }
 
 function titleizeFieldKey(key: string): string {
@@ -106,6 +110,7 @@ export function deriveProviderSettingsFields(
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
+          ...(formAnnotation.choices !== undefined ? { choices: formAnnotation.choices } : {}),
         } satisfies ProviderSettingsFieldModel,
       ];
     });
@@ -213,6 +218,43 @@ function ProviderSettingsFieldRow({
             aria-label={field.label}
           />
         </div>
+      </FieldFrame>
+    );
+  }
+
+  if (field.control === "select") {
+    // A select is a button, not an input, so it gets an aria-labelledby pair
+    // rather than the wrapping `<label>` the text controls use: a label around
+    // a button opens the menu again on the click that just closed it.
+    return (
+      <FieldFrame variant={variant}>
+        <span id={`${inputId}-label`} className={cn(variant === "card" && "block")}>
+          {label}
+        </span>
+        <Select
+          value={readProviderConfigString(value, field.key)}
+          onValueChange={(next: unknown) =>
+            onChange(
+              nextProviderConfigWithFieldValue(value, field, typeof next === "string" ? next : ""),
+            )
+          }
+        >
+          <SelectTrigger
+            id={inputId}
+            aria-labelledby={`${inputId}-label`}
+            className={cn("w-full", variant === "card" && "mt-1.5")}
+          >
+            <SelectValue placeholder={field.placeholder ?? "Default"} />
+          </SelectTrigger>
+          <SelectContent>
+            {(field.choices ?? []).map((choice) => (
+              <SelectItem key={choice.value} value={choice.value}>
+                {choice.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {description}
       </FieldFrame>
     );
   }

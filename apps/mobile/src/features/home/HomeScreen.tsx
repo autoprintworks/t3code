@@ -765,6 +765,15 @@ export function HomeScreen(props: HomeScreenProps) {
                   (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
               )?.driver ?? null
           }
+          providerIconKey={
+            serverConfigs
+              .get(thread.environmentId)
+              ?.providers.find(
+                (provider) =>
+                  provider.instanceId ===
+                  (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
+              )?.iconKey ?? null
+          }
           environmentLabel={
             Object.keys(props.savedConnectionsById).length > 1
               ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)

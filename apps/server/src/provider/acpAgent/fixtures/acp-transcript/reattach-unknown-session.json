@@ -1,0 +1,58 @@
+{
+  "agent": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "agentInfo": {
+          "name": "example-acp-agent",
+          "version": "1.4.0"
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "error": {
+        "code": -32602,
+        "message": "this agent serves one conversation and its session is sess-1a2b3c4d5e6f7a8b; sess-ffffffffffffffff belongs to another one, so open that session where it was made"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    }
+  ],
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/load",
+      "params": {
+        "cwd": "C:/work/other-repo",
+        "mcpServers": [],
+        "sessionId": "sess-ffffffffffffffff"
+      }
+    }
+  ],
+  "session": "sess-1a2b3c4d5e6f7a8b",
+  "why": "A client reattaching with a session id this agent does not know. It is refused by name: serving some other conversation under the id the client kept is how a person ends up reading the wrong history."
+}

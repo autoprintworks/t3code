@@ -946,9 +946,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // an archived thread is refused here rather than persisting a user
       // message the provider reactor would later drop in silence.
       //
-      // FORK DELTA (fm provider) - read-only is refused for the stronger
-      // reason: nothing may start a turn on a thread that mirrors work
-      // another agent owns, whatever is asking.
+      // Read-only is refused for the stronger reason: nothing may start a
+      // turn on a thread that mirrors work another agent owns, whatever is
+      // asking.
       const targetThread = yield* requireThreadPromptable({
         readModel,
         command,
@@ -1144,9 +1144,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.checkpoint.revert": {
-      // FORK DELTA (fm provider) - a revert drives the provider on the thread
-      // just as a turn does, so it is refused on a read-only thread for the
-      // same reason.
+      // A revert drives the provider on the thread just as a turn does, so it
+      // is refused on a read-only thread for the same reason.
       yield* requireThreadPromptable({
         readModel,
         command,

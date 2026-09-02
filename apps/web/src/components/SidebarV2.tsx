@@ -238,6 +238,7 @@ function SidebarV2ThreadTooltip({
   projectCwd,
   environmentLabel,
   driverKind,
+  providerIconKey,
   modelInstanceId,
   modelLabel,
   branchMismatch,
@@ -249,6 +250,7 @@ function SidebarV2ThreadTooltip({
   projectCwd: string | null;
   environmentLabel: string | null;
   driverKind: ProviderInstanceEntry["driverKind"] | null;
+  providerIconKey: ProviderInstanceEntry["iconKey"];
   modelInstanceId: string;
   modelLabel: string;
   branchMismatch: {
@@ -306,6 +308,7 @@ function SidebarV2ThreadTooltip({
               <ProviderInstanceIcon
                 driverKind={driverKind}
                 displayName={thread.session?.providerName ?? modelInstanceId}
+                iconKey={providerIconKey}
                 iconClassName="size-3 shrink-0 grayscale opacity-60"
               />
               <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
@@ -612,6 +615,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       projectCwd={props.projectCwd}
       environmentLabel={props.environmentLabel}
       driverKind={driverKind}
+      providerIconKey={providerEntry?.iconKey}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
       branchMismatch={branchMismatch}
@@ -1174,6 +1178,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={thread.session?.providerName ?? modelInstanceId}
+                      iconKey={providerEntry?.iconKey}
                       iconClassName="size-3.5"
                     />
                   </span>
@@ -1287,6 +1292,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
           projectCwd={props.projectCwd}
           environmentLabel={props.environmentLabel}
           driverKind={driverKind}
+          providerIconKey={providerEntry?.iconKey}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
           branchMismatch={branchMismatch}

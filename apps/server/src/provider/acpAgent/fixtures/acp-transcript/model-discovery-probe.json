@@ -1,0 +1,93 @@
+{
+  "agent": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "agentInfo": {
+          "name": "example-acp-agent",
+          "version": "1.4.0"
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "models": {
+          "availableModels": [
+            {
+              "description": "balanced; the agent's own default",
+              "modelId": "default",
+              "name": "default"
+            },
+            {
+              "description": "smaller and quicker",
+              "modelId": "fast",
+              "name": "fast"
+            },
+            {
+              "description": "slower, for hard problems",
+              "modelId": "deep",
+              "name": "deep"
+            },
+            {
+              "description": "reads more before answering",
+              "modelId": "research",
+              "name": "research"
+            },
+            {
+              "description": "runs on this machine, no network",
+              "modelId": "offline",
+              "name": "offline"
+            }
+          ],
+          "currentModelId": "default"
+        },
+        "sessionId": "sess-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "clientCapabilities": {
+          "fs": {
+            "readTextFile": false,
+            "writeTextFile": false
+          },
+          "terminal": false
+        },
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/new",
+      "params": {
+        "cwd": "C:/work/repo",
+        "mcpServers": []
+      }
+    }
+  ],
+  "session": "sess-1a2b3c4d5e6f7a8b",
+  "why": "T3 Code's model-discovery probe: open a session, read the model list, close. It has fifteen seconds and it never prompts, so an agent that only listed its models once a turn had started would leave the picker empty."
+}

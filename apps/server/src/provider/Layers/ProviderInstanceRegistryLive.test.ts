@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`) in a single
+ *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`, `acpAgent`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -25,6 +25,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  type AcpAgentSettings,
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
@@ -43,6 +44,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { AcpAgentDriver } from "../acpAgent/AcpAgentDriver.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
@@ -120,6 +122,17 @@ const makeCursorConfig = (overrides: Partial<CursorSettings>): CursorSettings =>
 const makeGrokConfig = (overrides: Partial<GrokSettings>): GrokSettings => ({
   enabled: false,
   binaryPath: "grok",
+  customModels: [],
+  ...overrides,
+});
+
+const makeAcpAgentConfig = (overrides: Partial<AcpAgentSettings>): AcpAgentSettings => ({
+  enabled: false,
+  command: "",
+  args: "",
+  workingDirectory: "",
+  icon: "",
+  authMethodId: "",
   customModels: [],
   ...overrides,
 });
@@ -264,6 +277,116 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   );
 });
 
+describe("ProviderInstanceRegistryLive — multi-instance ACP agent slice", () => {
+  // The `acpAgent` driver is configuration and nothing else: the command, the
+  // arguments, the working directory and the icon all come from settings. Two
+  // entries pointed at two different agents therefore have to arrive as two
+  // separate provider instances, which is the shape `ProviderSnapshotSource`
+  // promises when it says two snapshot sources may share one driver kind.
+  const testLayer = ServerConfig.layerTest(process.cwd(), {
+    prefix: "provider-instance-registry-acp-agent-test",
+  }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(TestHttpClientLive),
+    Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+  );
+
+  it.live("boots two differently configured ACP agents as two instances", () =>
+    Effect.gen(function* () {
+      const oneId = ProviderInstanceId.make("acp_agent_one");
+      const twoId = ProviderInstanceId.make("acp_agent_two");
+      const acpAgentDriverKind = ProviderDriverKind.make("acpAgent");
+
+      const configMap: ProviderInstanceConfigMap = {
+        [oneId]: {
+          driver: acpAgentDriverKind,
+          displayName: "Research agent",
+          enabled: false,
+          config: makeAcpAgentConfig({
+            command: "npx",
+            args: "-y\n@example/research-agent",
+            icon: "flask",
+          }),
+        },
+        [twoId]: {
+          driver: acpAgentDriverKind,
+          displayName: "House agent",
+          enabled: false,
+          config: makeAcpAgentConfig({
+            command: "/opt/house-agent/bin/house-agent",
+            args: "--acp",
+            workingDirectory: "/srv/house-agent",
+            icon: "anchor",
+          }),
+        },
+      };
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [AcpAgentDriver],
+        configMap,
+      });
+
+      const unavailable = yield* registry.listUnavailable;
+      expect(unavailable).toEqual([]);
+
+      const instances = yield* registry.listInstances;
+      expect(instances).toHaveLength(2);
+      expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
+        [oneId, twoId].toSorted(),
+      );
+      expect(instances.every((instance) => instance.driverKind === acpAgentDriverKind)).toBe(true);
+
+      const one = yield* registry.getInstance(oneId);
+      const two = yield* registry.getInstance(twoId);
+      expect(one!.adapter).not.toBe(two!.adapter);
+      expect(one!.snapshot).not.toBe(two!.snapshot);
+      expect(one!.textGeneration).not.toBe(two!.textGeneration);
+
+      // Each carries the name and the glyph its own settings gave it. Without
+      // that, two configured agents would be indistinguishable in the picker.
+      const oneSnapshot = yield* one!.snapshot.getSnapshot;
+      const twoSnapshot = yield* two!.snapshot.getSnapshot;
+      expect(oneSnapshot.instanceId).toBe(oneId);
+      expect(oneSnapshot.displayName).toBe("Research agent");
+      expect(oneSnapshot.iconKey).toBe("flask");
+      expect(twoSnapshot.instanceId).toBe(twoId);
+      expect(twoSnapshot.displayName).toBe("House agent");
+      expect(twoSnapshot.iconKey).toBe("anchor");
+
+      // Continuation groups are per instance, so a thread started on one agent
+      // never resumes on the other.
+      expect(oneSnapshot.continuation?.groupKey).toBe(`${acpAgentDriverKind}:instance:${oneId}`);
+      expect(twoSnapshot.continuation?.groupKey).toBe(`${acpAgentDriverKind}:instance:${twoId}`);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("lets a user add a second agent before they have said what it runs", () =>
+    Effect.gen(function* () {
+      // Two brand new instances are both blank, and blank is not a duplicate
+      // of anything. Refusing the second one would be a settings form that
+      // cannot be filled in.
+      const oneId = ProviderInstanceId.make("acp_agent_new_one");
+      const twoId = ProviderInstanceId.make("acp_agent_new_two");
+      const acpAgentDriverKind = ProviderDriverKind.make("acpAgent");
+
+      const configMap: ProviderInstanceConfigMap = {
+        [oneId]: { driver: acpAgentDriverKind, enabled: false, config: makeAcpAgentConfig({}) },
+        [twoId]: { driver: acpAgentDriverKind, enabled: false, config: makeAcpAgentConfig({}) },
+      };
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [AcpAgentDriver],
+        configMap,
+      });
+
+      expect(yield* registry.listUnavailable).toEqual([]);
+      expect(yield* registry.listInstances).toHaveLength(2);
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
+
 describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // All drivers need `NodeServices` (ChildProcessSpawner + FileSystem +
   // Path). `OpenCodeDriver.create` additionally yields `OpenCodeRuntime`
@@ -295,12 +418,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
+      const acpAgentId = ProviderInstanceId.make("acp_agent_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
+      const acpAgentDriverKind = ProviderDriverKind.make("acpAgent");
 
       const configMap: ProviderInstanceConfigMap = {
         [codexId]: {
@@ -336,10 +461,23 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeOpenCodeConfig({}),
         },
+        [acpAgentId]: {
+          driver: acpAgentDriverKind,
+          displayName: "ACP agent",
+          enabled: false,
+          config: makeAcpAgentConfig({ command: "example-acp-agent" }),
+        },
       };
 
       const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [
+          CodexDriver,
+          ClaudeDriver,
+          CursorDriver,
+          GrokDriver,
+          OpenCodeDriver,
+          AcpAgentDriver,
+        ],
         configMap,
       });
 
@@ -349,9 +487,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, openCodeId, acpAgentId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -362,16 +500,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
+      const acpAgent = yield* registry.getInstance(acpAgentId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
+      expect(acpAgent?.driverKind).toBe(acpAgentDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
+      expect(acpAgent?.displayName).toBe("ACP agent");
 
       // Every instance owns its own set of closures — no sharing across
       // drivers. `adapter` / `textGeneration` / `snapshot` are all
@@ -384,6 +525,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
+        acpAgent!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
       const textGenerations = [
@@ -392,6 +534,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
+        acpAgent!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
       const snapshots = [
@@ -400,6 +543,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
+        acpAgent!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
@@ -441,6 +585,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.enabled).toBe(false);
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
+      );
+
+      const acpAgentSnapshot = yield* acpAgent!.snapshot.getSnapshot;
+      expect(acpAgentSnapshot.instanceId).toBe(acpAgentId);
+      expect(acpAgentSnapshot.driver).toBe(acpAgentDriverKind);
+      expect(acpAgentSnapshot.enabled).toBe(false);
+      expect(acpAgentSnapshot.continuation?.groupKey).toBe(
+        `${acpAgentDriverKind}:instance:${acpAgentId}`,
       );
     }).pipe(Effect.provide(testLayer)),
   );

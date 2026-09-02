@@ -6,6 +6,7 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  PROVIDER_ICON_KEY_CHOICES,
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
@@ -223,13 +224,25 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
-export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch";
+export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch" | "select";
+
+/** One entry in the menu a `control: "select"` field offers. */
+export interface ProviderSettingsFormChoice {
+  readonly value: string;
+  readonly label: string;
+}
 
 export interface ProviderSettingsFormAnnotation {
   readonly control?: ProviderSettingsFormControl | undefined;
   readonly placeholder?: string | undefined;
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
+  /**
+   * Menu for `control: "select"`, ignored by every other control. The stored
+   * value is the choice's `value`; an empty value means "leave unset", which
+   * lets a select express the same "not configured" state a text field has.
+   */
+  readonly choices?: ReadonlyArray<ProviderSettingsFormChoice> | undefined;
 }
 
 export interface ProviderSettingsFormSchemaAnnotation {
@@ -422,39 +435,73 @@ export const GrokSettings = makeProviderSettingsSchema(
 export type GrokSettings = typeof GrokSettings.Type;
 
 /**
- * FORK DELTA (fm provider). Settings for the First Mate ACP door.
+ * Settings for an agent the user configures rather than one this build ships.
  *
- * The door is `fm-acp`, a binary spawned once per provider connection. It
- * serves exactly one First Mate home, and the home is chosen when the process
- * starts, so `homePath` is per-instance rather than per-session: a second mate
- * is a second `providerInstances` entry pointing at a second home.
+ * The driver spawns any executable that speaks the Agent Client Protocol over
+ * stdio, so everything that identifies the agent - the command, its arguments,
+ * the directory it starts in, and the glyph clients draw for it - is
+ * configuration. The display name, accent colour and environment variables come
+ * from the surrounding `ProviderInstanceConfig` envelope that every driver
+ * shares, so they are not repeated here.
  *
- * See `apps/server/src/provider/fm/` and
- * `docs/internals/fm-provider-fork-delta.md`.
+ * Several instances can be configured; each one is a separate agent and appears
+ * as a separate provider. See `docs/user/external-acp-agents.md`.
  */
-export const FmSettings = makeProviderSettingsSchema(
+export const AcpAgentSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    binaryPath: makeBinaryPathSetting("fm-acp").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the First Mate ACP door binary.",
-        providerSettingsForm: { placeholder: "fm-acp", clearWhenEmpty: "omit" },
-      }),
-    ),
-    homePath: TrimmedString.pipe(
+    command: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
-        title: "First Mate home",
+        title: "Command",
+        description: "Executable that speaks ACP over stdio. Required.",
+        providerSettingsForm: { placeholder: "my-agent", clearWhenEmpty: "omit" },
+      }),
+    ),
+    args: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Arguments",
         description:
-          "Which First Mate home this instance serves. Leave empty to use the door's own default (FM_V2_HOME, else ~/.firstmate/v2).",
+          "One argument per line, passed to the command unchanged. There is no shell, so nothing here is split or expanded.",
         providerSettingsForm: {
-          placeholder: "~/.firstmate/v2",
+          control: "textarea",
+          placeholder: "--acp",
           clearWhenEmpty: "omit",
         },
+      }),
+    ),
+    workingDirectory: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Working directory",
+        description:
+          "Directory the agent starts in. Leave empty to start it in the project the thread belongs to.",
+        providerSettingsForm: { placeholder: "~/agents/my-agent", clearWhenEmpty: "omit" },
+      }),
+    ),
+    icon: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Icon",
+        description: "Glyph clients draw for this agent.",
+        providerSettingsForm: {
+          control: "select",
+          choices: PROVIDER_ICON_KEY_CHOICES,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    authMethodId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Authentication method",
+        description:
+          "Method id sent to the agent's `authenticate` call. Leave empty unless the agent publishes one.",
+        providerSettingsForm: { placeholder: "none", clearWhenEmpty: "omit" },
       }),
     ),
     customModels: Schema.Array(Schema.String).pipe(
@@ -463,10 +510,10 @@ export const FmSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath"],
+    order: ["command", "args", "workingDirectory", "icon", "authMethodId"],
   },
 );
-export type FmSettings = typeof FmSettings.Type;
+export type AcpAgentSettings = typeof AcpAgentSettings.Type;
 
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
@@ -643,11 +690,6 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    // FORK DELTA (fm provider): the First Mate ACP door. Listed last because
-    // the text generation fallback takes the first enabled provider in this
-    // order, and `fm` refuses generated text. Any other enabled provider is a
-    // better answer than a refusal.
-    fm: FmSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -743,14 +785,6 @@ const GrokSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
-// FORK DELTA (fm provider).
-const FmSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-});
-
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -799,8 +833,6 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
-      // FORK DELTA (fm provider).
-      fm: Schema.optionalKey(FmSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

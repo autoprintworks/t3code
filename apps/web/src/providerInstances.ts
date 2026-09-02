@@ -48,6 +48,12 @@ export interface ProviderInstanceEntry {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  /**
+   * Glyph this instance asked for. Only drivers with no icon of their own set
+   * it: a configured ACP agent is whatever its user pointed it at, so the icon
+   * is a setting rather than a constant.
+   */
+  readonly iconKey?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
@@ -170,6 +176,7 @@ export function deriveProviderInstanceEntries(
       driverKind,
       displayName,
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+      iconKey: snapshot.iconKey,
       continuationGroupKey: snapshot.continuation?.groupKey,
       enabled: snapshot.enabled,
       installed: snapshot.installed,

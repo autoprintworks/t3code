@@ -168,6 +168,13 @@ export const ServerProvider = Schema.Struct({
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
+  // Which glyph clients should draw for this instance. Only drivers whose
+  // agent is chosen at runtime set it; every other driver leaves it unset and
+  // clients fall back to their own per-driver artwork. Deliberately a plain
+  // string rather than a closed union: a newer server may name a glyph an
+  // older client does not have, and that must render a fallback rather than
+  // fail the whole config decode. See `PROVIDER_ICON_KEY_CHOICES`.
+  iconKey: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),

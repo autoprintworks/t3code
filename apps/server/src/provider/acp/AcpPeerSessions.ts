@@ -1,6 +1,5 @@
 /**
- * FORK DELTA (fm provider) - peer sessions: the sessions an ACP connection
- * hosts besides its own.
+ * Peer sessions: the sessions an ACP connection hosts besides its own.
  *
  * ACP lets one agent connection carry more than one session. `session/list`
  * is how a client learns about the sessions it did not open itself, and the
@@ -10,7 +9,7 @@
  * Everything here is pure: capability reading, filtering the connection's own
  * session out of the answer, and diffing two answers. `AcpSessionRuntime` owns
  * the polling fiber and the routing; this module is what its tests can assert
- * against without a door.
+ * against without an agent.
  *
  * @module provider/acp/AcpPeerSessions
  */

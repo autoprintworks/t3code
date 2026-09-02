@@ -991,7 +991,13 @@ export function NewTaskDraftScreen(props: {
         <ComposerToolbarTrigger
           accessibilityLabel="Model"
           disabled={isIncomingShareTransferPending}
-          iconNode={<ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />}
+          iconNode={
+            <ProviderIcon
+              provider={flow.selectedModelOption?.providerDriver}
+              iconKey={flow.selectedModelOption?.providerIconKey}
+              size={16}
+            />
+          }
           label={flow.selectedModelOption?.label ?? "Model"}
         />
       </ControlPillMenu>

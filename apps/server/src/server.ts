@@ -30,9 +30,8 @@ import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRe
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
-// FORK DELTA (fm provider)
-import { FmWorkerThreadQueryLive } from "./provider/fm/FmWorkerThreadQuery.ts";
-import { FmWorkerThreadReactorLive } from "./provider/fm/FmWorkerThreadReactor.ts";
+import { AcpAgentWorkerThreadQueryLive } from "./provider/acpAgent/AcpAgentWorkerThreadQuery.ts";
+import { AcpAgentWorkerThreadReactorLive } from "./provider/acpAgent/AcpAgentWorkerThreadReactor.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
@@ -258,8 +257,8 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 // `ProviderService` and the per-instance drivers read the same logger pair.
 const ProviderLayerLive = ProviderServiceLive.pipe(
   // Merged rather than provided so the one registry `ProviderService` routes
-  // through is also the one `FmWorkerThreadReactorLive` watches. Two builds of
-  // it would be two different adapter maps.
+  // through is also the one `AcpAgentWorkerThreadReactorLive` watches. Two
+  // builds of it would be two different adapter maps.
   Layer.provideMerge(ProviderAdapterRegistryLive),
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
 );
@@ -365,10 +364,10 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 
 const ProviderRuntimeLayerLive = Layer.mergeAll(
   ProviderSessionReaperLive,
-  // FORK DELTA (fm provider): projects First Mate workers as read-only
-  // threads. Needs both the adapter registry and the orchestration engine,
-  // which is exactly what this pairing provides.
-  FmWorkerThreadReactorLive.pipe(Layer.provide(FmWorkerThreadQueryLive)),
+  // Projects a configured ACP agent's peer sessions as read-only threads.
+  // Needs both the adapter registry and the orchestration engine, which is
+  // exactly what this pairing provides.
+  AcpAgentWorkerThreadReactorLive.pipe(Layer.provide(AcpAgentWorkerThreadQueryLive)),
 ).pipe(Layer.provideMerge(ProviderLayerLive), Layer.provideMerge(OrchestrationLayerLive));
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(

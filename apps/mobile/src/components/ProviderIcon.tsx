@@ -3,6 +3,12 @@ import { Path, Svg } from "react-native-svg";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
+  /**
+   * Glyph the instance's own snapshot asked for. Drivers that are one fixed
+   * agent name none and are drawn from `provider`; a configured ACP agent has
+   * no glyph of its own, so its user picks one and it arrives here.
+   */
+  readonly iconKey?: string | null | undefined;
   readonly size?: number;
 };
 
@@ -10,8 +16,11 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = useColorScheme() === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+  // A named key wins over the driver kind: it is the more specific answer, and
+  // for a configured agent it is the only one.
+  const glyph = props.iconKey?.trim() || props.provider;
 
-  if (props.provider === "claudeAgent") {
+  if (glyph === "claudeAgent" || glyph === "anthropic") {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">
         <Path
@@ -22,7 +31,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "grok") {
+  if (glyph === "grok") {
     const fill = isDarkMode ? "#F5F5F5" : "#0F0F0F";
     return (
       <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -38,7 +47,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "cursor") {
+  if (glyph === "cursor") {
     return (
       <Svg width={size} height={size} viewBox="0 0 466.73 532.09" fill="none">
         <Path
@@ -49,7 +58,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "opencode") {
+  if (glyph === "opencode") {
     return (
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
         <Path d="M24 32H8V16H24V32Z" fill={isDarkMode ? "#4B4646" : "#CFCECD"} />
@@ -58,8 +67,8 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  // FORK DELTA (fm provider): a ship's anchor in the row's own text colour.
-  if (props.provider === "fm") {
+  // A ship's anchor in the row's own text colour.
+  if (glyph === "anchor") {
     return (
       <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
         <Path
@@ -77,6 +86,30 @@ export function ProviderIcon(props: ProviderIconProps) {
           strokeLinecap="round"
           d="M3.5 13a8.5 8.5 0 0 0 17 0"
         />
+      </Svg>
+    );
+  }
+
+  if (glyph === "terminal" || props.provider === "acpAgent") {
+    // Whatever the user pointed us at. A command prompt says "some agent this
+    // build has never heard of" better than another vendor's mark would.
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path
+          stroke={mono}
+          strokeWidth={1.75}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M3.5 4.5h17v15h-17z"
+        />
+        <Path
+          stroke={mono}
+          strokeWidth={1.75}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="m7.5 9.5 3 2.5-3 2.5"
+        />
+        <Path stroke={mono} strokeWidth={1.75} strokeLinecap="round" d="M12.5 15h4" />
       </Svg>
     );
   }

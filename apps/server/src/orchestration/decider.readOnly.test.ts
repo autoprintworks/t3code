@@ -15,7 +15,7 @@ import { decideOrchestrationCommand } from "./decider.ts";
 const NOW = "2026-01-01T00:00:00.000Z";
 
 /**
- * FORK DELTA (fm provider) - read-only is a rule, not a rendering choice.
+ * Read-only is a rule, not a rendering choice.
  *
  * A worker thread mirrors a conversation another agent owns. Hiding the
  * composer stops the client that knows about the flag; these tests are about

@@ -94,27 +94,27 @@ The live backend agent implementation and its event stream. The main service is 
 
 #### Provider
 
-The backend agent runtime that actually performs work. Five drivers ship built in upstream: Codex, Claude, Cursor, Grok, and OpenCode. This fork adds a sixth, `fm`. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
+The backend agent runtime that actually performs work. Six drivers ship built in: Codex, Claude, Cursor, Grok, OpenCode, and `acpAgent`. See [ProviderService.ts][14], [ProviderAdapter.ts][15], and [CodexAdapter.ts][17] as a representative adapter.
 
-#### First Mate home (fork only)
+#### External ACP agent
 
-One first mate: its conversation, its tasks, its model. A home is a directory, chosen with `FM_V2_HOME` or `--home`, defaulting to `~/.firstmate/v2`. In the `fm` provider one provider connection serves exactly one home, and a second mate is a second connection pointed at a second home. See [the fork delta][28].
+An agent the user configures rather than one this build implements. The `acpAgent` driver reads the command, arguments, working directory, icon and environment from the instance's settings and drives whatever they name through the shared ACP runtime. Several instances can be configured, each a separate agent. See [the user guide][28] and [providers.md][16].
 
-#### ACP door (fork only)
+#### Golden transcript
 
-`fm-acp`, the First Mate binary that speaks the Agent Client Protocol over stdio. The `fm` driver spawns one per provider connection. Its golden transcripts are both the specification of its wire behaviour and this driver's certification suite. See [the fork delta][28].
+One recorded ACP connection, written from the protocol rather than captured from any one agent. The recording is replayed at the real adapter through a spawner stub, so what is certified is the driver against a fixed reading of ACP. They live in [`fixtures/acp-transcript/`][29] and are driven by `AcpAgentTranscript.test.ts`.
 
-#### Peer session (fork only)
+#### Peer session
 
-A session on an ACP connection that this client did not open. ACP allows more than one session per connection, and `session/list` is how a client learns about the others; the protocol has no notification for one appearing, so the runtime polls. The poll is gated on a subscriber, bounded by a timeout, and its answer is diffed rather than replayed. See [AcpPeerSessions.ts][29] and [worker threads][30].
+A session on an ACP connection that this client did not open. ACP allows more than one session per connection, and `session/list` is how a client learns about the others; the protocol has no notification for one appearing, so the runtime polls. The poll is gated on a subscriber, bounded by a timeout, and its answer is diffed rather than replayed. See [AcpPeerSessions.ts][30] and [worker threads][31].
 
-#### Worker thread (fork only)
+#### Worker thread
 
-A read-only thread mirroring one First Mate worker: a peer session on the door's connection, shown in T3 Code so a user can watch work the supervisor delegated. It is named after the home and the worker session, so two supervisor threads on one home share one worker thread rather than duplicating it. See [FmWorkerSessions.ts][31] and [worker threads][30].
+A read-only thread mirroring one peer session on a configured ACP agent's connection: work the agent started that this client did not, shown in T3 Code so a user can watch it. It is named after the agent's own session and the peer session, so two threads on one agent share one worker thread rather than duplicating it. See [AcpAgentWorkerSessions.ts][32] and [worker threads][31].
 
 #### Read-only thread
 
-A thread whose transcript is a window onto work driven elsewhere. `readOnly` is set once at creation, never cleared, and enforced in [the decider][8] by `requireThreadPromptable` in [commandInvariants.ts][9], which refuses `thread.turn.start` and `thread.checkpoint.revert`. The clients hide the composer; that is presentation, not the rule. It reaches the read model through fork migration 5 as an integer column, because SQLite has no boolean.
+A thread whose transcript is a window onto work driven elsewhere. `readOnly` is set once at creation, never cleared, and enforced in [the decider][8] by `requireThreadPromptable` in [commandInvariants.ts][9], which refuses `thread.turn.start` and `thread.checkpoint.revert`. The clients hide the composer; that is presentation, not the rule. It reaches the read model through fork migration 5 as an integer column, because SQLite has no boolean. See [worker threads][31].
 
 #### Session
 
@@ -180,7 +180,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 
 - [Architecture overview][24]
 - [Provider architecture][16]
-- [The `fm` provider fork delta][28]
+- [Connect any ACP agent][28]
 - [Permission modes][18]
 - [Workspace layout][2]
 
@@ -211,7 +211,8 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [25]: ../../apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts
 [26]: ../../apps/server/src/orchestration/Layers/RepositoryIdentityReactor.ts
 [27]: ../../apps/server/src/persistence/Services/ProjectionProjects.ts
-[28]: ./fm-provider-fork-delta.md
-[29]: ../../apps/server/src/provider/acp/AcpPeerSessions.ts
-[30]: ./fm-worker-threads.md
-[31]: ../../apps/server/src/provider/fm/FmWorkerSessions.ts
+[28]: ../user/external-acp-agents.md
+[29]: ../../apps/server/src/provider/acpAgent/fixtures/acp-transcript/
+[30]: ../../apps/server/src/provider/acp/AcpPeerSessions.ts
+[31]: ./acp-worker-threads.md
+[32]: ../../apps/server/src/provider/acpAgent/AcpAgentWorkerSessions.ts

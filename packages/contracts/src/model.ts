@@ -132,8 +132,47 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
-// FORK DELTA (fm provider): the First Mate ACP door.
-const FM_DRIVER_KIND = ProviderDriverKind.make("fm");
+/**
+ * Driver kind for an agent the user configures rather than one this build
+ * ships an implementation for. Several instances of it can be configured, each
+ * pointing at a different ACP agent.
+ */
+export const ACP_AGENT_DRIVER_KIND = ProviderDriverKind.make("acpAgent");
+
+/**
+ * Icon identifiers a provider snapshot may advertise.
+ *
+ * Clients own the artwork; a snapshot only names which glyph to draw. Drivers
+ * whose icon is fixed in code leave the key unset and clients fall back to
+ * their own per-driver mapping. The list exists because the configurable ACP
+ * agent driver has no icon of its own - the user picks one, and it has to be
+ * a name both the server and every client agree on.
+ *
+ * Keys name a look, not a vendor endorsement: an agent that is a front end for
+ * some model family should be able to look like it.
+ */
+export const PROVIDER_ICON_KEY_CHOICES: ReadonlyArray<{
+  readonly value: string;
+  readonly label: string;
+}> = [
+  { value: "acp", label: "ACP" },
+  { value: "anchor", label: "Anchor" },
+  { value: "terminal", label: "Terminal" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "openai", label: "OpenAI" },
+  { value: "gemini", label: "Gemini" },
+  { value: "copilot", label: "GitHub Copilot" },
+  { value: "cursor", label: "Cursor" },
+  { value: "grok", label: "Grok" },
+  { value: "opencode", label: "OpenCode" },
+  { value: "trae", label: "Trae" },
+  { value: "kiro", label: "Kiro" },
+  { value: "antigravity", label: "Antigravity" },
+  { value: "pi", label: "Pi" },
+];
+
+/** The glyph a snapshot gets when it names no icon, or names one we do not have. */
+export const DEFAULT_PROVIDER_ICON_KEY = "acp";
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -155,9 +194,6 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
-  // FORK DELTA (fm provider): the door's own menu leads with `claude`, and it
-  // is the model a fresh First Mate home runs on.
-  [FM_DRIVER_KIND]: "claude",
 };
 
 /** Per-provider text generation model defaults. */
@@ -227,6 +263,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
-  // FORK DELTA (fm provider).
-  [FM_DRIVER_KIND]: "First Mate",
+  [ACP_AGENT_DRIVER_KIND]: "ACP agent",
 };

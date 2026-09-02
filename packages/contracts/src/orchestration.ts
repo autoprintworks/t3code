@@ -391,9 +391,9 @@ export const OrchestrationThread = Schema.Struct({
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
-  // FORK DELTA (fm provider) - a window onto work being driven somewhere
-  // else. The agent that owns this conversation refuses to be prompted
-  // through it, so the client shows no way to type. Set once at creation and never cleared: a thread does not become
+  // A window onto work being driven somewhere else. The agent that owns this
+  // conversation refuses to be prompted through it, so the client shows no way
+  // to type. Set once at creation and never cleared: a thread does not become
   // promptable later. Optional so old servers/clients interop; absent = false.
   readOnly: Schema.optional(Schema.Boolean),
   deletedAt: Schema.NullOr(IsoDateTime),

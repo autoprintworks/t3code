@@ -1,0 +1,124 @@
+{
+  "agent": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "agentInfo": {
+          "name": "example-acp-agent",
+          "version": "1.4.0"
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "models": {
+          "availableModels": [
+            {
+              "description": "balanced; the agent's own default",
+              "modelId": "default",
+              "name": "default"
+            },
+            {
+              "description": "smaller and quicker",
+              "modelId": "fast",
+              "name": "fast"
+            }
+          ],
+          "currentModelId": "default"
+        },
+        "sessionId": "sess-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "sess-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "Two tests are failing",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "sess-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": " and one file is unformatted.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "result": {
+        "stopReason": "end_turn"
+      }
+    }
+  ],
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "clientCapabilities": {
+          "fs": {},
+          "terminal": false
+        },
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/new",
+      "params": {
+        "cwd": "C:/work/repo",
+        "mcpServers": []
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "method": "session/prompt",
+      "params": {
+        "prompt": [
+          {
+            "text": "what is left to do?",
+            "type": "text"
+          }
+        ],
+        "sessionId": "sess-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "session": "sess-1a2b3c4d5e6f7a8b",
+  "why": "The ordinary first conversation: initialize, open a session, prompt. The answer arrives in pieces, so a client that only rendered the final result would show a turn that sat silent and then finished."
+}

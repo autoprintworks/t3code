@@ -905,6 +905,15 @@ function ThreadNavigationSidebarPane(
                       (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
                   )?.driver ?? null
               }
+              providerIconKey={
+                serverConfigs
+                  .get(thread.environmentId)
+                  ?.providers.find(
+                    (provider) =>
+                      provider.instanceId ===
+                      (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
+                  )?.iconKey ?? null
+              }
               environmentLabel={
                 Object.keys(savedConnectionsById).length > 1
                   ? (savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
