@@ -10,6 +10,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import {
   advertisesSessionList,
   diffPeerSessions,
+  exceedsPeerSessionCeiling,
+  MAX_PEER_SESSIONS,
   peerSessionsFromListResponse,
 } from "./AcpPeerSessions.ts";
 
@@ -96,4 +98,30 @@ it("names what appeared and what disappeared between two answers", () => {
   });
   assert.deepStrictEqual(unchanged.appeared, []);
   assert.deepStrictEqual(unchanged.disappeared, []);
+});
+
+it("caps how much work one `session/list` answer can hand us", () => {
+  // The door is another process, so the length of its answer is its choice.
+  // Everything downstream is per-session work, so the ceiling is what stops a
+  // misbehaving door from setting the size of a poll.
+  const response = listed(
+    Array.from({ length: MAX_PEER_SESSIONS + 10 }, (_unused, index) => ({
+      sessionId: `fm-worker-${String(index)}`,
+      cwd: "/repo",
+    })),
+  );
+
+  assert.isTrue(exceedsPeerSessionCeiling(response));
+  assert.strictEqual(
+    peerSessionsFromListResponse({ response, ownSessionId: "fm-supervisor" }).length,
+    MAX_PEER_SESSIONS,
+  );
+
+  // An answer at the ceiling is not a cut answer, so it must not warn.
+  const exact = listed(response.sessions.slice(0, MAX_PEER_SESSIONS));
+  assert.isFalse(exceedsPeerSessionCeiling(exact));
+  assert.strictEqual(
+    peerSessionsFromListResponse({ response: exact, ownSessionId: "fm-supervisor" }).length,
+    MAX_PEER_SESSIONS,
+  );
 });

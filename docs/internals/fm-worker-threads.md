@@ -48,7 +48,10 @@ workaround. What makes it safe is that it is gated, bounded and cheap:
 - **Bounded.** `session/list` has a 10 s timeout, a peer `session/load` has
   60 s, and neither retries. `Schedule.spaced` means the interval is measured
   from the end of the previous attempt, so a slow door throttles the poll
-  rather than stacking requests on it.
+  rather than stacking requests on it. The answer itself has a ceiling too:
+  `MAX_PEER_SESSIONS` is 500, and a door listing more is cut to it with one
+  `acp.peer-sessions.ceiling` warning per poll. The length of the door's answer
+  is the door's choice, and everything downstream of it is per-session work.
 - **Scoped.** The fiber is forked into the session scope, so closing the
   connection interrupts it. A poll that outlives its connection is the bug this
   design is built to avoid.

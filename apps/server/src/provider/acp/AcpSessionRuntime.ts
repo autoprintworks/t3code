@@ -28,6 +28,8 @@ import {
   advertisesSessionList,
   type AcpPeerSession,
   diffPeerSessions,
+  exceedsPeerSessionCeiling,
+  MAX_PEER_SESSIONS,
   peerSessionsFromListResponse,
 } from "./AcpPeerSessions.ts";
 import {
@@ -782,6 +784,15 @@ export const make = (
             request: acp.agent.listSessions(listPayload),
           }),
         );
+        if (exceedsPeerSessionCeiling(response)) {
+          // Said once per poll rather than swallowed: the ceiling is what keeps
+          // the poll's cost bounded, and a door past it is showing the user
+          // fewer workers than it has.
+          yield* Effect.logWarning("acp.peer-sessions.ceiling", {
+            listed: response.sessions.length,
+            ceiling: MAX_PEER_SESSIONS,
+          });
+        }
         const next = peerSessionsFromListResponse({ response, ownSessionId });
         const diff = yield* Ref.modify(
           peerSessionsRef,

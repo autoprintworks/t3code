@@ -51,10 +51,24 @@ export function advertisesSessionList(
 }
 
 /**
+ * The most peer sessions one `session/list` answer is allowed to contribute.
+ *
+ * The door is another process, so the length of its answer is its choice, not
+ * ours. Everything downstream of this array is per-session work - a diff, a
+ * thread lookup, possibly a `session/load` - so an unbounded answer is an
+ * unbounded amount of work handed to us by something we do not control. The
+ * ceiling caps that at a size the measured poll cost covers, and the caller
+ * says out loud when it bites rather than quietly showing fewer workers.
+ */
+export const MAX_PEER_SESSIONS = 500;
+
+/**
  * The sessions in a `session/list` answer that are not this connection's own.
  *
  * A session with no usable id is dropped rather than surfaced under a blank
  * key: the id is what every caller downstream uses as its stable identity.
+ * At most `MAX_PEER_SESSIONS` are returned; use `exceedsPeerSessionCeiling`
+ * to find out whether the answer was cut.
  */
 export function peerSessionsFromListResponse(input: {
   readonly response: EffectAcpSchema.ListSessionsResponse;
@@ -63,6 +77,7 @@ export function peerSessionsFromListResponse(input: {
   const seen = new Set<string>();
   const peers: Array<AcpPeerSession> = [];
   for (const session of input.response.sessions) {
+    if (peers.length >= MAX_PEER_SESSIONS) break;
     const sessionId = session.sessionId.trim();
     if (sessionId === "" || sessionId === input.ownSessionId || seen.has(sessionId)) {
       continue;
@@ -78,6 +93,16 @@ export function peerSessionsFromListResponse(input: {
     });
   }
   return peers;
+}
+
+/**
+ * Whether the door's answer was long enough that the ceiling cut it.
+ *
+ * Kept separate from the mapping so the mapping stays a plain projection: the
+ * caller that logs the warning is the one that knows where a log line goes.
+ */
+export function exceedsPeerSessionCeiling(response: EffectAcpSchema.ListSessionsResponse): boolean {
+  return response.sessions.length > MAX_PEER_SESSIONS;
 }
 
 /** Diffs the previous peer set against the newest answer, keyed by session id. */
