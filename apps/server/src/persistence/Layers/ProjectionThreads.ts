@@ -28,6 +28,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const upsertProjectionThreadRow = SqlSchema.void({
     Request: ProjectionThread,
+    // FORK DELTA (fm provider) - `read_only` appears in this statement, in the
+    // conflict update below it, and in every SELECT in this file.
     execute: (row) =>
       sql`
         INSERT INTO projection_threads (

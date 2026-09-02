@@ -635,6 +635,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            // FORK DELTA (fm provider) - read-only threads. SQLite has no
+            // boolean, and the column is NOT NULL, so absent means 0.
             readOnly: event.payload.readOnly ? 1 : 0,
             deletedAt: null,
           });

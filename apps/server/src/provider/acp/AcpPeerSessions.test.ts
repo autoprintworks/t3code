@@ -1,5 +1,6 @@
 /**
- * The rules a `session/list` answer is read by, asserted without a door.
+ * FORK DELTA (fm provider) - the rules a `session/list` answer is read by,
+ * asserted without a door.
  *
  * @see AcpSessionRuntime, which owns the polling fiber these rules feed.
  */

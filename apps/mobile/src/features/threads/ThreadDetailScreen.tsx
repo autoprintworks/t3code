@@ -203,7 +203,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   })();
   const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
-  // A window onto work being driven somewhere else - a First Mate worker, say.
+  // FORK DELTA (fm provider) - a window onto work being driven somewhere
+  // else, a First Mate worker for instance.
   // There is nothing to type here, so there is no composer at all rather than
   // a disabled one, and the feed reclaims the space it would have taken. The
   // bottom inset stays: the home indicator is still there.

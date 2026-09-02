@@ -31,6 +31,7 @@ import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
 // FORK DELTA (fm provider)
+import { FmWorkerThreadQueryLive } from "./provider/fm/FmWorkerThreadQuery.ts";
 import { FmWorkerThreadReactorLive } from "./provider/fm/FmWorkerThreadReactor.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -367,7 +368,7 @@ const ProviderRuntimeLayerLive = Layer.mergeAll(
   // FORK DELTA (fm provider): projects First Mate workers as read-only
   // threads. Needs both the adapter registry and the orchestration engine,
   // which is exactly what this pairing provides.
-  FmWorkerThreadReactorLive,
+  FmWorkerThreadReactorLive.pipe(Layer.provide(FmWorkerThreadQueryLive)),
 ).pipe(Layer.provideMerge(ProviderLayerLive), Layer.provideMerge(OrchestrationLayerLive));
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(

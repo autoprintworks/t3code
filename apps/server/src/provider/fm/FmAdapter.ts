@@ -33,6 +33,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -54,7 +55,7 @@ import {
   makeAcpContentDeltaEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
-import type { AcpPeerSessionDiff } from "../acp/AcpPeerSessions.ts";
+import type { AcpPeerSession } from "../acp/AcpPeerSessions.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   ProviderAdapterProcessError,
@@ -73,6 +74,7 @@ import {
   resolveFmModelId,
 } from "./FmAcpSupport.ts";
 import {
+  type FmWorkerEndReason,
   type FmWorkerObservation,
   fmWorkerMessageIdFor,
   reconcileFmWorkers,
@@ -165,6 +167,17 @@ type FmTurnSettler = (outcome: {
 interface FmResumeCursor {
   readonly schemaVersion: typeof FM_RESUME_VERSION;
   readonly sessionId: string;
+}
+
+/**
+ * The first line of a failure, short enough to read in a thread.
+ *
+ * A worker whose transcript could not be loaded says so in its own thread, and
+ * a stack trace is not what the person reading it needs.
+ */
+function firstCauseLine(cause: Cause.Cause<unknown>): string {
+  const first = Cause.pretty(cause).split("\n")[0]?.trim();
+  return first ? first : "session/load failed";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -288,61 +301,145 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
     /**
      * Turns one door's peer sessions into worker observations for the reactor.
      *
-     * Two pumps run for the life of the session: one over the poll diffs, which
-     * decides what a worker thread is; one over the peer event queue, which
-     * decides what is written into it. Neither ever prompts - a worker is
+     * Two pumps run for the life of the session: one over the poll rosters,
+     * which decides what a worker thread is; one over the peer event queue,
+     * which decides what is written into it. Neither ever prompts - a worker is
      * steered through First Mate itself, never through this adapter.
+     *
+     * Nothing here waits on the door. The one request this feature makes,
+     * `session/load` for a newly seen worker, is forked into the session scope
+     * rather than awaited, so a door that accepts the load and never answers
+     * costs one sleeping fiber and delays nothing: not the next poll, not the
+     * other workers, and not the supervisor's own conversation.
      */
     const watchWorkerSessions = (input: {
       readonly supervisorThreadId: ThreadId;
+      readonly homeSessionId: string;
       readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
-      readonly peerDiffs: PubSub.Subscription<AcpPeerSessionDiff>;
+      readonly peerSessions: PubSub.Subscription<ReadonlyArray<AcpPeerSession>>;
+      readonly scope: Scope.Scope;
     }) =>
       Effect.gen(function* () {
-        // Reconciled against `present` on every diff, so a dropped item costs
-        // one poll of latency rather than a worker nobody ever hears about.
+        // Reconciled against the whole roster on every poll, so a dropped item
+        // costs one poll of latency rather than a worker nobody hears about.
         const known = new Set<string>();
-        const messageState = new Map<
-          string,
-          { currentMessageId: string | undefined; fallbackCount: number }
-        >();
+        // A `Ref` rather than a bare `Map` because both pumps touch it and they
+        // run as two fibers: the event pump reads-then-writes per chunk, and
+        // the roster pump drops a session's entry when the worker ends. An
+        // unsynchronised read-modify-write across those two can resurrect an
+        // entry for a worker that is already gone.
+        const messageStateRef = yield* SynchronizedRef.make(
+          new Map<string, { currentMessageId: string | undefined; fallbackCount: number }>(),
+        );
 
-        const diffPump = Stream.runForEach(Stream.fromSubscription(input.peerDiffs), (diff) =>
-          Effect.gen(function* () {
-            const changed = reconcileFmWorkers({ known, present: diff.present });
-            for (const session of changed.appeared) {
-              known.add(session.sessionId);
-              yield* publishWorkerObservation({
-                _tag: "WorkerAppeared",
-                supervisorThreadId: input.supervisorThreadId,
+        const publishFor = (
+          fields:
+            | {
+                readonly _tag: "WorkerAppeared";
+                readonly workerSessionId: string;
+                readonly title: string | undefined;
+                readonly cwd: string;
+              }
+            | {
+                readonly _tag: "WorkerDisappeared";
+                readonly workerSessionId: string;
+                readonly reason: FmWorkerEndReason;
+              }
+            | { readonly _tag: "WorkerRoster"; readonly workerSessionIds: ReadonlyArray<string> }
+            | {
+                readonly _tag: "WorkerLoadFailed";
+                readonly workerSessionId: string;
+                readonly detail: string;
+              }
+            | {
+                readonly _tag: "WorkerText";
+                readonly workerSessionId: string;
+                readonly messageId: string;
+                readonly text: string;
+              }
+            | {
+                readonly _tag: "WorkerTextCompleted";
+                readonly workerSessionId: string;
+                readonly messageId: string;
+              },
+        ) =>
+          publishWorkerObservation({
+            ...fields,
+            supervisorThreadId: input.supervisorThreadId,
+            homeSessionId: input.homeSessionId,
+          });
+
+        const loadWorkerTranscript = (session: AcpPeerSession) =>
+          // Loading on appearance rather than on open is deliberate: a worker
+          // that starts and finishes before anyone looks must still leave a
+          // readable thread behind, and an archived thread has no later moment
+          // at which to fetch its own history.
+          //
+          // One attempt. A load that fails is a worker whose transcript cannot
+          // be read, which is a terminal answer the thread says out loud - not
+          // a reason to knock on the same door again.
+          //
+          // Forked, not awaited: this is the only request the feature makes,
+          // and the roster pump must not be behind it.
+          input.acp.loadPeerSession(session.sessionId).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("fm.worker.session-load-failed", {
+                cause,
+                threadId: input.supervisorThreadId,
                 workerSessionId: session.sessionId,
-                title: session.title,
-                cwd: session.cwd,
-              });
-              // Loading on appearance rather than on open is deliberate: a
-              // worker that starts and finishes before anyone looks must still
-              // leave a readable thread behind, and an archived thread has no
-              // later moment at which to fetch its own history.
-              yield* input.acp.loadPeerSession(session.sessionId).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("fm.worker.session-load-failed", {
-                    cause,
-                    threadId: input.supervisorThreadId,
+              }).pipe(
+                Effect.andThen(
+                  publishFor({
+                    _tag: "WorkerLoadFailed",
                     workerSessionId: session.sessionId,
+                    detail: firstCauseLine(cause),
                   }),
                 ),
-              );
-            }
-            for (const workerSessionId of changed.disappeared) {
-              known.delete(workerSessionId);
-              messageState.delete(workerSessionId);
-              yield* publishWorkerObservation({
-                _tag: "WorkerDisappeared",
-                supervisorThreadId: input.supervisorThreadId,
-                workerSessionId,
+              ),
+            ),
+            Effect.forkIn(input.scope),
+            Effect.asVoid,
+          );
+
+        const rosterPump = Stream.runForEach(
+          Stream.fromSubscription(input.peerSessions),
+          (present) =>
+            Effect.gen(function* () {
+              const changed = reconcileFmWorkers({ known, present });
+              for (const session of changed.appeared) {
+                known.add(session.sessionId);
+                yield* publishFor({
+                  _tag: "WorkerAppeared",
+                  workerSessionId: session.sessionId,
+                  title: session.title,
+                  cwd: session.cwd,
+                });
+                yield* loadWorkerTranscript(session);
+              }
+              for (const workerSessionId of changed.disappeared) {
+                known.delete(workerSessionId);
+                yield* SynchronizedRef.update(messageStateRef, (current) => {
+                  if (!current.has(workerSessionId)) return current;
+                  const next = new Map(current);
+                  next.delete(workerSessionId);
+                  return next;
+                });
+                yield* publishFor({
+                  _tag: "WorkerDisappeared",
+                  workerSessionId,
+                  // The door answered, and did not list it: it is over.
+                  reason: "finished",
+                });
+              }
+              // Published after the diff so the reactor applies the two in the
+              // order they happened, and on every poll that says anything at
+              // all so that a restart with no change still tells the reactor
+              // what is real.
+              yield* publishFor({
+                _tag: "WorkerRoster",
+                workerSessionIds: present.map((session) => session.sessionId),
               });
-            }
-          }),
+            }),
         );
 
         const eventPump = Stream.runForEach(input.acp.getPeerSessionEvents(), (item) =>
@@ -352,53 +449,65 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
               return;
             }
             const workerSessionId = item.sessionId;
-            const state = messageState.get(workerSessionId) ?? {
-              currentMessageId: undefined,
-              fallbackCount: 0,
-            };
             switch (item.event._tag) {
               case "AssistantItemStarted": {
-                messageState.set(workerSessionId, {
-                  currentMessageId: item.event.itemId,
-                  fallbackCount: state.fallbackCount,
+                const itemId = item.event.itemId;
+                yield* SynchronizedRef.update(messageStateRef, (current) => {
+                  const next = new Map(current);
+                  next.set(workerSessionId, {
+                    currentMessageId: itemId,
+                    fallbackCount: current.get(workerSessionId)?.fallbackCount ?? 0,
+                  });
+                  return next;
                 });
                 return;
               }
               case "AssistantItemCompleted": {
-                messageState.set(workerSessionId, {
-                  currentMessageId:
-                    state.currentMessageId === item.event.itemId
-                      ? undefined
-                      : state.currentMessageId,
-                  fallbackCount: state.fallbackCount,
+                const itemId = item.event.itemId;
+                yield* SynchronizedRef.update(messageStateRef, (current) => {
+                  const state = current.get(workerSessionId);
+                  const next = new Map(current);
+                  next.set(workerSessionId, {
+                    currentMessageId:
+                      state?.currentMessageId === itemId ? undefined : state?.currentMessageId,
+                    fallbackCount: state?.fallbackCount ?? 0,
+                  });
+                  return next;
                 });
-                yield* publishWorkerObservation({
+                yield* publishFor({
                   _tag: "WorkerTextCompleted",
-                  supervisorThreadId: input.supervisorThreadId,
                   workerSessionId,
-                  messageId: item.event.itemId,
+                  messageId: itemId,
                 });
                 return;
               }
               case "ContentDelta": {
                 const itemId = item.event.itemId;
-                const messageId = fmWorkerMessageIdFor({
-                  workerSessionId,
-                  itemId,
-                  currentMessageId: state.currentMessageId,
-                  fallbackCount: state.fallbackCount,
+                const text = item.event.text;
+                const messageId = yield* SynchronizedRef.modify(messageStateRef, (current) => {
+                  const state = current.get(workerSessionId) ?? {
+                    currentMessageId: undefined,
+                    fallbackCount: 0,
+                  };
+                  const resolved = fmWorkerMessageIdFor({
+                    workerSessionId,
+                    itemId,
+                    currentMessageId: state.currentMessageId,
+                    fallbackCount: state.fallbackCount,
+                  });
+                  const synthesised = !itemId?.trim() && state.currentMessageId === undefined;
+                  const next = new Map(current);
+                  next.set(workerSessionId, {
+                    currentMessageId: resolved,
+                    fallbackCount: synthesised ? state.fallbackCount + 1 : state.fallbackCount,
+                  });
+                  return [resolved, next] as const;
                 });
-                const synthesised = !itemId?.trim() && state.currentMessageId === undefined;
-                messageState.set(workerSessionId, {
-                  currentMessageId: messageId,
-                  fallbackCount: synthesised ? state.fallbackCount + 1 : state.fallbackCount,
-                });
-                yield* publishWorkerObservation({
+                yield* publishFor({
                   _tag: "WorkerText",
-                  supervisorThreadId: input.supervisorThreadId,
                   workerSessionId,
                   messageId,
-                  text: item.event.text,
+                  text,
                 });
                 return;
               }
@@ -411,7 +520,25 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
           }),
         );
 
-        yield* Effect.all([diffPump, eventPump], { concurrency: 2, discard: true });
+        yield* Effect.all([rosterPump, eventPump], { concurrency: 2, discard: true }).pipe(
+          // However the watch ends - scope closed, door exited, editor shutting
+          // down - every worker it was watching stops being watched. Saying so
+          // is what stops a thread streaming forever on the strength of a
+          // connection that is gone. `unknown`, not `finished`: the fm daemon
+          // outlives the editor, so these workers may still be running.
+          Effect.ensuring(
+            Effect.forEach(
+              [...known],
+              (workerSessionId) =>
+                publishFor({
+                  _tag: "WorkerDisappeared",
+                  workerSessionId,
+                  reason: "unknown",
+                }),
+              { discard: true },
+            ),
+          ),
+        );
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logError("Failed to watch First Mate worker sessions.", {
@@ -616,16 +743,11 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
           const acp = runtime.acp;
 
           // Before `start`, because `start` is what forks the `session/list`
-          // poll. A subscription taken afterwards could miss the first worker,
-          // and nothing would ever republish it.
-          const peerDiffs = yield* acp.subscribePeerSessions.pipe(
+          // poll. A subscription taken afterwards could miss the first roster,
+          // and a roster that says nothing changed is never republished.
+          const peerSessions = yield* acp.subscribePeerSessions.pipe(
             Effect.provideService(Scope.Scope, sessionScope),
           );
-          yield* watchWorkerSessions({
-            supervisorThreadId: input.threadId,
-            acp,
-            peerDiffs,
-          }).pipe(Effect.forkIn(sessionScope));
 
           const started = yield* acp
             .start()
@@ -634,6 +756,18 @@ export function makeFmAdapter(fmSettings: FmSettings, options?: FmAdapterLiveOpt
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error),
               ),
             );
+
+          // Forked after `start` because the door's own session id is what a
+          // worker thread is named after, and that id is what `start` returns.
+          // Nothing is lost by waiting: the subscription above is already
+          // holding whatever the first poll published.
+          yield* watchWorkerSessions({
+            supervisorThreadId: input.threadId,
+            homeSessionId: started.sessionId,
+            acp,
+            peerSessions,
+            scope: sessionScope,
+          }).pipe(Effect.forkIn(sessionScope));
 
           // The door refuses `session/set_model` once the conversation is
           // live, which is why the snapshot advertises

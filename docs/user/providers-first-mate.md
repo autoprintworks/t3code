@@ -26,6 +26,28 @@ Opening the First Mate provider on a home shows that home's first mate as a
 thread. Send a message, and you are talking to it. Close T3 Code and open it
 again, and the same conversation is still there. It does not start over.
 
+## Watching Its Workers
+
+Your first mate delegates. When it hands a job to a worker, that worker's
+conversation shows up in T3 Code as its own thread, next to the supervisor
+thread it came from.
+
+A worker thread is **read only**. There is no message box on it, because there
+is nobody there to read a message: the worker takes its instructions from your
+first mate, not from you. Talk to the supervisor thread instead. Everything
+else works normally - you can read it, scroll it, and copy from it.
+
+The thread is named after the worker's own task. If the worker has not named
+itself yet, you see its id instead.
+
+When a worker finishes, its thread is archived. You can still find it under
+archived threads. If T3 Code was closed while workers were running, the ones
+left over are archived the next time the provider connects, so the list does
+not fill up with work that ended while you were away.
+
+If a worker's transcript cannot be read, the thread says so in its timeline and
+stops trying. It does not retry in the background.
+
 ## Adding A Second Mate
 
 A second mate is a second home. Add a second First Mate provider and set its

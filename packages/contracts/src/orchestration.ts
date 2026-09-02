@@ -391,9 +391,9 @@ export const OrchestrationThread = Schema.Struct({
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
-  // A window onto work being driven somewhere else. The agent that owns this
-  // conversation refuses to be prompted through it, so the client shows no way
-  // to type. Set once at creation and never cleared: a thread does not become
+  // FORK DELTA (fm provider) - a window onto work being driven somewhere
+  // else. The agent that owns this conversation refuses to be prompted
+  // through it, so the client shows no way to type. Set once at creation and never cleared: a thread does not become
   // promptable later. Optional so old servers/clients interop; absent = false.
   readOnly: Schema.optional(Schema.Boolean),
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -660,7 +660,7 @@ const ProjectRepositoryIdentityRecordCommand = Schema.Struct({
   repositoryIdentity: Schema.NullOr(RepositoryIdentity),
 });
 
-const ThreadCreateCommand = Schema.Struct({
+const ThreadCreateCommandFields = {
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -673,12 +673,26 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
-  // Server-issued threads that mirror work owned elsewhere set this. Optional
-  // so every existing caller, including clients, keeps creating ordinary
-  // promptable threads without saying so.
-  readOnly: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
+} as const;
+
+const ThreadCreateCommand = Schema.Struct({
+  ...ThreadCreateCommandFields,
+  // A window onto work owned elsewhere. Server-issued only: this field is
+  // absent from the client command, so a payload arriving over the websocket
+  // or the dispatch endpoint cannot set it however it is spelled. The decider
+  // is what enforces what it means; see `requireThreadPromptable`.
+  readOnly: Schema.optional(Schema.Boolean),
 });
+
+/**
+ * What a client may say when it creates a thread.
+ *
+ * Identical to the server-side command minus `readOnly`, so a client cannot
+ * mint a read-only thread and, more importantly, cannot mint one it is then
+ * refused permission to use.
+ */
+const ClientThreadCreateCommand = Schema.Struct(ThreadCreateCommandFields);
 
 const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
@@ -919,7 +933,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
-  ThreadCreateCommand,
+  ClientThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,

@@ -371,6 +371,8 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       : toPersistenceSqlError(sqlOperation)(cause);
 }
 
+// FORK DELTA (fm provider) - `read_only AS "readOnly"` in every thread SELECT
+// below, and `readOnly: row.readOnly !== 0` wherever a row becomes a thread.
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const threadPlanProgress = yield* ThreadPlanProgressService;

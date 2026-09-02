@@ -1,10 +1,11 @@
 /**
- * A read-only thread is a window onto work driven somewhere else - a First
+ * FORK DELTA (fm provider) - a read-only thread is a window onto work driven somewhere else - a First
  * Mate worker, for instance - and the client shows it with no composer.
  *
- * Stored as an integer because SQLite has no boolean type. Existing rows read
- * back as NULL, which the row schema decodes as "not read-only", so no
- * backfill is needed.
+ * Stored as an integer because SQLite has no boolean type. The column is
+ * `NOT NULL DEFAULT 0`, so SQLite fills every existing row with `0` as part of
+ * the `ALTER TABLE` and no backfill statement is needed: every thread that
+ * existed before this migration reads back as "not read-only".
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
@@ -51,6 +52,7 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
@@ -911,5 +913,31 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+// FORK DELTA (fm provider) - read-only threads.
+it.effect("drops readOnly from a thread.create a client sent", () =>
+  Effect.gen(function* () {
+    // `readOnly` is server-issued. A client that spells it anyway gets an
+    // ordinary promptable thread, not a thread it is then refused permission
+    // to use, and not a decode failure that would break an older build.
+    const decoded = yield* decodeClientOrchestrationCommand({
+      type: "thread.create",
+      commandId: "cmd-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      branch: null,
+      worktreePath: null,
+      readOnly: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(decoded.type, "thread.create");
+    assert.isFalse("readOnly" in decoded);
   }),
 );

@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { makeFmAcpRuntime } from "./FmAcpSupport.ts";
 import { type FmAdapterLiveOptions, type FmAdapterShape, makeFmAdapter } from "./FmAdapter.ts";
 import {
   type FmTranscriptFixture,
@@ -33,6 +34,7 @@ import {
   observedParams,
   readTranscriptFixture,
   type TranscriptDoor,
+  type TranscriptDoorOptions,
   watchProviderEvents,
 } from "./FmTranscriptDoor.ts";
 import type { FmWorkerObservation } from "./FmWorkerSessions.ts";
@@ -49,6 +51,14 @@ const WORKER_SESSION = "fm-w-1";
  * test that wants a second poll has to ask for one.
  */
 const POLL_INTERVAL = Duration.millis(10);
+
+const SECOND_WORKER_SESSION = "fm-w-2";
+
+const secondWorkerRow = {
+  sessionId: SECOND_WORKER_SESSION,
+  cwd: "C:/Users/captain/projects/firstmate/worker-2",
+  title: "write the tests",
+};
 
 const workerRow = {
   sessionId: WORKER_SESSION,
@@ -170,9 +180,10 @@ const driveDoor = <A, E>(
     readonly door: TranscriptDoor;
   }) => Effect.Effect<A, E, Scope.Scope>,
   options?: FmAdapterLiveOptions,
+  doorOptions?: TranscriptDoorOptions,
 ) =>
   Effect.gen(function* () {
-    const door = yield* makeTranscriptDoor(fixture);
+    const door = yield* makeTranscriptDoor(fixture, doorOptions);
     return yield* Effect.gen(function* () {
       const adapter = yield* makeFmAdapter(decodeFmSettings({}), {
         instanceId: INSTANCE,
@@ -337,4 +348,116 @@ it.effect("reports one worker across repeated polls, then says it is gone", () =
         yield* workers.stop;
       }),
   ),
+);
+
+/**
+ * The load timeout `AcpSessionRuntime` applies to a peer `session/load`.
+ *
+ * Named here rather than configured, so the number this suite waits out is the
+ * number that ships.
+ */
+const PEER_LOAD_TIMEOUT = Duration.seconds(60);
+
+it.effect("keeps finding workers while a door sits on one session/load", () =>
+  driveDoor(
+    peerFixture({
+      why: "A door that accepts session/load and never answers it.",
+      lists: [
+        [supervisorRow, workerRow],
+        [supervisorRow, workerRow, secondWorkerRow],
+      ],
+    }),
+    ({ adapter, door }) =>
+      Effect.gen(function* () {
+        const workers = yield* watchWorkerObservations(adapter);
+        yield* startSupervisor(adapter, ThreadId.make("fm-peer-hung-load"));
+
+        yield* workers.awaitTag("WorkerAppeared");
+
+        // The load for the first worker is on the wire and will never be
+        // answered. If it were awaited inline, this is where everything would
+        // stop: the second worker only exists in the second poll's answer.
+        yield* pollUntilListed(door, 2);
+        yield* workers.awaitObservation(
+          (observation) =>
+            observation._tag === "WorkerAppeared" &&
+            observation.workerSessionId === SECOND_WORKER_SESSION,
+        );
+
+        // And the hung request is bounded rather than held forever: it ends by
+        // saying so in the worker's own thread.
+        yield* TestClock.adjust(PEER_LOAD_TIMEOUT);
+        const failed = yield* workers.awaitTag("WorkerLoadFailed");
+        assert.equal(
+          failed._tag === "WorkerLoadFailed" ? failed.workerSessionId : undefined,
+          WORKER_SESSION,
+        );
+
+        yield* workers.stop;
+      }),
+    undefined,
+    { silentMethods: ["session/load"] },
+  ),
+);
+
+it.effect("says a worker is gone even while its own load is still hanging", () =>
+  driveDoor(
+    peerFixture({
+      why: "The worker is listed once, then gone, and its load never answers.",
+      lists: [[supervisorRow, workerRow], [supervisorRow]],
+    }),
+    ({ adapter, door }) =>
+      Effect.gen(function* () {
+        const workers = yield* watchWorkerObservations(adapter);
+        yield* startSupervisor(adapter, ThreadId.make("fm-peer-vanish-mid-load"));
+
+        yield* workers.awaitTag("WorkerAppeared");
+        yield* pollUntilListed(door, 2);
+
+        // "Gone" is decided by the door answering `session/list` without it,
+        // not by whether the load that was in flight ever came back.
+        const gone = yield* workers.awaitTag("WorkerDisappeared");
+        assert.equal(
+          gone._tag === "WorkerDisappeared" ? gone.workerSessionId : undefined,
+          WORKER_SESSION,
+        );
+        assert.equal(gone._tag === "WorkerDisappeared" ? gone.reason : undefined, "finished");
+
+        // One attempt, and no second one: a load that failed is a terminal
+        // statement about that worker, not a retry loop.
+        yield* TestClock.adjust(PEER_LOAD_TIMEOUT);
+        yield* workers.awaitTag("WorkerLoadFailed");
+        assert.isUndefined(observedParams(door, "session/load", 1));
+
+        yield* workers.stop;
+      }),
+    undefined,
+    { silentMethods: ["session/load"] },
+  ),
+);
+
+it.effect("asks a door nothing at all while nobody is watching its workers", () =>
+  Effect.gen(function* () {
+    const fixture = peerFixture({
+      why: "The capability is advertised, so only the missing subscriber can stop the poll.",
+      lists: [[supervisorRow, workerRow]],
+    });
+    const door = yield* makeTranscriptDoor(fixture);
+    yield* Effect.gen(function* () {
+      const runtime = yield* makeFmAcpRuntime({
+        fmSettings: decodeFmSettings({}),
+        childProcessSpawner: door.spawner,
+        cwd: HOME_CWD,
+        clientInfo: { name: "t3-code", version: "0.0.0" },
+        peerSessions: { pollInterval: POLL_INTERVAL },
+      }).pipe(Effect.orDie);
+
+      yield* runtime.acp.start().pipe(Effect.orDie);
+      // Ten intervals' worth. The poll loop is forked and running; what it is
+      // not doing is asking, because subscribing is the on switch.
+      yield* TestClock.adjust(Duration.times(POLL_INTERVAL, 10));
+
+      assert.deepStrictEqual(door.observedMethods(), ["initialize", "session/new"]);
+    }).pipe(Effect.provide(NodeCrypto.layer), Effect.scoped);
+  }),
 );

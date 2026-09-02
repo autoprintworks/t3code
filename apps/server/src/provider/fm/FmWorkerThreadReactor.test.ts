@@ -38,14 +38,18 @@ import { OrchestrationEngineService } from "../../orchestration/Services/Orchest
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderAdapterRegistry } from "../../provider/Services/ProviderAdapterRegistry.ts";
 import type { FmAdapterShape } from "./FmAdapter.ts";
-import type { FmWorkerObservation } from "./FmWorkerSessions.ts";
+import type { FmWorkerEndReason, FmWorkerObservation } from "./FmWorkerSessions.ts";
+import { FmWorkerThreadQuery } from "./FmWorkerThreadQuery.ts";
 import { FmWorkerThreadReactorLive } from "./FmWorkerThreadReactor.ts";
 
 const SUPERVISOR = ThreadId.make("fm-thread-1");
-const WORKER_THREAD = ThreadId.make("fm-worker.fm-thread-1.fm-w-1");
-/** A second supervisor, used only to order the assertions. */
+/** The door's own session id, which is what a worker thread is named after. */
+const HOME = "fm-home-1";
+const WORKER_THREAD = ThreadId.make("fm-worker.fm-home-1.fm-w-1");
+/** A second supervisor on a second home, used only to order the assertions. */
 const SENTINEL_SUPERVISOR = ThreadId.make("fm-thread-9");
-const SENTINEL_THREAD = ThreadId.make("fm-worker.fm-thread-9.fm-sentinel");
+const SENTINEL_HOME = "fm-home-9";
+const SENTINEL_THREAD = ThreadId.make("fm-worker.fm-home-9.fm-sentinel");
 const INSTANCE = ProviderInstanceId.make("fm-home-one");
 const PROJECT = ProjectId.make("project-1");
 const OTHER_PROJECT = ProjectId.make("project-2");
@@ -85,6 +89,10 @@ interface ProjectionAnswers {
   readonly projectsByRoot?: ReadonlyMap<string, ProjectId>;
   /** Set false to make the supervisor thread unknown to the projection. */
   readonly supervisorKnown?: boolean;
+  /** Worker threads this home already has on disk, as the sweep would find them. */
+  readonly existingWorkerThreadIds?: ReadonlyArray<ThreadId>;
+  /** Assistant message ids a thread already holds, as an adoption would read them. */
+  readonly assistantMessageIds?: ReadonlyArray<string>;
 }
 
 const notCalled = (method: string) => (): never => {
@@ -166,6 +174,11 @@ const withReactor = <A, E>(
       },
     });
 
+    const workerQueryLayer = Layer.mock(FmWorkerThreadQuery)({
+      listActiveThreadIdsByPrefix: () => Effect.succeed(answers.existingWorkerThreadIds ?? []),
+      listThreadAssistantMessageIds: () => Effect.succeed(answers.assistantMessageIds ?? []),
+    });
+
     const registryLayer = Layer.mock(ProviderAdapterRegistry)({
       listInstances: () => Effect.succeed([INSTANCE]),
       getByInstance: () => Effect.succeed(stub.adapter),
@@ -183,6 +196,7 @@ const withReactor = <A, E>(
       yield* observe({
         _tag: "WorkerAppeared",
         supervisorThreadId: SENTINEL_SUPERVISOR,
+        homeSessionId: SENTINEL_HOME,
         workerSessionId: "fm-sentinel",
         title: undefined,
         cwd: "/repo",
@@ -201,6 +215,7 @@ const withReactor = <A, E>(
           Layer.provideMerge(engineLayer),
           Layer.provideMerge(projectionLayer),
           Layer.provideMerge(registryLayer),
+          Layer.provideMerge(workerQueryLayer),
           Layer.provideMerge(NodeCrypto.layer),
         ),
       ),
@@ -213,16 +228,26 @@ const appeared = (input?: {
 }): FmWorkerObservation => ({
   _tag: "WorkerAppeared",
   supervisorThreadId: SUPERVISOR,
+  homeSessionId: HOME,
   workerSessionId: "fm-w-1",
   title: input?.title,
   cwd: input?.cwd ?? "/repo/worker",
 });
 
-const disappeared: FmWorkerObservation = {
+const gone = (reason: FmWorkerEndReason): FmWorkerObservation => ({
   _tag: "WorkerDisappeared",
   supervisorThreadId: SUPERVISOR,
+  homeSessionId: HOME,
   workerSessionId: "fm-w-1",
-};
+  reason,
+});
+
+const roster = (...workerSessionIds: ReadonlyArray<string>): FmWorkerObservation => ({
+  _tag: "WorkerRoster",
+  supervisorThreadId: SUPERVISOR,
+  homeSessionId: HOME,
+  workerSessionIds,
+});
 
 it.effect("creates one read-only thread for a worker that appears", () =>
   withReactor({}, ({ observe, nextCommands, assertNothingElse }) =>
@@ -264,7 +289,7 @@ it.effect("creates nothing more when a later poll reports the same worker", () =
 it.effect("archives a worker thread when the worker goes, and never deletes it", () =>
   withReactor({}, ({ observe, nextCommands, assertNothingElse }) =>
     Effect.gen(function* () {
-      yield* observe(appeared(), disappeared);
+      yield* observe(appeared(), gone("finished"));
 
       const commands = yield* nextCommands(2);
       assert.deepStrictEqual(
@@ -320,6 +345,7 @@ it.effect("writes a worker's text into the worker's own thread", () =>
         {
           _tag: "WorkerText",
           supervisorThreadId: SUPERVISOR,
+          homeSessionId: HOME,
           workerSessionId: "fm-w-1",
           messageId: "item-1",
           text: "reading the file",
@@ -327,6 +353,7 @@ it.effect("writes a worker's text into the worker's own thread", () =>
         {
           _tag: "WorkerTextCompleted",
           supervisorThreadId: SUPERVISOR,
+          homeSessionId: HOME,
           workerSessionId: "fm-w-1",
           messageId: "item-1",
         },
@@ -360,6 +387,7 @@ it.effect("stops asking about a worker whose thread it could not create", () =>
       yield* observe({
         _tag: "WorkerText",
         supervisorThreadId: SUPERVISOR,
+        homeSessionId: HOME,
         workerSessionId: "fm-w-1",
         messageId: "item-1",
         text: "reading the file",
@@ -396,5 +424,106 @@ it.effect("falls back to the supervisor's project when no project covers the wor
       assert.equal(command?.type === "thread.create" ? command.projectId : undefined, PROJECT);
       yield* assertNothingElse;
     }),
+  ),
+);
+
+it.effect("leaves a worker thread alone when the watch ends rather than the worker", () =>
+  withReactor({}, ({ observe, nextCommands, assertNothingElse }) =>
+    Effect.gen(function* () {
+      // The fm daemon and its workers outlive an editor restart. Archiving on
+      // a lost connection would file away work that is still running.
+      yield* observe(appeared(), gone("unknown"));
+
+      const commands = yield* nextCommands(1);
+      assert.deepStrictEqual(
+        commands.map((command) => command.type),
+        ["thread.create"],
+      );
+      yield* assertNothingElse;
+    }),
+  ),
+);
+
+it.effect("archives the worker threads a restart left behind", () =>
+  withReactor(
+    {
+      existingWorkerThreadIds: [WORKER_THREAD, ThreadId.make("fm-worker.fm-home-1.fm-w-stale")],
+    },
+    ({ observe, nextCommands, assertNothingElse }) =>
+      Effect.gen(function* () {
+        // One worker is still listed, the other ended while the editor was
+        // not running. Nothing else sweeps, so the first roster has to.
+        yield* observe(roster("fm-w-1"));
+
+        const [command] = yield* nextCommands(1);
+        assert.equal(command?.type, "thread.archive");
+        assert.equal(
+          command?.type === "thread.archive" ? command.threadId : undefined,
+          ThreadId.make("fm-worker.fm-home-1.fm-w-stale"),
+        );
+        // Once per home per process: a later roster must not re-read or
+        // re-archive, or the poll would cost a query every two seconds.
+        yield* observe(roster("fm-w-1"));
+        yield* assertNothingElse;
+      }),
+  ),
+);
+
+it.effect("says so in the thread when a worker's transcript cannot be read", () =>
+  withReactor({}, ({ observe, nextCommands, assertNothingElse }) =>
+    Effect.gen(function* () {
+      yield* observe(appeared(), {
+        _tag: "WorkerLoadFailed",
+        supervisorThreadId: SUPERVISOR,
+        homeSessionId: HOME,
+        workerSessionId: "fm-w-1",
+        detail: "session/load timed out after 60000ms",
+      });
+
+      const commands = yield* nextCommands(2);
+      const activity = commands[1];
+      assert.equal(activity?.type, "thread.activity.append");
+      if (activity?.type !== "thread.activity.append") return;
+      assert.equal(activity.threadId, WORKER_THREAD);
+      // An empty thread with no explanation is the symptom a user cannot tell
+      // apart from a thread that is still loading.
+      assert.equal(activity.activity.tone, "error");
+      assert.equal(activity.activity.kind, "fm.worker.transcript-unavailable");
+      yield* assertNothingElse;
+    }),
+  ),
+);
+
+it.effect("writes nothing twice when a reload replays a message the thread has", () =>
+  withReactor(
+    {
+      lifecycles: new Map([[WORKER_THREAD, { archived: false }]]),
+      assistantMessageIds: ["item-1"],
+    },
+    ({ observe, assertNothingElse }) =>
+      Effect.gen(function* () {
+        // `session/load` replays the whole history under the same ids, and a
+        // delta appends, so writing it again would double the message.
+        yield* observe(
+          appeared(),
+          {
+            _tag: "WorkerText",
+            supervisorThreadId: SUPERVISOR,
+            homeSessionId: HOME,
+            workerSessionId: "fm-w-1",
+            messageId: "item-1",
+            text: "reading the file",
+          },
+          {
+            _tag: "WorkerTextCompleted",
+            supervisorThreadId: SUPERVISOR,
+            homeSessionId: HOME,
+            workerSessionId: "fm-w-1",
+            messageId: "item-1",
+          },
+        );
+
+        yield* assertNothingElse;
+      }),
   ),
 );

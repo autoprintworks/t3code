@@ -5,17 +5,16 @@
  */
 import { assert, it } from "@effect/vitest";
 
-import { ThreadId } from "@t3tools/contracts";
-
 import type { AcpPeerSession } from "../acp/AcpPeerSessions.ts";
 import {
   fmWorkerMessageIdFor,
   fmWorkerThreadId,
+  fmWorkerThreadIdPrefix,
   fmWorkerThreadTitle,
   reconcileFmWorkers,
 } from "./FmWorkerSessions.ts";
 
-const SUPERVISOR = ThreadId.make("fm-thread-1");
+const HOME = "fm-home-1";
 
 const worker = (sessionId: string): AcpPeerSession => ({
   sessionId,
@@ -25,29 +24,52 @@ const worker = (sessionId: string): AcpPeerSession => ({
 });
 
 it("maps a worker session to one thread id, every time", () => {
-  const first = fmWorkerThreadId({ supervisorThreadId: SUPERVISOR, workerSessionId: "fm-w-1" });
-  assert.equal(first, "fm-worker.fm-thread-1.fm-w-1");
+  const first = fmWorkerThreadId({ homeSessionId: HOME, workerSessionId: "fm-w-1" });
+  assert.equal(first, "fm-worker.fm-home-1.fm-w-1");
   // The same worker on the next poll is the same thread, which is what makes
   // "create once, reuse" need no persisted mapping table.
-  assert.equal(
-    fmWorkerThreadId({ supervisorThreadId: SUPERVISOR, workerSessionId: "  fm-w-1  " }),
-    first,
-  );
-  // Two supervisors on one machine can host ids that look alike, so both
-  // halves are in the key.
+  assert.equal(fmWorkerThreadId({ homeSessionId: HOME, workerSessionId: "  fm-w-1  " }), first);
+  // Two doors on one machine can host ids that look alike, so the home is in
+  // the key.
   assert.notEqual(
-    fmWorkerThreadId({
-      supervisorThreadId: ThreadId.make("fm-thread-2"),
-      workerSessionId: "fm-w-1",
-    }),
+    fmWorkerThreadId({ homeSessionId: "fm-home-2", workerSessionId: "fm-w-1" }),
     first,
   );
   // Anything that would need escaping in a URL, a log line or a ref name is
   // flattened rather than carried.
   assert.equal(
-    fmWorkerThreadId({ supervisorThreadId: SUPERVISOR, workerSessionId: "a/b c:d" }),
-    "fm-worker.fm-thread-1.a_b_c_d",
+    fmWorkerThreadId({ homeSessionId: HOME, workerSessionId: "a/b c:d" }),
+    "fm-worker.fm-home-1.a_b_c_d",
   );
+});
+
+it("keys a worker on its home, not on the thread watching it", () => {
+  // Two First Mate threads opened on one home watch the same workers. Naming
+  // by thread would mint a second thread per worker per view; naming by home
+  // is what makes the second view a view of the first.
+  assert.equal(
+    fmWorkerThreadId({ homeSessionId: HOME, workerSessionId: "fm-w-1" }),
+    fmWorkerThreadId({ homeSessionId: HOME, workerSessionId: "fm-w-1" }),
+  );
+  assert.equal(fmWorkerThreadIdPrefix(HOME), "fm-worker.fm-home-1.");
+  assert.ok(
+    fmWorkerThreadId({ homeSessionId: HOME, workerSessionId: "fm-w-1" }).startsWith(
+      fmWorkerThreadIdPrefix(HOME),
+    ),
+  );
+});
+
+it("bounds a long id without collapsing two of them together", () => {
+  // A door derives its session id from a home path, which on Windows is long.
+  // Truncating alone would file two homes under one directory as one home.
+  const longA = `C:/Users/glyn/${"deep/".repeat(30)}alpha`;
+  const longB = `C:/Users/glyn/${"deep/".repeat(30)}beta`;
+  const idA = fmWorkerThreadId({ homeSessionId: longA, workerSessionId: "fm-w-1" });
+  const idB = fmWorkerThreadId({ homeSessionId: longB, workerSessionId: "fm-w-1" });
+  assert.notEqual(idA, idB);
+  assert.ok(idA.length < 100, `expected a bounded id, got ${String(idA.length)} characters`);
+  // Still deterministic: the same home twice is the same thread twice.
+  assert.equal(idA, fmWorkerThreadId({ homeSessionId: longA, workerSessionId: "fm-w-1" }));
 });
 
 it("falls back to the session id when the door names no worker", () => {

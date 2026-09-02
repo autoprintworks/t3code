@@ -5,13 +5,14 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -26,7 +27,6 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   advertisesSessionList,
   type AcpPeerSession,
-  type AcpPeerSessionDiff,
   diffPeerSessions,
   peerSessionsFromListResponse,
 } from "./AcpPeerSessions.ts";
@@ -74,6 +74,27 @@ export type AcpPeerSessionStreamEvent = AcpPeerSessionEvent | AcpSessionEventStr
 const defaultSessionLoadTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
 const defaultPeerSessionPollInterval = Duration.seconds(2);
+/**
+ * Every peer request is bounded. A door that accepts the connection and then
+ * answers nothing must cost one fiber sleeping on a timer, never a fiber
+ * parked on a `Deferred` for the life of the process.
+ */
+const defaultPeerSessionListTimeout = Duration.seconds(10);
+const defaultPeerSessionLoadTimeout = Duration.seconds(60);
+/**
+ * Peer assistant segments are named without this runtime's id on purpose: the
+ * same session replayed after a restart has to produce the same message ids,
+ * or its transcript is appended to the thread a second time.
+ */
+const PEER_ASSISTANT_ITEM_RUNTIME_ID = "peer";
+/**
+ * How many polls in a row may fail before the loop gives up for good.
+ *
+ * A poll that keeps failing is not a poll that is about to succeed: it is an
+ * agent that went away, or one that answers `session/list` with nonsense. The
+ * loop ends rather than knocking on that door until the process exits.
+ */
+const maxConsecutivePeerPollFailures = 5;
 
 export interface AcpSpawnInput {
   readonly command: string;
@@ -96,7 +117,8 @@ export interface AcpSessionRuntimeOptions {
   readonly authMethodId: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /**
-   * Opts this runtime into tracking the other sessions on the same connection.
+   * FORK DELTA (fm provider) - opts this runtime into tracking the other
+   * sessions on the same connection.
    *
    * Both this option and the agent's advertised `sessionCapabilities.list` must
    * be present before a single `session/list` goes out: an agent that can list
@@ -104,6 +126,10 @@ export interface AcpSessionRuntimeOptions {
    */
   readonly peerSessions?: {
     readonly pollInterval?: Duration.Input;
+    /** How long one `session/list` may take before it is abandoned. */
+    readonly listTimeout?: Duration.Input;
+    /** How long one peer `session/load` may take before it is abandoned. */
+    readonly loadTimeout?: Duration.Input;
   };
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -219,15 +245,12 @@ export class AcpSessionRuntime extends Context.Service<
     /** Waits until the current event consumer has processed every queued event. */
     readonly drainEvents: Effect.Effect<void>;
     /**
-     * The peer sessions seen by the most recent `session/list`.
+     * Peer-session rosters, one item per poll that saw a change.
      *
-     * Empty when the runtime was not opted in, or when the agent never said it
-     * answers `session/list`.
-     */
-    readonly getPeerSessions: Effect.Effect<ReadonlyArray<AcpPeerSession>>;
-    /**
-     * Peer-session appearances and disappearances, one item per poll that saw a
-     * change.
+     * Subscribing is what starts the poll. With no subscriber the runtime
+     * issues no `session/list` at all, so a session nobody is watching costs
+     * one parked fiber and no traffic. The last subscriber leaving parks it
+     * again.
      *
      * The subscription is acquired in the caller's own fiber, before this
      * effect returns, so a poll landing while the consumer fiber is still
@@ -235,11 +258,12 @@ export class AcpSessionRuntime extends Context.Service<
      * `Stream.fromSubscription`; `Stream.fromPubSub` would subscribe on stream
      * start and reopen exactly that race.
      *
-     * Every item also carries the whole `present` set, so a consumer that
-     * reconciles against `present` recovers from a dropped item as well.
+     * Each item is the whole current roster rather than a delta, so a consumer
+     * that reconciles against it recovers from a dropped item as well, and no
+     * consumer has to trust that its idea of "before" matches the runtime's.
      */
     readonly subscribePeerSessions: Effect.Effect<
-      PubSub.Subscription<AcpPeerSessionDiff>,
+      PubSub.Subscription<ReadonlyArray<AcpPeerSession>>,
       never,
       Scope.Scope
     >;
@@ -381,7 +405,12 @@ export const make = (
 
     const peerEventQueue = yield* Queue.unbounded<AcpPeerSessionStreamEvent>();
     const peerSessionsRef = yield* Ref.make<ReadonlyArray<AcpPeerSession>>([]);
-    const peerSessionsPubSub = yield* PubSub.unbounded<AcpPeerSessionDiff>();
+    const peerSessionsPubSub = yield* PubSub.unbounded<ReadonlyArray<AcpPeerSession>>();
+    // The poll's on switch. Closed means no `session/list` goes out, which is
+    // the difference between "this feature is compiled in" and "this feature
+    // is costing the door a request every two seconds".
+    const peerWatchLatch = yield* Latch.make(false);
+    const peerWatcherCountRef = yield* Ref.make(0);
     const peerRoutesRef = yield* Ref.make(new Map<string, AcpPeerRoute>());
     const rootEventSink: AcpParsedSessionEventSink = (event) => Queue.offer(eventQueue, event);
 
@@ -492,7 +521,8 @@ export const make = (
             modeStateRef: route.modeStateRef,
             toolCallsRef: route.toolCallsRef,
             assistantSegmentRef: route.assistantSegmentRef,
-            assistantItemRuntimeId,
+            // Not this runtime's id: see PEER_ASSISTANT_ITEM_RUNTIME_ID.
+            assistantItemRuntimeId: PEER_ASSISTANT_ITEM_RUNTIME_ID,
             params: notification,
           });
           return;
@@ -635,6 +665,45 @@ export const make = (
         ),
       );
 
+    const peerListTimeout = Duration.fromInputUnsafe(
+      options.peerSessions?.listTimeout ?? defaultPeerSessionListTimeout,
+    );
+    const peerLoadTimeout = Duration.fromInputUnsafe(
+      options.peerSessions?.loadTimeout ?? defaultPeerSessionLoadTimeout,
+    );
+
+    /**
+     * One peer request, bounded in time.
+     *
+     * A door that accepts the connection and then never answers is not an
+     * error the transport reports: the request simply never completes. Without
+     * a bound the fiber waiting on it waits for the life of the process, and
+     * anything sequenced behind it waits with it. Timing out turns silence
+     * into an ordinary failure that the caller can end on.
+     */
+    const boundPeerRequest = <A>(input: {
+      readonly method: string;
+      readonly timeout: Duration.Duration;
+      readonly request: Effect.Effect<A, EffectAcpErrors.AcpError>;
+    }): Effect.Effect<A, EffectAcpErrors.AcpError> =>
+      input.request.pipe(
+        Effect.timeoutOption(input.timeout),
+        Effect.flatMap((result) =>
+          Option.match(result, {
+            onNone: () =>
+              Effect.fail(
+                new EffectAcpErrors.AcpTransportError({
+                  operation: "call-rpc",
+                  method: input.method,
+                  detail: `${input.method} timed out after ${String(Duration.toMillis(input.timeout))}ms`,
+                  cause: undefined,
+                }),
+              ),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+
     const forgetPeerRoute = (sessionId: string) =>
       Ref.update(peerRoutesRef, (current) => {
         if (!current.has(sessionId)) {
@@ -678,29 +747,57 @@ export const make = (
         yield* runLoggedRequest(
           "session/load",
           loadPayload,
-          acp.agent.loadSession(loadPayload),
+          boundPeerRequest({
+            method: "session/load",
+            timeout: peerLoadTimeout,
+            request: acp.agent.loadSession(loadPayload),
+          }),
         ).pipe(
+          // Dropping the route on failure is what makes a failed load a
+          // terminal answer rather than a half-claimed session: the caller
+          // decides whether the session is ever tried again, and until it does
+          // the replay has nowhere to land.
           Effect.onError(() => forgetPeerRoute(sessionId)),
           Effect.asVoid,
         );
       });
 
+    // The first answer is always published, change or no change. A consumer
+    // that reconciles what it holds against the roster has to be told the
+    // roster is empty, or it can never learn that what it holds is stale.
+    const peerPollPublishedRef = yield* Ref.make(false);
+
     const pollPeerSessionsOnce = (ownSessionId: string) =>
       Effect.gen(function* () {
         const listPayload = {} satisfies EffectAcpSchema.ListSessionsRequest;
-        const response = yield* acp.agent.listSessions(listPayload);
+        // Logged like every other request: the poll is the one thing on this
+        // connection that runs on its own, so a request log without it cannot
+        // answer "what has this door been asked, and how long did it take".
+        const response = yield* runLoggedRequest(
+          "session/list",
+          listPayload,
+          boundPeerRequest({
+            method: "session/list",
+            timeout: peerListTimeout,
+            request: acp.agent.listSessions(listPayload),
+          }),
+        );
         const next = peerSessionsFromListResponse({ response, ownSessionId });
         const diff = yield* Ref.modify(
           peerSessionsRef,
           (previous) => [diffPeerSessions({ previous, next }), next] as const,
         );
-        if (diff.appeared.length === 0 && diff.disappeared.length === 0) {
+        const published = yield* Ref.getAndSet(peerPollPublishedRef, true);
+        if (published && diff.appeared.length === 0 && diff.disappeared.length === 0) {
           return;
         }
         for (const sessionId of diff.disappeared) {
           yield* forgetPeerRoute(sessionId);
         }
-        yield* PubSub.publish(peerSessionsPubSub, diff);
+        // The roster, not the diff: `appeared` and `disappeared` are this
+        // fiber's business - they say which routes to forget - and a consumer
+        // that reconciles the whole set needs neither.
+        yield* PubSub.publish(peerSessionsPubSub, diff.present);
       });
 
     /**
@@ -708,16 +805,57 @@ export const make = (
      * poll is the protocol's own answer. A failed poll is not a failed runtime
      * - the agent may be busy or restarting - and the next tick re-reads the
      * whole set, so nothing is lost by ignoring one.
+     *
+     * What is not tolerated is failing forever. After
+     * `maxConsecutivePeerPollFailures` polls in a row fail, the loop stops:
+     * "gone" and "not yet" are told apart by how many times in a row the
+     * answer was nothing. The loop also ends on interruption, which is what
+     * closing the runtime scope does, so it cannot outlive its connection.
+     *
+     * The gap is measured from the end of one poll to the start of the next,
+     * so a slow agent stretches the interval instead of queueing polls behind
+     * each other; the bound on each poll caps how far it can stretch.
+     *
+     * Each pass parks on `peerWatchLatch` before it asks anything, so the loop
+     * exists for the life of the session but only costs a request while
+     * somebody is subscribed.
      */
     const peerSessionPollLoop = (input: {
       readonly ownSessionId: string;
       readonly interval: Duration.Duration;
     }) =>
-      pollPeerSessionsOnce(input.ownSessionId).pipe(
-        Effect.catchCause(() => Effect.void),
-        Effect.repeat(Schedule.spaced(input.interval)),
-        Effect.asVoid,
-      );
+      Effect.suspend(() => {
+        let consecutiveFailures = 0;
+        return Effect.whileLoop({
+          while: () => consecutiveFailures < maxConsecutivePeerPollFailures,
+          body: () =>
+            Effect.exit(
+              pollPeerSessionsOnce(input.ownSessionId).pipe(Latch.whenOpen(peerWatchLatch)),
+            ).pipe(
+              Effect.tap((outcome) => {
+                if (Exit.isSuccess(outcome)) {
+                  consecutiveFailures = 0;
+                  return Effect.void;
+                }
+                consecutiveFailures += 1;
+                return Effect.logDebug("acp peer session poll failed", {
+                  sessionId: input.ownSessionId,
+                  consecutiveFailures,
+                  cause: Cause.pretty(outcome.cause),
+                });
+              }),
+              Effect.andThen(Effect.sleep(input.interval)),
+            ),
+          step: () => {},
+        }).pipe(
+          Effect.andThen(
+            Effect.logWarning("acp peer session poll stopped after repeated failures", {
+              sessionId: input.ownSessionId,
+              consecutiveFailures: maxConsecutivePeerPollFailures,
+            }),
+          ),
+        );
+      });
 
     const startOnce = Effect.gen(function* () {
       const initializePayload = {
@@ -917,9 +1055,16 @@ export const make = (
         });
         yield* Deferred.await(acknowledge);
       }),
-      getPeerSessions: Ref.get(peerSessionsRef),
       get subscribePeerSessions() {
-        return PubSub.subscribe(peerSessionsPubSub);
+        return Effect.acquireRelease(
+          Ref.updateAndGet(peerWatcherCountRef, (count) => count + 1).pipe(
+            Effect.tap((count) => (count === 1 ? Latch.open(peerWatchLatch) : Effect.void)),
+          ),
+          () =>
+            Ref.updateAndGet(peerWatcherCountRef, (count) => count - 1).pipe(
+              Effect.flatMap((count) => (count === 0 ? Latch.close(peerWatchLatch) : Effect.void)),
+            ),
+        ).pipe(Effect.andThen(PubSub.subscribe(peerSessionsPubSub)));
       },
       loadPeerSession,
       getPeerSessionEvents: () => Stream.fromQueue(peerEventQueue),
