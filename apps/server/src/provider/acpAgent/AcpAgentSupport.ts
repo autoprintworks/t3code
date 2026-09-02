@@ -1,14 +1,9 @@
 /**
- * Spawn contract for a user-configured external ACP agent.
- *
- * Every other provider here knows its own executable. This one does not: the
- * command, its arguments and the directory it starts in are settings, so a user
- * can point T3 Code at any agent that speaks ACP over stdio without a code
- * change.
- *
- * Everything below the spawn is the shared runtime in `../acp/`. All this module
- * adds is a handle on the spawned process, so the adapter can tell "the agent is
- * thinking" apart from "the agent is gone".
+ * Spawn contract for a user-configured external ACP agent: command, arguments
+ * and working directory all come from settings, not from code. Everything below
+ * the spawn is the shared runtime in `../acp/`. All this module adds is a handle
+ * on the spawned process, so the adapter can tell "the agent is thinking" apart
+ * from "the agent is gone".
  *
  * @module provider/acpAgent/AcpAgentSupport
  */
@@ -32,9 +27,8 @@ import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 export const DEFAULT_ACP_AGENT_AUTH_METHOD_ID = "none";
 
 /**
- * A configured agent runs as its own process with its own filesystem access.
- * T3 Code reads and writes nothing on its behalf and hosts no terminal for it,
- * and advertising either would invite an agent to use it.
+ * A configured agent has its own filesystem access. Advertising these would
+ * invite it to route work through T3 Code, which hosts neither on its behalf.
  */
 export const ACP_AGENT_CLIENT_CAPABILITIES = {
   fs: { readTextFile: false, writeTextFile: false },
@@ -62,9 +56,6 @@ export function parseAcpAgentArgs(args: string | null | undefined): ReadonlyArra
 }
 
 /**
- * The directory the agent starts in: the thread's project by default, or a
- * fixed one for an instance that fronts a daemon serving a single home.
- *
  * A spawned process gets no shell, so `~` is expanded here rather than reaching
  * the platform verbatim and becoming a literal directory named `~`.
  */
@@ -112,9 +103,8 @@ export interface AcpAgentExit {
 export interface AcpAgentRuntime {
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
   /**
-   * Resolves when the agent process exits, for any reason. `AcpSessionRuntime`
-   * keeps the child handle to itself and does not shut its event queue down on
-   * a crash, so nothing downstream would otherwise notice.
+   * `AcpSessionRuntime` keeps the child handle to itself and does not shut its
+   * event queue down on a crash, so nothing downstream would otherwise notice.
    */
   readonly awaitAgentExit: Effect.Effect<AcpAgentExit>;
 }
@@ -169,10 +159,9 @@ export const makeAcpAgentRuntime = (
   });
 
 /**
- * Model ids belong to the agent's own menu, so they are trimmed and nothing
- * more - never expanded through T3 Code's per-provider alias table. There is
- * deliberately no fallback id: naming one would invent a model the agent never
- * offered, where the caller wants "no model".
+ * Model ids belong to the agent's own menu: trimmed and nothing more, never
+ * expanded through T3 Code's alias table. No fallback id, because naming one
+ * would invent a model the agent never offered.
  */
 export function resolveAcpAgentModelId(model: string | null | undefined): string | undefined {
   return model?.trim() || undefined;

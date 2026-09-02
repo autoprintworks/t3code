@@ -1,15 +1,14 @@
 /**
  * Snapshot and model discovery for a user-configured external ACP agent.
  *
- * The probe is one ACP conversation and nothing else: initialize, open a
- * session, read the version off `agentInfo` and the model menu off the session
- * result, then stop. It never prompts, because a prompt would start real work
- * in the user's agent just to populate a dropdown.
+ * The probe is one ACP conversation: initialize, open a session, read the
+ * version and the model menu off the results, then stop. It never prompts,
+ * because that would start real work in the user's agent to fill a dropdown.
  *
- * Other drivers run `<binary> --version` first and read the exit code. There is
- * no such command here: the agent is whatever the user pointed us at, and ACP
- * already carries the answer in `initialize`'s `agentInfo`. One probe therefore
- * reports installed, healthy, versioned and the model list together.
+ * Other drivers run `<binary> --version` and read the exit code. There is no
+ * such command here - the agent is whatever the user named - but ACP carries
+ * the answer in `initialize`, so one probe reports installed, healthy,
+ * versioned and the model list together.
  *
  * @module provider/acpAgent/AcpAgentProvider
  */
@@ -50,18 +49,14 @@ import { makeAcpAgentRuntime, resolveAcpAgentModelId } from "./AcpAgentSupport.t
 
 /**
  * What T3 Code shows before the instance's own settings override it.
+ * `displayName` is a placeholder the driver stamps over.
  *
- * `displayName` is a placeholder: the driver stamps the name the user gave the
- * instance over the top.
+ * `requiresNewThreadForModelChange` is the conservative reading: ACP allows
+ * `session/set_model` mid-session but does not make an agent accept one, and
+ * there is no capability to ask in advance. A fresh session always works.
  *
- * `requiresNewThreadForModelChange` is the conservative reading of a protocol
- * whose agents differ: ACP allows `session/set_model` mid-session but does not
- * make an agent accept one, and there is no capability to ask in advance. A
- * fresh session is what every agent can do, and the flag warns the user first.
- *
- * `supportsTextGeneration` is false because the app's own short prompts, the
- * ones behind thread titles and summaries, need a model id this build can name.
- * A configured agent's model list is its own, so there is no id to send.
+ * `supportsTextGeneration` is false because the app's own short prompts, behind
+ * thread titles and summaries, need a model id this build can name.
  */
 const ACP_AGENT_PRESENTATION = {
   displayName: "ACP agent",
