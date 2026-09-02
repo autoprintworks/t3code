@@ -34,23 +34,29 @@ Almost all of it is in one directory, on purpose.
 
 ### New: `apps/server/src/provider/fm/`
 
-| File                             | What it is                                                                                                                                                |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FmDriver.ts`                    | The `ProviderDriver` registration. This is the file `builtInDrivers.ts` imports.                                                                          |
-| `FmAdapter.ts`                   | The adapter: sessions, turns, cancel, resume, model selection, notification fan-out.                                                                      |
-| `FmAcpSupport.ts`                | The spawn contract and the small pure helpers around it (argv, client capabilities, model id resolution), plus the door-exit handle the adapter watches.  |
-| `FmHome.ts`                      | Which home this instance serves: the door's own resolution order, `~` expanded, and a normalised key for the claim below.                                 |
-| `FmProvider.ts`                  | Provider status and model discovery, including `checkFmProviderStatus`.                                                                                   |
-| `FmTextGeneration.ts`            | Refuses commit messages, PR text, branch names and thread titles. See below.                                                                              |
-| `FmTranscriptDoor.ts`            | Test-only. A fake door built from a golden transcript, served over a `ChildProcessSpawner` stub. Also hosts `watchProviderEvents`, shared by both suites. |
-| `FmAcpSupport.test.ts`           | The spawn contract: the argv the driver would hand the operating system.                                                                                  |
-| `FmAdapter.test.ts`              | Behaviour the transcripts cannot record: local refusals, the idle-cancel guard, the `session/load` replay guard, and the three session-end paths.         |
-| `FmHome.test.ts`                 | Home resolution, including the tilde a user is invited to type into the settings placeholder.                                                             |
-| `FmDriver.test.ts`               | The one-instance-per-home claim, and that a fleet of mates on separate homes is still allowed.                                                            |
-| `FmProvider.test.ts`             | What a failed discovery probe tells the user: the door's own words, and the home it tried.                                                                |
-| `FmTextGeneration.test.ts`       | The four refusals, and the declaration-order invariant that keeps `fm` the fallback of last resort.                                                       |
-| `FmTranscript.test.ts`           | The certification suite. One test per golden transcript.                                                                                                  |
-| `fixtures/acp-transcript/*.json` | The ten golden transcripts, vendored **verbatim** from the First Mate repository, plus `DOOR-README.md`.                                                  |
+| File                             | What it is                                                                                                                                                                                                              |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FmDriver.ts`                    | The `ProviderDriver` registration. This is the file `builtInDrivers.ts` imports.                                                                                                                                        |
+| `FmAdapter.ts`                   | The adapter: sessions, turns, cancel, resume, model selection, notification fan-out.                                                                                                                                    |
+| `FmAcpSupport.ts`                | The spawn contract and the small pure helpers around it (argv, client capabilities, model id resolution), plus the door-exit handle the adapter watches.                                                                |
+| `FmHome.ts`                      | Which home this instance serves: the door's own resolution order, `~` expanded, and a normalised key for the claim below.                                                                                               |
+| `FmProvider.ts`                  | Provider status and model discovery, including `checkFmProviderStatus`.                                                                                                                                                 |
+| `FmTextGeneration.ts`            | Refuses commit messages, PR text, branch names and thread titles. See below.                                                                                                                                            |
+| `FmWorkerSessions.ts`            | Worker sessions, pure: thread ids, titles, message ids, and the reconcile that turns one `session/list` roster into appeared/disappeared.                                                                               |
+| `FmWorkerThreadReactor.ts`       | Turns those observations into orchestration commands: create the read-only thread, write its text, archive it when the worker is gone.                                                                                  |
+| `FmWorkerThreadQuery.ts`         | The two narrow reads the reactor needs, both with a `LIMIT`: this home's live worker thread ids, and the assistant message ids a thread already holds.                                                                  |
+| `FmTranscriptDoor.ts`            | Test-only. A fake door built from a golden transcript, served over a `ChildProcessSpawner` stub. Also hosts `watchProviderEvents`, shared by both suites. `silentMethods` makes it accept a method and never answer it. |
+| `FmAcpSupport.test.ts`           | The spawn contract: the argv the driver would hand the operating system.                                                                                                                                                |
+| `FmAdapter.test.ts`              | Behaviour the transcripts cannot record: local refusals, the idle-cancel guard, the `session/load` replay guard, and the three session-end paths.                                                                       |
+| `FmHome.test.ts`                 | Home resolution, including the tilde a user is invited to type into the settings placeholder.                                                                                                                           |
+| `FmDriver.test.ts`               | The one-instance-per-home claim, and that a fleet of mates on separate homes is still allowed.                                                                                                                          |
+| `FmProvider.test.ts`             | What a failed discovery probe tells the user: the door's own words, and the home it tried.                                                                                                                              |
+| `FmTextGeneration.test.ts`       | The four refusals, and the declaration-order invariant that keeps `fm` the fallback of last resort.                                                                                                                     |
+| `FmTranscript.test.ts`           | The certification suite. One test per golden transcript.                                                                                                                                                                |
+| `FmWorkerSessions.test.ts`       | The pure layer: id shaping, title fallback, reconcile against a known set rather than the previous poll.                                                                                                                |
+| `FmWorkerThreadReactor.test.ts`  | Thread lifecycle: create, adopt, unarchive, the startup sweep, the terminal load failure, and that a replay writes nothing twice.                                                                                       |
+| `FmWorkerDoor.test.ts`           | The poll against a real fake door: a hung `session/load` does not stop the pump, a worker can vanish mid-load, and nothing is asked while nobody watches.                                                               |
+| `fixtures/acp-transcript/*.json` | The ten golden transcripts, vendored **verbatim** from the First Mate repository, plus `DOOR-README.md`.                                                                                                                |
 
 ### Modified: small, marked edits elsewhere
 
@@ -67,6 +73,51 @@ site, so `grep -rn "FORK DELTA (fm provider)"` finds the complete set.
 | `apps/web/src/components/settings/providerDriverMeta.ts` | The Settings entry.                                                              |
 | `apps/web/src/session-logic.ts`                          | Includes `fm` in the agent picker.                                               |
 | `apps/mobile/src/components/ProviderIcon.tsx`            | The mobile icon.                                                                 |
+
+Worker threads (see [fm-worker-threads.md](./fm-worker-threads.md)) add a
+second, larger set. All of it hangs off one field, `readOnly` on a thread.
+
+| File                                                                          | Edit                                                                                                                                                    |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/orchestration.ts`                                     | `readOnly` on the thread, the shell and `ThreadCreatedPayload`; splits `ClientThreadCreateCommand` off so a client cannot send it.                      |
+| `apps/server/src/orchestration/commandInvariants.ts`                          | `requireThreadPromptable`.                                                                                                                              |
+| `apps/server/src/orchestration/decider.ts`                                    | Uses it for `thread.turn.start` and `thread.checkpoint.revert`, and carries `readOnly` into the created event.                                          |
+| `apps/server/src/orchestration/projector.ts`                                  | Carries `readOnly` onto the in-memory thread.                                                                                                           |
+| `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`                  | Writes it as 0/1.                                                                                                                                       |
+| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts`             | Selects `read_only` and maps it back to a boolean.                                                                                                      |
+| `apps/server/src/persistence/ForkMigrations.ts`                               | Registers fork migration 5.                                                                                                                             |
+| `apps/server/src/persistence/ForkMigrations/005_ProjectionThreadsReadOnly.ts` | The column, `NOT NULL DEFAULT 0`.                                                                                                                       |
+| `apps/server/src/persistence/Layers/ProjectionThreads.ts`                     | `read_only` in the insert, the conflict update and the selects.                                                                                         |
+| `apps/server/src/persistence/Services/ProjectionThreads.ts`                   | `readOnly` on the row schema.                                                                                                                           |
+| `apps/server/src/server.ts`                                                   | Wires `FmWorkerThreadQueryLive` and the worker-thread reactor.                                                                                          |
+| `apps/web/src/components/ChatView.tsx`                                        | One prop on the composer overlay, and the measurement reset when it goes.                                                                               |
+| `apps/web/src/components/chat/ChatComposerOverlay.tsx`                        | New. The composer's positioning shell, extracted so the read-only case is one prop rather than a conditional wrapped around 180 lines of unchanged JSX. |
+| `apps/mobile/src/features/threads/ThreadDetailScreen.tsx`                     | The same decision on mobile, plus the inset the missing composer frees.                                                                                 |
+| `apps/server/scripts/bench-fm-worker-poll.ts`                                 | New. The real-clock measurement harness for the poll.                                                                                                   |
+| `apps/server/scripts/fm-worker-poll-door.mjs`                                 | New. A dependency-free stand-in door for that harness.                                                                                                  |
+
+Three test files change by one fixture line each and carry no marker, because
+there is no edit there to find, only a new field on an existing expectation:
+`ProjectionSnapshotQuery.test.ts`, `ForkMigrations.test.ts` and
+`ProjectionRepositories.test.ts`.
+
+### New: peer sessions, in the shared ACP layer
+
+Two files sit in `apps/server/src/provider/acp/` rather than `provider/fm/`,
+because what they implement is a protocol feature rather than a First Mate one:
+ACP allows several sessions on one connection, and `session/list` is how a
+client learns about the ones it did not open. They are still marked as fork
+delta - nothing upstream asks for them, and `fm` is the only caller.
+
+| File                                                   | Edit                                                                                                         |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `apps/server/src/provider/acp/AcpPeerSessions.ts`      | New. Pure: capability reading, dropping the connection's own session, diffing two answers.                   |
+| `apps/server/src/provider/acp/AcpPeerSessions.test.ts` | New. Those rules, asserted with no door.                                                                     |
+| `apps/server/src/provider/acp/AcpSessionRuntime.ts`    | The opt-in `peerSessions` option, the latch-gated poll fiber, `subscribePeerSessions` and `loadPeerSession`. |
+
+The gate is the part worth knowing. The poll parks on a `Latch` that the first
+subscriber opens and the last subscriber's scope closes, so a runtime nobody is
+watching sends no `session/list` at all, whatever the door advertises.
 
 ### Modified: shared ACP layer, not marked as fork delta
 
@@ -105,6 +156,14 @@ The repository's own mock ACP agent hid both defects, because it is built on
 `effect-acp` and so speaks the encoder's dialect back at it.
 
 ## Decisions worth knowing
+
+### Workers are read-only threads
+
+A First Mate delegates, and each crewmate is another live session on the same
+door. Those sessions are projected as read-only threads so a user can watch
+them. The design, the identity rules, and the wall-clock measurements that
+prove the poll does not slow the editor are in
+[fm-worker-threads.md](./fm-worker-threads.md).
 
 ### Text generation is refused, not faked
 

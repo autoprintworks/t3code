@@ -43,6 +43,7 @@ import ForkMigration0001 from "./ForkMigrations/001_ProjectionTranscriptSequence
 import ForkMigration0002 from "./ForkMigrations/002_ProjectionThreadActivitySequenceNotNull.ts";
 import ForkMigration0003 from "./ForkMigrations/003_ProjectionProjectRepositoryIdentity.ts";
 import ForkMigration0004 from "./ForkMigrations/004_ProjectionTurnsActivityAnchorBackfill.ts";
+import ForkMigration0005 from "./ForkMigrations/005_ProjectionThreadsReadOnly.ts";
 
 const FORK_MIGRATIONS_TABLE = "fork_sql_migrations";
 
@@ -55,6 +56,8 @@ export const forkMigrationEntries = [
   [2, "ProjectionThreadActivitySequenceNotNull", ForkMigration0002],
   [3, "ProjectionProjectRepositoryIdentity", ForkMigration0003],
   [4, "ProjectionTurnsActivityAnchorBackfill", ForkMigration0004],
+  // FORK DELTA (fm provider) - read-only threads.
+  [5, "ProjectionThreadsReadOnly", ForkMigration0005],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);

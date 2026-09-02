@@ -28,6 +28,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const upsertProjectionThreadRow = SqlSchema.void({
     Request: ProjectionThread,
+    // FORK DELTA (fm provider) - `read_only` appears in this statement, in the
+    // conflict update below it, and in every SELECT in this file.
     execute: (row) =>
       sql`
         INSERT INTO projection_threads (
@@ -54,6 +56,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          read_only,
           deleted_at
         )
         VALUES (
@@ -80,6 +83,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
+          ${row.readOnly},
           ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
@@ -106,6 +110,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
+          read_only = excluded.read_only,
           deleted_at = excluded.deleted_at
       `,
   });
@@ -139,6 +144,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          read_only AS "readOnly",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -174,6 +180,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          read_only AS "readOnly",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}

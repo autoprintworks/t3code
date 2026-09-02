@@ -151,6 +151,34 @@ export function requireThreadNotArchived(input: {
   );
 }
 
+/**
+ * FORK DELTA (fm provider) - a thread a human may drive.
+ *
+ * `readOnly` is a property of the thread, not of the screen: a worker thread
+ * mirrors a conversation owned by another agent, and the only way to reach
+ * that agent is through the agent itself. Refusing here rather than in the
+ * client is what makes that true for an old build, a script, and a bare
+ * `POST /api/orchestration/dispatch` alike.
+ */
+export function requireThreadPromptable(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+  return requireThreadNotArchived(input).pipe(
+    Effect.flatMap((thread) =>
+      thread.readOnly !== true
+        ? Effect.succeed(thread)
+        : Effect.fail(
+            invariantError(
+              input.command.type,
+              `Thread '${input.threadId}' is read-only and cannot handle command '${input.command.type}'.`,
+            ),
+          ),
+    ),
+  );
+}
+
 export function requireThreadAbsent(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;

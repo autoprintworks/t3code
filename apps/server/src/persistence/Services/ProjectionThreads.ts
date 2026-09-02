@@ -48,6 +48,9 @@ export const ProjectionThread = Schema.Struct({
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
+  // FORK DELTA (fm provider) - read-only threads.
+  // SQLite has no boolean type, so this is 0 or 1 like the counters above.
+  readOnly: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

@@ -19,6 +19,7 @@ import {
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireThreadPromptable,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 
@@ -436,6 +437,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          readOnly: command.readOnly,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -943,7 +945,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // settle or a snooze, it is deliberate, so a stale client sending into
       // an archived thread is refused here rather than persisting a user
       // message the provider reactor would later drop in silence.
-      const targetThread = yield* requireThreadNotArchived({
+      //
+      // FORK DELTA (fm provider) - read-only is refused for the stronger
+      // reason: nothing may start a turn on a thread that mirrors work
+      // another agent owns, whatever is asking.
+      const targetThread = yield* requireThreadPromptable({
         readModel,
         command,
         threadId: command.threadId,
@@ -1138,7 +1144,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.checkpoint.revert": {
-      yield* requireThread({
+      // FORK DELTA (fm provider) - a revert drives the provider on the thread
+      // just as a turn does, so it is refused on a read-only thread for the
+      // same reason.
+      yield* requireThreadPromptable({
         readModel,
         command,
         threadId: command.threadId,

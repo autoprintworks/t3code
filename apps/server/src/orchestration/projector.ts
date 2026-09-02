@@ -306,6 +306,8 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            // FORK DELTA (fm provider) - read-only threads.
+            readOnly: payload.readOnly,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,

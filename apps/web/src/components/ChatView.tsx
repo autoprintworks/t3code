@@ -233,6 +233,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { ChatComposerOverlay } from "./chat/ChatComposerOverlay";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -1369,7 +1370,13 @@ function ChatViewContent(props: ChatViewProps) {
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
-    if (!composerOverlayElement) return;
+    // A read-only thread renders no composer, so the last thread's measurement
+    // must go with it - otherwise the timeline keeps an inset for a bar that
+    // is not there.
+    if (!composerOverlayElement) {
+      setComposerOverlayHeight(0);
+      return;
+    }
 
     const updateHeight = () => {
       const nextHeight = Math.ceil(composerOverlayElement.getBoundingClientRect().height);
@@ -1484,6 +1491,10 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  // FORK DELTA (fm provider) - a window onto work being driven somewhere
+  // else, a First Mate worker for instance. There is nothing to type here,
+  // so there is no composer at all rather than a disabled one.
+  const isReadOnlyThread = activeThread?.readOnly === true;
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -6092,14 +6103,10 @@ function ChatViewContent(props: ChatViewProps) {
             </div>
 
             {/* Input bar — centered hero while a draft has no messages, docked at the bottom otherwise */}
-            <div
+            <ChatComposerOverlay
               ref={setComposerOverlayElement}
-              data-chat-composer-overlay="true"
-              className={
-                isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center"
-                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
-              }
+              hidden={isReadOnlyThread}
+              hero={isDraftHeroState}
             >
               <div
                 ref={attachDraftHeroTransitionGroupRef}
@@ -6267,7 +6274,7 @@ function ChatViewContent(props: ChatViewProps) {
                   </div>
                 </div>
               </div>
-            </div>
+            </ChatComposerOverlay>
 
             {activeThreadRef && activePreviewMiniPlayer ? (
               <ThreadPreviewMiniPlayer

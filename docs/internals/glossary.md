@@ -104,6 +104,18 @@ One first mate: its conversation, its tasks, its model. A home is a directory, c
 
 `fm-acp`, the First Mate binary that speaks the Agent Client Protocol over stdio. The `fm` driver spawns one per provider connection. Its golden transcripts are both the specification of its wire behaviour and this driver's certification suite. See [the fork delta][28].
 
+#### Peer session (fork only)
+
+A session on an ACP connection that this client did not open. ACP allows more than one session per connection, and `session/list` is how a client learns about the others; the protocol has no notification for one appearing, so the runtime polls. The poll is gated on a subscriber, bounded by a timeout, and its answer is diffed rather than replayed. See [AcpPeerSessions.ts][29] and [worker threads][30].
+
+#### Worker thread (fork only)
+
+A read-only thread mirroring one First Mate worker: a peer session on the door's connection, shown in T3 Code so a user can watch work the supervisor delegated. It is named after the home and the worker session, so two supervisor threads on one home share one worker thread rather than duplicating it. See [FmWorkerSessions.ts][31] and [worker threads][30].
+
+#### Read-only thread
+
+A thread whose transcript is a window onto work driven elsewhere. `readOnly` is set once at creation, never cleared, and enforced in [the decider][8] by `requireThreadPromptable` in [commandInvariants.ts][9], which refuses `thread.turn.start` and `thread.checkpoint.revert`. The clients hide the composer; that is presentation, not the rule. It reaches the read model through fork migration 5 as an integer column, because SQLite has no boolean.
+
 #### Session
 
 The live provider-backed runtime attached to a thread. Session shape is in [the orchestration contracts][1], and lifecycle is managed in [ProviderService.ts][14].
@@ -200,3 +212,6 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [26]: ../../apps/server/src/orchestration/Layers/RepositoryIdentityReactor.ts
 [27]: ../../apps/server/src/persistence/Services/ProjectionProjects.ts
 [28]: ./fm-provider-fork-delta.md
+[29]: ../../apps/server/src/provider/acp/AcpPeerSessions.ts
+[30]: ./fm-worker-threads.md
+[31]: ../../apps/server/src/provider/fm/FmWorkerSessions.ts

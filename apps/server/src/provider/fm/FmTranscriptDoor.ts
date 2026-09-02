@@ -282,6 +282,15 @@ export interface TranscriptDoorOptions {
   readonly version?: string;
   /** Answers `--version` with a non-zero exit, for the unhealthy-door case. */
   readonly versionExitCode?: number;
+  /**
+   * Methods the door reads and then says nothing about, forever.
+   *
+   * The worst failure of a JSON-RPC peer is not an error, which is an answer;
+   * it is a door that accepts the connection, accepts the request, and never
+   * replies. Nothing times that out except the caller, so this is how a test
+   * puts a caller's own bound under load.
+   */
+  readonly silentMethods?: ReadonlyArray<string>;
 }
 
 const encoder = new TextEncoder();
@@ -341,6 +350,7 @@ export const makeTranscriptDoor = (
         const planned = planAnswers(fixture).map((answer) => ({ ...answer }));
         const awaitsInterrupt = fixture.supervisor.awaits_interrupt === true;
 
+        const silentMethods = new Set(options?.silentMethods ?? []);
         let cancelSeen = false;
         let heldPrompt: { readonly answer: PlannedAnswer; readonly id: unknown } | undefined;
         let stdinBuffer = "";
@@ -397,6 +407,11 @@ export const makeTranscriptDoor = (
               // No fixture records `authenticate`: the door answers `{}` to any
               // host that sends one, which is what this line reproduces.
               yield* write({ jsonrpc: "2.0", id, result: {} });
+              return;
+            }
+
+            if (silentMethods.has(method)) {
+              // Read, recorded in `observed`, and never answered.
               return;
             }
 
