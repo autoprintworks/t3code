@@ -176,6 +176,13 @@ export const ServerProvider = Schema.Struct({
   // fail the whole config decode. See `PROVIDER_ICON_KEY_CHOICES`.
   iconKey: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
+  // Whether this instance may be picked as the text generation provider: the
+  // model behind thread titles, summaries and the other short prompts the app
+  // sends without a user asking. Absent means yes, which is what every shipped
+  // driver wants. A driver whose agent is chosen at runtime sets it false: an
+  // arbitrary ACP agent answers a prompt as a coding session, not as a
+  // one-shot completion, and its model ids are its own.
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,

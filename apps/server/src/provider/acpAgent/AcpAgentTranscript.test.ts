@@ -120,7 +120,7 @@ const driveTranscript = <A, E>(
     readonly agent: TranscriptAgent;
     readonly events: ProviderEventWatch;
   }) => Effect.Effect<A, E>,
-  options?: AcpAgentAdapterLiveOptions,
+  options?: Partial<AcpAgentAdapterLiveOptions>,
 ) =>
   Effect.gen(function* () {
     const agent = yield* makeTranscriptAgent(fixture);

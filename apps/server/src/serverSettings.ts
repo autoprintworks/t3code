@@ -18,6 +18,7 @@ import {
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
+  defaultInstanceIdForDriver,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -182,6 +183,63 @@ export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 
+/**
+ * `ServerSettings.providers` is a closed struct, and the whole settings file is
+ * re-encoded on the next write. A key that struct no longer names is therefore
+ * dropped in silence: a fork that shipped its own driver, or a downgrade to a
+ * build that predates one, loses that block without saying so.
+ *
+ * This reads those keys back off the raw file and lands each one in
+ * `providerInstances` under the instance id the legacy world used, where the
+ * registry renders it as an unavailable shadow. The user sees the agent they
+ * configured, with its settings intact, and can delete it if they meant to.
+ */
+const LegacyProvidersJson = fromLenientJson(
+  Schema.Struct({
+    providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  }),
+);
+const decodeLegacyProvidersExit = Schema.decodeUnknownExit(LegacyProvidersJson);
+
+const NAMED_LEGACY_PROVIDER_KEYS: ReadonlySet<string> = new Set(
+  Object.keys(DEFAULT_SERVER_SETTINGS.providers),
+);
+
+function rescueUnnamedLegacyProviders(raw: string, settings: ServerSettings): ServerSettings {
+  const decoded = decodeLegacyProvidersExit(raw);
+  if (decoded._tag === "Failure") return settings;
+  const legacy = decoded.value.providers;
+  if (legacy === undefined) return settings;
+
+  const providerInstances: Record<string, ProviderInstanceConfig> = {
+    ...settings.providerInstances,
+  };
+  let rescued = false;
+  for (const [key, config] of Object.entries(legacy)) {
+    if (NAMED_LEGACY_PROVIDER_KEYS.has(key)) continue;
+    if (config === null || typeof config !== "object" || Array.isArray(config)) continue;
+    const driver = ProviderDriverKind.make(key);
+    const instanceId = defaultInstanceIdForDriver(driver);
+    // An instance already at that id is the newer record of the same agent,
+    // and rewriting it from a legacy block would undo whatever moved it.
+    if (providerInstances[instanceId] !== undefined) continue;
+    const blob = config as Record<string, unknown>;
+    providerInstances[instanceId] = {
+      driver,
+      enabled: blob.enabled === true,
+      config: blob,
+    };
+    rescued = true;
+  }
+
+  return rescued
+    ? {
+        ...settings,
+        providerInstances: providerInstances as ServerSettings["providerInstances"],
+      }
+    : settings;
+}
+
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
     ? settings
@@ -303,7 +361,7 @@ const make = Effect.gen(function* () {
       });
       return DEFAULT_SERVER_SETTINGS;
     }
-    return decoded.value;
+    return rescueUnnamedLegacyProviders(raw, decoded.value);
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({

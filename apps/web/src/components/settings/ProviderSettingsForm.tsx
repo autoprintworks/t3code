@@ -18,6 +18,13 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import type { ProviderClientDefinition } from "./providerDriverMeta";
 
+/**
+ * Stands in for the empty string in a select, because a Radix `SelectItem`
+ * refuses an empty value. Namespaced so it cannot collide with a real choice: it
+ * is written back to settings as `""`, which is what "leave unset" means.
+ */
+const SELECT_UNSET_VALUE = "provider-settings-form:unset";
+
 export interface ProviderSettingsFieldModel {
   readonly key: string;
   readonly control: ProviderSettingsFormControl;
@@ -232,10 +239,14 @@ function ProviderSettingsFieldRow({
           {label}
         </span>
         <Select
-          value={readProviderConfigString(value, field.key)}
+          value={readProviderConfigString(value, field.key) || SELECT_UNSET_VALUE}
           onValueChange={(next: unknown) =>
             onChange(
-              nextProviderConfigWithFieldValue(value, field, typeof next === "string" ? next : ""),
+              nextProviderConfigWithFieldValue(
+                value,
+                field,
+                typeof next === "string" && next !== SELECT_UNSET_VALUE ? next : "",
+              ),
             )
           }
         >
@@ -247,6 +258,7 @@ function ProviderSettingsFieldRow({
             <SelectValue placeholder={field.placeholder ?? "Default"} />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={SELECT_UNSET_VALUE}>{field.placeholder ?? "Default"}</SelectItem>
             {(field.choices ?? []).map((choice) => (
               <SelectItem key={choice.value} value={choice.value}>
                 {choice.label}

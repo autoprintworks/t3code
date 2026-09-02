@@ -7,7 +7,7 @@ import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contr
 import { primaryServerProvidersAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
-import { PROVIDER_ICON_BY_PROVIDER } from "./chat/providerIconUtils";
+import { providerInstanceIcon } from "./chat/providerIconUtils";
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
@@ -37,7 +37,7 @@ type ActiveProviderUpdateToast =
     };
 
 function ProviderUpdateToastIcon({ provider }: { provider: ProviderDriverKind }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[provider];
+  const ProviderIcon = providerInstanceIcon({ driverKind: provider });
 
   if (!ProviderIcon) {
     return (

@@ -5,7 +5,7 @@ import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
   type ModelEsque,
-  PROVIDER_ICON_BY_PROVIDER,
+  providerInstanceIcon,
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -21,6 +21,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
   instanceId: ProviderInstanceId;
   /** Driver kind of the instance — used for the provider icon glyph. */
   driverKind: ProviderDriverKind;
+  /**
+   * Glyph the instance's own snapshot asked for. A configured ACP agent has no
+   * icon of its own, so without this every one of them would draw the same
+   * mark - or none at all.
+   */
+  instanceIconKey?: string | undefined;
   /**
    * Display name to show in the secondary line (provider footer). Usually
    * the instance's configured `displayName` so custom instances like
@@ -38,7 +44,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
+  const ProviderIcon = providerInstanceIcon({
+    driverKind: props.driverKind,
+    iconKey: props.instanceIconKey,
+  });
   const providerLabel = props.model.subProvider
     ? `${props.providerDisplayName} · ${props.model.subProvider}`
     : props.providerDisplayName;

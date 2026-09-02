@@ -1,14 +1,14 @@
 /**
  * Spawn contract for a user-configured external ACP agent.
  *
- * Every other provider in this repository knows its own executable. This one
- * does not: the command, its arguments, and the directory it starts in are
- * settings, so a user can point T3 Code at any agent that speaks the Agent
- * Client Protocol over stdio without a code change.
+ * Every other provider here knows its own executable. This one does not: the
+ * command, its arguments and the directory it starts in are settings, so a user
+ * can point T3 Code at any agent that speaks ACP over stdio without a code
+ * change.
  *
- * Everything below the spawn is the shared runtime in `../acp/`. The only
- * thing this module adds to it is a handle on the spawned process, so the
- * adapter can tell "the agent is thinking" apart from "the agent is gone".
+ * Everything below the spawn is the shared runtime in `../acp/`. All this module
+ * adds is a handle on the spawned process, so the adapter can tell "the agent is
+ * thinking" apart from "the agent is gone".
  *
  * @module provider/acpAgent/AcpAgentSupport
  */
@@ -26,22 +26,15 @@ import { expandHomePath } from "../../pathExpansion.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 
 /**
- * Auth method id sent to `authenticate` when the instance names none.
- *
- * ACP has no "skip authentication" call, so a client that cannot authenticate
- * still has to say something. Agents that publish no auth methods ignore the
- * id and answer `{}`.
+ * Auth method id sent to `authenticate` when the instance names none. ACP has
+ * no "skip authentication" call, so a client still has to say something.
  */
 export const DEFAULT_ACP_AGENT_AUTH_METHOD_ID = "none";
 
 /**
- * Host invariants, stated once so the certification suite can assert them
- * against the same constant the runtime uses.
- *
- * A configured agent runs as its own process with its own filesystem access;
- * T3 Code does not read or write files on its behalf and does not host a
- * terminal for it. Advertising either capability would invite an agent to use
- * it, and the recorded transcripts would not catch that.
+ * A configured agent runs as its own process with its own filesystem access.
+ * T3 Code reads and writes nothing on its behalf and hosts no terminal for it,
+ * and advertising either would invite an agent to use it.
  */
 export const ACP_AGENT_CLIENT_CAPABILITIES = {
   fs: { readTextFile: false, writeTextFile: false },
@@ -57,12 +50,8 @@ export type AcpAgentSpawnSettings = Pick<
 >;
 
 /**
- * Split the `args` setting into an argument vector.
- *
  * One argument per line, because a spawned process gets no shell and there is
- * no correct way to split `--flag "a b"` that also leaves Windows paths
- * intact. Blank lines are dropped so a trailing newline is not an empty
- * argument.
+ * no correct way to split `--flag "a b"` that also leaves Windows paths intact.
  */
 export function parseAcpAgentArgs(args: string | null | undefined): ReadonlyArray<string> {
   if (!args) return [];
@@ -73,11 +62,8 @@ export function parseAcpAgentArgs(args: string | null | undefined): ReadonlyArra
 }
 
 /**
- * The directory the agent process starts in.
- *
- * Default is the project directory, which is what an agent that works on the
- * files in front of it wants. An instance that must run somewhere fixed - a
- * daemon front-end serving one home, say - overrides it.
+ * The directory the agent starts in: the thread's project by default, or a
+ * fixed one for an instance that fronts a daemon serving a single home.
  *
  * A spawned process gets no shell, so `~` is expanded here rather than reaching
  * the platform verbatim and becoming a literal directory named `~`.
@@ -118,7 +104,6 @@ interface AcpAgentRuntimeInput extends Omit<
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-/** What an agent process exit looks like once the platform error is folded in. */
 export interface AcpAgentExit {
   /** The process exit code, or `null` when the platform could not report one. */
   readonly code: number | null;
@@ -127,20 +112,14 @@ export interface AcpAgentExit {
 export interface AcpAgentRuntime {
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
   /**
-   * Resolves when the agent process backing this runtime exits, for any reason.
-   *
-   * `AcpSessionRuntime` keeps the child handle to itself, and its event queue
-   * is not shut down when the process dies, so nothing downstream would notice
-   * an agent that crashed. Capturing the handle on its way through the spawner
-   * gets an exit signal without widening the shared runtime's service.
+   * Resolves when the agent process exits, for any reason. `AcpSessionRuntime`
+   * keeps the child handle to itself and does not shut its event queue down on
+   * a crash, so nothing downstream would otherwise notice.
    */
   readonly awaitAgentExit: Effect.Effect<AcpAgentExit>;
 }
 
-/**
- * Wraps a spawner so the first process it spawns is handed to `onHandle`.
- * `AcpSessionRuntime` spawns exactly one child per runtime.
- */
+/** `AcpSessionRuntime` spawns exactly one child, and this catches its handle. */
 const captureSpawnedAgent = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   onHandle: (handle: ChildProcessSpawner.ChildProcessHandle) => Effect.Effect<void>,
@@ -190,13 +169,10 @@ export const makeAcpAgentRuntime = (
   });
 
 /**
- * Model ids are opaque strings owned by the agent's own menu, so they are only
- * trimmed - never expanded through T3 Code's per-provider alias table, which
- * knows nothing about a driver whose agent is chosen at runtime.
- *
- * There is deliberately no fallback id. Naming one would be T3 Code inventing a
- * model the agent never offered, and the caller that has nothing to resolve
- * wants "no model" rather than a guess.
+ * Model ids belong to the agent's own menu, so they are trimmed and nothing
+ * more - never expanded through T3 Code's per-provider alias table. There is
+ * deliberately no fallback id: naming one would invent a model the agent never
+ * offered, where the caller wants "no model".
  */
 export function resolveAcpAgentModelId(model: string | null | undefined): string | undefined {
   return model?.trim() || undefined;

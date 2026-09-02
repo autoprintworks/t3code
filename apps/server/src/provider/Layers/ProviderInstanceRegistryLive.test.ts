@@ -307,7 +307,7 @@ describe("ProviderInstanceRegistryLive — multi-instance ACP agent slice", () =
           config: makeAcpAgentConfig({
             command: "npx",
             args: "-y\n@example/research-agent",
-            icon: "flask",
+            icon: "terminal",
           }),
         },
         [twoId]: {
@@ -350,7 +350,7 @@ describe("ProviderInstanceRegistryLive — multi-instance ACP agent slice", () =
       const twoSnapshot = yield* two!.snapshot.getSnapshot;
       expect(oneSnapshot.instanceId).toBe(oneId);
       expect(oneSnapshot.displayName).toBe("Research agent");
-      expect(oneSnapshot.iconKey).toBe("flask");
+      expect(oneSnapshot.iconKey).toBe("terminal");
       expect(twoSnapshot.instanceId).toBe(twoId);
       expect(twoSnapshot.displayName).toBe("House agent");
       expect(twoSnapshot.iconKey).toBe("anchor");
@@ -359,6 +359,31 @@ describe("ProviderInstanceRegistryLive — multi-instance ACP agent slice", () =
       // never resumes on the other.
       expect(oneSnapshot.continuation?.groupKey).toBe(`${acpAgentDriverKind}:instance:${oneId}`);
       expect(twoSnapshot.continuation?.groupKey).toBe(`${acpAgentDriverKind}:instance:${twoId}`);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("drops an icon key no client has artwork for", () =>
+    Effect.gen(function* () {
+      // Settings hold whatever the user typed. A key that reaches a client and
+      // matches nothing draws no glyph at all, so the server refuses to
+      // publish it and the driver's own default stands instead.
+      const instanceId = ProviderInstanceId.make("acp_agent_unknown_icon");
+      const configMap: ProviderInstanceConfigMap = {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("acpAgent"),
+          enabled: false,
+          config: makeAcpAgentConfig({ command: "example-agent", icon: "flask" }),
+        },
+      };
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [AcpAgentDriver],
+        configMap,
+      });
+
+      const instance = yield* registry.getInstance(instanceId);
+      const snapshot = yield* instance!.snapshot.getSnapshot;
+      expect(snapshot.iconKey).toBeUndefined();
     }).pipe(Effect.provide(testLayer)),
   );
 

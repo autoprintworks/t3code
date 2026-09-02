@@ -171,8 +171,59 @@ export const PROVIDER_ICON_KEY_CHOICES: ReadonlyArray<{
   { value: "pi", label: "Pi" },
 ];
 
-/** The glyph a snapshot gets when it names no icon, or names one we do not have. */
+/** The glyph a snapshot gets when it names an icon we do not have. */
 export const DEFAULT_PROVIDER_ICON_KEY = "acp";
+
+/** Just the keys, for validation and for the artwork tables clients keep. */
+export const PROVIDER_ICON_KEYS: ReadonlyArray<string> = PROVIDER_ICON_KEY_CHOICES.map(
+  (choice) => choice.value,
+);
+
+const PROVIDER_ICON_KEY_SET = new Set(PROVIDER_ICON_KEYS);
+
+export function isProviderIconKey(value: string | null | undefined): boolean {
+  return value !== null && value !== undefined && PROVIDER_ICON_KEY_SET.has(value);
+}
+
+/**
+ * The icon key a driver whose agent is fixed in code always draws.
+ *
+ * This is contract data rather than client data: it decides what the web and
+ * the mobile app show for the same provider, and the two drawing different
+ * glyphs for one instance is a bug neither client can see on its own.
+ */
+export const PROVIDER_ICON_KEY_BY_DRIVER_KIND: Partial<Record<ProviderDriverKind, string>> = {
+  [CODEX_DRIVER_KIND]: "openai",
+  [CLAUDE_DRIVER_KIND]: "anthropic",
+  [CURSOR_DRIVER_KIND]: "cursor",
+  [GROK_DRIVER_KIND]: "grok",
+  [OPENCODE_DRIVER_KIND]: "opencode",
+  // The user picks the glyph for a configured agent. Until they do, the
+  // protocol's own mark says "some ACP agent" without claiming a vendor.
+  [ACP_AGENT_DRIVER_KIND]: DEFAULT_PROVIDER_ICON_KEY,
+};
+
+/**
+ * Which glyph one provider instance draws, for every client.
+ *
+ * The instance's own key wins, because for a configured agent it is the only
+ * answer there is. A key this build does not have still draws something: it
+ * came from a newer server that does have it, and initials would be a worse
+ * answer than the protocol's own mark. `undefined` means the driver has no
+ * glyph, and a client that gets it must draw none rather than guess.
+ */
+export function resolveProviderIconKey(input: {
+  readonly driverKind: ProviderDriverKind | string | null | undefined;
+  readonly iconKey?: string | null | undefined;
+}): string | undefined {
+  const named = input.iconKey?.trim();
+  if (named) {
+    return isProviderIconKey(named) ? named : DEFAULT_PROVIDER_ICON_KEY;
+  }
+  return input.driverKind
+    ? PROVIDER_ICON_KEY_BY_DRIVER_KIND[ProviderDriverKind.make(input.driverKind)]
+    : undefined;
+}
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -194,6 +245,10 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  // Deliberately empty. A configured ACP agent owns its own model menu, and a
+  // model id invented here would be sent to it as `session/set_model` and
+  // refused. An empty string reads as "no model" everywhere it is consumed.
+  [ACP_AGENT_DRIVER_KIND]: "",
 };
 
 /** Per-provider text generation model defaults. */

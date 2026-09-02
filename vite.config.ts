@@ -48,9 +48,6 @@ export default defineConfig({
       // Throwaway probes and the transcripts they captured. Reformatting a
       // recorded result rewrites evidence, so spikes stay as they landed.
       "experiments/**",
-      // Recorded ACP conversations. Same reason as above: they are evidence of
-      // what an agent actually said, so they stay as captured.
-      "apps/server/src/provider/acpAgent/fixtures/**",
     ],
     sortPackageJson: {},
     overrides: [

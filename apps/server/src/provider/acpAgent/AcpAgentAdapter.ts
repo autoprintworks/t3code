@@ -3,10 +3,9 @@
  * Protocol.
  *
  * It stays close to what ACP itself guarantees, because an agent configured
- * from settings is an agent nobody here has met. It sends text and receives
- * text: no permission prompts, no tool calls, no plan updates, no MCP, no image
- * blocks. Anything richer would be this adapter guessing on the agent's behalf,
- * and a wrong guess is worse than an honest refusal.
+ * from settings is an agent nobody here has met: text out, text back, with no
+ * permission prompts, tool calls, plan updates, MCP or image blocks. Anything
+ * richer would be this adapter guessing on the agent's behalf.
  *
  * Two properties of the protocol shape everything below.
  *
@@ -122,7 +121,8 @@ export interface AcpAgentAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
-  readonly instanceId?: ProviderInstanceId;
+  /** The instance this adapter belongs to. Every spawn is owned by one. */
+  readonly instanceId: ProviderInstanceId;
   /** Overrides the cancel grace period; the certification suite shortens it. */
   readonly cancelGrace?: Duration.Input;
   /**
@@ -204,14 +204,11 @@ export function parseAcpAgentResume(raw: unknown): AcpAgentResumeCursor | undefi
 }
 
 /**
- * The turn an agent notification belongs to, or `undefined` when it belongs to
- * nothing the user is still watching.
- *
- * Two cases have no wire barrier a test can wait on, which is why this is a
- * function rather than an inline guard: `session/load` replay chunks arrive
- * with no turn open, and a cancelled turn can still be handed chunks the agent
- * had already queued. Both must be dropped, and the certification suite
- * asserts that here.
+ * The turn a notification belongs to, or `undefined` when it belongs to nothing
+ * the user is still watching. A function rather than an inline guard because
+ * neither dropped case has a wire barrier a test can wait on: `session/load`
+ * replay arrives with no turn open, and a cancelled turn can still be handed
+ * chunks the agent had already queued.
  */
 export function acpAgentLiveTurnForNotification(input: {
   readonly activeTurnId: TurnId | undefined;
@@ -226,24 +223,24 @@ export function acpAgentLiveTurnForNotification(input: {
 
 export function makeAcpAgentAdapter(
   agentSettings: AcpAgentSettings,
-  options?: AcpAgentAdapterLiveOptions,
+  options: AcpAgentAdapterLiveOptions,
 ) {
   return Effect.gen(function* () {
-    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("acpAgent");
+    const boundInstanceId = options.instanceId;
     // Agent watchers are forked here rather than into the session scope,
     // because the watcher's own job is to close that scope; forking into it
     // would have the watcher interrupt itself half way through the teardown.
     const adapterScope = yield* Effect.scope;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* Crypto.Crypto;
-    const cancelGrace: Duration.Input = options?.cancelGrace ?? ACP_AGENT_CANCEL_GRACE;
+    const cancelGrace: Duration.Input = options.cancelGrace ?? ACP_AGENT_CANCEL_GRACE;
     const nativeEventLogger =
-      options?.nativeEventLogger ??
-      (options?.nativeEventLogPath !== undefined
+      options.nativeEventLogger ??
+      (options.nativeEventLogPath !== undefined
         ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, { stream: "native" })
         : undefined);
     const managedNativeEventLogger =
-      options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+      options.nativeEventLogger === undefined ? nativeEventLogger : undefined;
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
 
     const sessions = new Map<ThreadId, AcpAgentSessionContext>();
@@ -608,12 +605,10 @@ export function makeAcpAgentAdapter(
       });
 
     /**
-     * Settles whatever turn is still live, then releases the prompt fiber
-     * waiting on the agent. Order matters twice: `settleTurn` recognises its
-     * turn by looking the session up in `sessions`, so it has to run before
-     * the session is removed; and it has to win the race against the prompt's
-     * own failure, so the user is told why the turn ended rather than which
-     * transport error happened to surface.
+     * Settles the live turn, then releases the prompt fiber. Order matters
+     * twice: `settleTurn` finds its turn through `sessions`, so it runs before
+     * the session is removed, and it must beat the prompt's own failure so the
+     * user is told why the turn ended rather than which transport error won.
      */
     const settleActiveTurnOnEnd = (
       ctx: AcpAgentSessionContext,
@@ -724,7 +719,7 @@ export function makeAcpAgentAdapter(
 
           const runtime = yield* makeAcpAgentRuntime({
             agentSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
+            ...(options.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),

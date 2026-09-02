@@ -6,15 +6,19 @@
  * them from the instance's settings, which is what lets a user point T3 Code at
  * an ACP agent this build has never heard of without a code change.
  *
- * Several instances can be configured, and each is a separate agent with its
- * own command line, its own models and its own sessions. The one shape that is
- * refused is two enabled instances that would start the *same* agent; see
- * `./AcpAgentIdentity.ts`.
+ * Several instances can be configured. Each one spawns its own child process
+ * over its own stdio pipe, so two instances are two agents even when they name
+ * the same command: the settings that separate them, including the
+ * environment, are all part of the spawn.
  *
  * @module provider/acpAgent/AcpAgentDriver
  */
-import { ACP_AGENT_DRIVER_KIND, AcpAgentSettings, type ServerProvider } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  ACP_AGENT_DRIVER_KIND,
+  AcpAgentSettings,
+  isProviderIconKey,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -48,12 +52,6 @@ import {
 } from "../providerUpdateSettings.ts";
 import { makeAcpAgentAdapter } from "./AcpAgentAdapter.ts";
 import {
-  type AcpAgentIdentity,
-  acpAgentIdentityKey,
-  describeAcpAgentIdentity,
-  resolveAcpAgentIdentity,
-} from "./AcpAgentIdentity.ts";
-import {
   buildInitialAcpAgentProviderSnapshot,
   checkAcpAgentProviderStatus,
   enrichAcpAgentSnapshot,
@@ -84,45 +82,15 @@ export type AcpAgentDriverEnv =
   | ServerSettingsService;
 
 /**
- * Which instance currently owns which agent, keyed by spawn identity.
- *
- * Configuring several agents is the point of this driver, so instances are not
- * restricted. Configuring the *same* agent twice is a different thing: an ACP
- * agent that keeps state - a session list, a working directory, a queue - has
- * no way to tell two clients apart, and a duplicated instance is the shape a
- * settings form makes easy to reach by accident. The second one is refused with
- * the name of the instance that already holds it.
+ * Settings hold whatever the user typed, so a key no client has artwork for
+ * can reach here. Publishing it would put an instance in the picker with no
+ * glyph at all; dropping it lets the driver default stand instead.
  */
-const agentClaims = new Map<string, ProviderInstance["instanceId"]>();
-
-export const claimAcpAgent = (input: {
-  readonly identity: AcpAgentIdentity;
-  readonly instanceId: ProviderInstance["instanceId"];
-}) =>
-  Effect.gen(function* () {
-    const key = acpAgentIdentityKey(input.identity, yield* HostProcessPlatform);
-    const holder = agentClaims.get(key);
-    if (holder !== undefined && holder !== input.instanceId) {
-      return yield* new ProviderDriverError({
-        driver: DRIVER_KIND,
-        instanceId: input.instanceId,
-        detail: `Instance '${holder}' already runs ${describeAcpAgentIdentity(input.identity)}. Point this instance at a different agent, or remove the other one.`,
-      });
-    }
-    agentClaims.set(key, input.instanceId);
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        if (agentClaims.get(key) === input.instanceId) {
-          agentClaims.delete(key);
-        }
-      }),
-    );
-  });
-
-/** Test seam: the claim table outlives any one instance by design. */
-export const resetAcpAgentClaims = (): void => {
-  agentClaims.clear();
-};
+function resolveConfiguredIconKey(icon: string | undefined): string | undefined {
+  const named = icon?.trim();
+  if (!named) return undefined;
+  return isProviderIconKey(named) ? named : undefined;
+}
 
 const withInstanceIdentity =
   (input: {
@@ -169,18 +137,9 @@ export const AcpAgentDriver: ProviderDriver<AcpAgentSettings, AcpAgentDriverEnv>
         instanceId,
         displayName,
         accentColor,
-        iconKey: effectiveConfig.icon?.trim() || undefined,
+        iconKey: resolveConfiguredIconKey(effectiveConfig.icon),
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const identity = resolveAcpAgentIdentity(effectiveConfig);
-      // Only an agent something would actually start can be held twice. A
-      // disabled instance runs nothing, and an instance with no command yet is
-      // the state every new one begins in: refusing the second blank instance
-      // would stop a user adding their second agent before they had typed its
-      // name.
-      if (enabled && identity.command !== "") {
-        yield* claimAcpAgent({ identity, instanceId });
-      }
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.command,
         env: processEnv,

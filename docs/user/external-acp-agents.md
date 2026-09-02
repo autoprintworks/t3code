@@ -49,10 +49,9 @@ spaces in it works as typed.
 Each ACP agent provider is one agent. Add a second one for a second agent, and
 both run at the same time with their own models, sessions and history.
 
-The one thing you cannot do is point two enabled providers at the **same**
-agent: same command, same arguments, same directory. An agent that keeps state
-cannot tell two clients apart. T3 Code refuses the second one and names the
-provider that already has it.
+Two providers may name the same command. Each one starts its own process and
+talks to it down its own pipe, so two entries that differ only in their
+environment variables are two agents, not one entered twice.
 
 ## Example: A Local Agent Over npx
 
@@ -75,12 +74,15 @@ which project the thread is in:
 ```text
 Display name: First Mate
 Command: fm-acp
-Arguments:
-  --home
-  ~/.firstmate/v2
-Working directory: (empty)
+Arguments: (none)
+Working directory: ~/.firstmate/v2
 Icon: Anchor
 ```
+
+`~` is expanded in the working directory only. The command and the arguments
+reach the agent exactly as typed, so an agent that takes its home as a flag
+needs that path written out in full, or set through an environment variable on
+the provider.
 
 A second one of those is a second provider with a second directory. Both run
 side by side.

@@ -6,13 +6,10 @@
  * result, then stop. It never prompts, because a prompt would start real work
  * in the user's agent just to populate a dropdown.
  *
- * Other drivers run `<binary> --version` first and treat its exit code as the
- * health check. There is no such command here. The agent is whatever the user
- * pointed us at, its version flag is its own business, and ACP already carries
- * the answer: `initialize` returns `agentInfo`, which names the agent and its
- * version. One probe therefore reports installed, healthy, versioned and the
- * model list together, and an agent that cannot be started fails it in the one
- * place a user has to look.
+ * Other drivers run `<binary> --version` first and read the exit code. There is
+ * no such command here: the agent is whatever the user pointed us at, and ACP
+ * already carries the answer in `initialize`'s `agentInfo`. One probe therefore
+ * reports installed, healthy, versioned and the model list together.
  *
  * @module provider/acpAgent/AcpAgentProvider
  */
@@ -58,16 +55,19 @@ import { makeAcpAgentRuntime, resolveAcpAgentModelId } from "./AcpAgentSupport.t
  * instance over the top.
  *
  * `requiresNewThreadForModelChange` is the conservative reading of a protocol
- * whose agents differ. ACP allows `session/set_model` mid-session but does not
- * make an agent accept one, and T3 Code cannot ask in advance which kind it is
- * pointed at. Declaring the switch unsupported means a model change starts a
- * fresh session, which every ACP agent can do, and the flag is what tells the
- * user that before they lose the conversation rather than after.
+ * whose agents differ: ACP allows `session/set_model` mid-session but does not
+ * make an agent accept one, and there is no capability to ask in advance. A
+ * fresh session is what every agent can do, and the flag warns the user first.
+ *
+ * `supportsTextGeneration` is false because the app's own short prompts, the
+ * ones behind thread titles and summaries, need a model id this build can name.
+ * A configured agent's model list is its own, so there is no id to send.
  */
 const ACP_AGENT_PRESENTATION = {
   displayName: "ACP agent",
   showInteractionModeToggle: false,
   requiresNewThreadForModelChange: true,
+  supportsTextGeneration: false,
 } as const;
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -89,11 +89,7 @@ export const ACP_AGENT_PROBE_TIMEOUT_MS = 15_000;
  */
 const ACP_AGENT_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [];
 
-/**
- * An instance with no command is not broken, it is unfinished, and saying so is
- * the whole job of this message: a settings form that offers a new instance
- * before the user has typed anything is exactly how a user gets here.
- */
+/** An instance with no command is not broken, it is unfinished. */
 const NO_COMMAND_MESSAGE = "No command is configured for this ACP agent.";
 
 interface AcpAgentSnapshotInput {
@@ -107,9 +103,8 @@ interface AcpAgentSnapshotInput {
 }
 
 /**
- * Every snapshot here carries the same presentation and the same "auth is the
- * agent's own business" answer, so only the probe is ever interesting. Naming
- * the envelope once keeps each branch below to the sentence it is about.
+ * Every snapshot carries the same presentation and the same "auth is the
+ * agent's own business" answer, so only the probe is ever interesting.
  */
 function acpAgentSnapshot(input: AcpAgentSnapshotInput): ServerProviderDraft {
   return buildServerProvider({
@@ -159,11 +154,8 @@ export function buildAcpAgentDiscoveredModels(
 }
 
 /**
- * The version the agent gave for itself, or `null` when it named none.
- *
- * `agentInfo` is optional in ACP, so an agent is allowed to stay anonymous.
- * That is reported as "no version" rather than as a failure: an agent that
- * answers every request is working whether or not it says what it is.
+ * `agentInfo` is optional in ACP, so an agent may stay anonymous. That is "no
+ * version" rather than a failure: it answers every request either way.
  */
 export function acpAgentVersionFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,
@@ -226,6 +218,9 @@ const probeAcpAgent = (
       agentSettings,
       environment,
       childProcessSpawner,
+      // A probe belongs to no thread, so there is no project to start in. A
+      // configured working directory still wins: `resolveAcpAgentCwd` only
+      // falls back to this when the instance left the field empty.
       cwd: process.cwd(),
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
@@ -243,13 +238,10 @@ function errorMessageOf(error: unknown): string {
 }
 
 /**
- * Whether the failure was "there is no such program".
- *
- * The spawn failure arrives wrapped: the ACP runtime reports an `AcpSpawnError`
- * carrying the operating system's own error as its `cause`, and that inner
- * error is the one that knows a file was not found. Unwrapping one level is
- * what separates "the command is wrong" from "the agent started and then went
- * wrong", which are different things for a user to go and fix.
+ * Whether the failure was "there is no such program". The runtime reports an
+ * `AcpSpawnError` carrying the operating system's error as its `cause`, and
+ * only that inner error knows a file was not found. The distinction matters:
+ * a wrong command and a crashed agent are different things to go and fix.
  */
 function isMissingCommandFailure(error: unknown): boolean {
   if (isCommandMissingCause(error)) return true;
@@ -261,12 +253,8 @@ function isMissingCommandFailure(error: unknown): boolean {
 
 /**
  * What went wrong, in the words of whatever went wrong, plus the command line
- * the user can go and try for themselves.
- *
- * A generic sentence would throw away both the agent's own diagnosis and the
- * argv it was given, which leaves the user with nothing to check. The command
- * line is always named because a driver configured entirely from settings has
- * no other way to say which agent this is.
+ * the user can go and try for themselves. A driver configured entirely from
+ * settings has no other way to say which agent this is.
  */
 export function buildAcpAgentProbeFailureMessage(
   identity: AcpAgentIdentity,

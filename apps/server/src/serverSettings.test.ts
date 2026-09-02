@@ -628,6 +628,37 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("rescues a legacy provider key this build no longer names", () =>
+    Effect.gen(function* () {
+      // A fork that shipped its own driver wrote `providers.fm`. This build has
+      // no such key, and re-encoding the file would drop it in silence, so the
+      // block is carried into `providerInstances` where it shows as an
+      // unavailable shadow the user can see and delete.
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          providers: {
+            codex: { binaryPath: "/opt/homebrew/bin/codex" },
+            fm: { enabled: true, binaryPath: "/opt/fm/bin/fm" },
+          },
+        }),
+      );
+
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const settings = yield* serverSettings.getSettings;
+
+      const rescued = settings.providerInstances[ProviderInstanceId.make("fm")];
+      assert.isDefined(rescued);
+      assert.equal(rescued?.driver, "fm");
+      assert.equal(rescued?.enabled, true);
+      assert.deepEqual(rescued?.config, { enabled: true, binaryPath: "/opt/fm/bin/fm" });
+      // The keys this build does name are untouched by the rescue.
+      assert.equal(settings.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

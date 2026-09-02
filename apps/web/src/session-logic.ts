@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
+  ACP_AGENT_DRIVER_KIND,
   ApprovalRequestId,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
@@ -53,7 +54,7 @@ export const PROVIDER_OPTIONS: Array<{
     pickerSidebarBadge: "new",
   },
   {
-    value: ProviderDriverKind.make("acpAgent"),
+    value: ACP_AGENT_DRIVER_KIND,
     label: "ACP agent",
     available: true,
     pickerSidebarBadge: "new",

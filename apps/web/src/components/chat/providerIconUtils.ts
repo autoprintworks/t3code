@@ -1,4 +1,4 @@
-import { DEFAULT_PROVIDER_ICON_KEY, ProviderDriverKind } from "@t3tools/contracts";
+import { PROVIDER_ICON_KEYS, ProviderDriverKind, resolveProviderIconKey } from "@t3tools/contracts";
 import {
   ACPRegistryIcon,
   AnchorIcon,
@@ -18,22 +18,14 @@ import {
 } from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 
-export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
-  [ProviderDriverKind.make("codex")]: OpenAI,
-  [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
-  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
-  [ProviderDriverKind.make("cursor")]: CursorIcon,
-  [ProviderDriverKind.make("grok")]: GrokIcon,
-};
-
 /**
- * Artwork for the icon key a provider snapshot may name.
+ * Artwork for every icon key the contract names.
  *
- * A driver whose icon is fixed in code names none of these and falls back to
- * `PROVIDER_ICON_BY_PROVIDER`. The configurable ACP agent driver has no icon
- * of its own, so its user picks one by key from
- * `PROVIDER_ICON_KEY_CHOICES` and this is where that key becomes a glyph.
- * Every key in that list must appear here.
+ * This table is the whole of this client's icon knowledge. *Which* key an
+ * instance draws is decided in `@t3tools/contracts` by `resolveProviderIconKey`
+ * so that the web and the mobile app cannot answer it differently; a client
+ * only turns the answer into a glyph. Every key in `PROVIDER_ICON_KEYS` must
+ * appear here, and `providerIconUtils.test.ts` asserts it.
  */
 export const PROVIDER_ICON_BY_ICON_KEY: Record<string, Icon> = {
   acp: ACPRegistryIcon,
@@ -52,21 +44,22 @@ export const PROVIDER_ICON_BY_ICON_KEY: Record<string, Icon> = {
   pi: PiAgentIcon,
 };
 
+/** Every icon key the contract names, for a test that keeps this table honest. */
+export const PROVIDER_ICON_KEYS_WITHOUT_ARTWORK = PROVIDER_ICON_KEYS.filter(
+  (key) => PROVIDER_ICON_BY_ICON_KEY[key] === undefined,
+);
+
 /**
- * The glyph for one provider instance: the icon its snapshot asked for, the
- * one its driver always uses, or nothing. A snapshot that names an icon this
- * build does not have still gets a glyph rather than initials, because the key
- * came from a newer server that does have it.
+ * The glyph for one provider instance, or nothing when its driver has none.
+ *
+ * The choice of key belongs to the contract; this only draws it.
  */
 export function providerInstanceIcon(input: {
-  readonly driverKind: ProviderDriverKind;
-  readonly iconKey?: string | undefined;
+  readonly driverKind: ProviderDriverKind | string | null | undefined;
+  readonly iconKey?: string | null | undefined;
 }): Icon | null {
-  const key = input.iconKey?.trim();
-  if (key) {
-    return PROVIDER_ICON_BY_ICON_KEY[key] ?? PROVIDER_ICON_BY_ICON_KEY[DEFAULT_PROVIDER_ICON_KEY]!;
-  }
-  return PROVIDER_ICON_BY_PROVIDER[input.driverKind] ?? null;
+  const key = resolveProviderIconKey(input);
+  return key === undefined ? null : (PROVIDER_ICON_BY_ICON_KEY[key] ?? null);
 }
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {

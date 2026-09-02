@@ -1,4 +1,5 @@
 import {
+  ACP_AGENT_DRIVER_KIND,
   AcpAgentSettings,
   ClaudeSettings,
   CodexSettings,
@@ -80,7 +81,7 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
   // never renders `command` / `args` / `workingDirectory`, so there would be no
   // way to say which agent an instance runs.
   {
-    value: ProviderDriverKind.make("acpAgent"),
+    value: ACP_AGENT_DRIVER_KIND,
     label: "ACP agent",
     icon: ACPRegistryIcon,
     settingsSchema: AcpAgentSettings,

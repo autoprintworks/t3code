@@ -66,6 +66,11 @@ export interface ProviderInstanceEntry {
   readonly isDefault: boolean;
   /** True when `availability === "unavailable"` is absent or "available". */
   readonly isAvailable: boolean;
+  /**
+   * Whether this instance may back the app's own short prompts, the ones
+   * behind thread titles and summaries. Absent on the snapshot means yes.
+   */
+  readonly supportsTextGeneration: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
@@ -183,6 +188,7 @@ export function deriveProviderInstanceEntries(
       status: snapshot.status,
       isDefault,
       isAvailable: snapshot.availability !== "unavailable",
+      supportsTextGeneration: snapshot.supportsTextGeneration !== false,
       snapshot,
       models: snapshot.models,
     } satisfies ProviderInstanceEntry;

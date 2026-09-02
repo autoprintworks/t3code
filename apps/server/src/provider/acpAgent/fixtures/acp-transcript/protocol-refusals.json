@@ -153,10 +153,7 @@
         "cwd": "C:/work/repo",
         "mcpServers": [
           {
-            "args": [
-              "-y",
-              "everything"
-            ],
+            "args": ["-y", "everything"],
             "command": "npx",
             "name": "everything"
           }
