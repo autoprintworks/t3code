@@ -402,6 +402,11 @@ export class Launcher {
     const child = NodeChildProcess.spawn(process.execPath, [paths.entryPath, "serve"], {
       env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
+      // This file ships as a standalone bundle whose runtime imports stay on
+      // Node built-ins, so it cannot use `@t3tools/shared/windowsConsole`. The
+      // launcher may itself have no console, and without this the server child
+      // would draw one. See that module for the reasoning.
+      windowsHide: true,
     });
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);

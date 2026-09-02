@@ -16,6 +16,7 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { hideWindowsConsoleWindows } from "@t3tools/shared/windowsConsole";
 import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
@@ -62,6 +63,10 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
+
+// Electron main is a GUI process with no console, so every console child it
+// starts would otherwise draw a black window. Install before anything spawns.
+hideWindowsConsoleWindows();
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {

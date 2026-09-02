@@ -22,7 +22,11 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 type ExecFileSyncLike = (
   file: string,
   args: ReadonlyArray<string>,
-  options: { encoding: "utf8"; timeout: number },
+  // `windowsHide` keeps these probes from flashing a console window when the
+  // host process is a GUI process with no console to inherit. The asynchronous
+  // spawn path is covered process-wide by `hideWindowsConsoleWindows`, but
+  // `execFileSync` does not go through it.
+  options: { encoding: "utf8"; timeout: number; windowsHide: true },
 ) => string;
 
 function canExecuteFile(filePath: string): boolean {
@@ -206,6 +210,7 @@ export function readPathFromLaunchctl(
       execFile("/bin/launchctl", ["getenv", "PATH"], {
         encoding: "utf8",
         timeout: 2000,
+        windowsHide: true,
       }),
     );
   } catch {
@@ -315,6 +320,7 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
   const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
     encoding: "utf8",
     timeout: 5000,
+    windowsHide: true,
   });
 
   const environment: Partial<Record<string, string>> = {};
@@ -383,7 +389,11 @@ export function readEnvironmentFromWindowsShell(
   ];
   for (const shell of WINDOWS_SHELL_CANDIDATES) {
     try {
-      const output = execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      const output = execFile(shell, args, {
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+      });
 
       const environment: Partial<Record<string, string>> = {};
       for (const name of names) {
