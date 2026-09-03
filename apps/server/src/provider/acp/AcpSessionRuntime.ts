@@ -119,8 +119,8 @@ export interface AcpSessionRuntimeOptions {
   readonly authMethodId: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /**
-   * FORK DELTA (fm provider) - opts this runtime into tracking the other
-   * sessions on the same connection.
+   * Opts this runtime into tracking the other sessions on the same
+   * connection.
    *
    * Both this option and the agent's advertised `sessionCapabilities.list` must
    * be present before a single `session/list` goes out: an agent that can list

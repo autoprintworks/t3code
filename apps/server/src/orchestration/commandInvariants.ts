@@ -152,7 +152,7 @@ export function requireThreadNotArchived(input: {
 }
 
 /**
- * FORK DELTA (fm provider) - a thread a human may drive.
+ * A thread a human may drive.
  *
  * `readOnly` is a property of the thread, not of the screen: a worker thread
  * mirrors a conversation owned by another agent, and the only way to reach

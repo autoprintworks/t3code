@@ -285,7 +285,12 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
-  const entries = deriveProviderInstanceEntries(providers);
+  // An instance that says it cannot do text generation is not a candidate,
+  // whether it was picked deliberately or would be fallen back to. These
+  // prompts are the app's own, so a refusal here is silent to the user.
+  const entries = deriveProviderInstanceEntries(providers).filter(
+    (entry) => entry.supportsTextGeneration,
+  );
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
   );

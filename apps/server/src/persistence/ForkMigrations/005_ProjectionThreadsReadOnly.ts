@@ -1,6 +1,7 @@
 /**
- * FORK DELTA (fm provider) - a read-only thread is a window onto work driven somewhere else - a First
- * Mate worker, for instance - and the client shows it with no composer.
+ * A read-only thread is a window onto work driven somewhere else - a peer
+ * session on a configured ACP agent's connection, for instance - and the
+ * client shows it with no composer.
  *
  * Stored as an integer because SQLite has no boolean type. The column is
  * `NOT NULL DEFAULT 0`, so SQLite fills every existing row with `0` as part of

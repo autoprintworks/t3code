@@ -386,11 +386,11 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
-  // FORK DELTA (fm provider): the First Mate door is not built on Effect, so it
-  // answers with the `{code, message, data}` JSON-RPC 2.0 specifies rather than
-  // Effect's own `_tag: "Cause"` envelope. Effect's decoder files that single
-  // unrecognised error under `Die`, where it reaches callers as a defect and
-  // the agent's own words are lost. These two pin the rewrite that stops that.
+  // An agent that is not built on Effect answers with the `{code, message,
+  // data}` JSON-RPC 2.0 specifies rather than Effect's own `_tag: "Cause"`
+  // envelope. Effect's decoder files that unrecognised shape under `Die`, where
+  // it reaches callers as a defect and the agent's own words are lost. These
+  // two pin the decoding that stops that.
   it.effect("turns a plain JSON-RPC error from a non-Effect agent into a typed failure", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
@@ -411,8 +411,8 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
             id: 1,
             error: {
               code: -32603,
-              message: "no daemon is serving this home",
-              data: { home: "/home/mate/.firstmate/v2" },
+              message: "no backend is serving this workspace",
+              data: { workspace: "/home/dev/workspace" },
             },
           })}
 `,
@@ -428,7 +428,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.instanceOf(error, AcpError.AcpRequestError);
       assert.deepInclude(error, {
         code: -32603,
-        errorMessage: "no daemon is serving this home",
+        errorMessage: "no backend is serving this workspace",
         method: "session/prompt",
         requestId: 1,
         operation: "receive-response",

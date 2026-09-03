@@ -664,13 +664,14 @@ export const OpenCodeIcon: Icon = (props) => (
 );
 
 /**
- * FORK DELTA (fm provider) - icon for the First Mate ACP door.
+ * A ship's anchor, for a configured ACP agent whose owner picks it.
  *
- * A ship's anchor, drawn with `currentColor` strokes so it inherits the same
- * text colour as the surrounding row in both themes rather than shipping a
- * brand palette we would have to keep in step with First Mate.
+ * Drawn with `currentColor` strokes so it inherits the same text colour as the
+ * surrounding row in both themes. An agent T3 Code has never heard of has no
+ * brand palette to ship, so every glyph offered to a configured agent has to
+ * work in one colour.
  */
-export const FirstMateIcon: Icon = ({ className, ...props }) => (
+export const AnchorIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
     viewBox="0 0 24 24"
@@ -685,6 +686,29 @@ export const FirstMateIcon: Icon = ({ className, ...props }) => (
     <path d="M12 6.5v14.5" />
     <path d="M7.5 9.5h9" />
     <path d="M3.5 13a8.5 8.5 0 0 0 17 0" />
+  </svg>
+);
+
+/**
+ * A shell prompt, for a configured ACP agent that is plainly a command line.
+ *
+ * Same one-colour rule as `AnchorIcon`: strokes follow `currentColor` so the
+ * glyph reads in both themes without artwork per agent.
+ */
+export const TerminalPromptIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.75}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={cn("text-black dark:text-white", className)}
+  >
+    <rect x="2.5" y="4" width="19" height="16" rx="2.5" />
+    <path d="M7 9.5 10 12l-3 2.5" />
+    <path d="M12.5 15.5h4.5" />
   </svg>
 );
 

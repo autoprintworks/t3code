@@ -1,6 +1,5 @@
 /**
- * FORK DELTA (fm provider) - the rules a `session/list` answer is read by,
- * asserted without a door.
+ * The rules a `session/list` answer is read by, asserted without an agent.
  *
  * @see AcpSessionRuntime, which owns the polling fiber these rules feed.
  */
@@ -41,14 +40,14 @@ it("keeps only the sessions this connection did not open itself", () => {
     ownSessionId: "fm-supervisor",
     response: listed([
       { sessionId: "fm-supervisor", cwd: "/repo", title: "supervisor" },
-      { sessionId: "fm-worker-1", cwd: "/repo/a", title: "  build the thing  " },
+      { sessionId: "peer-1", cwd: "/repo/a", title: "  build the thing  " },
       // A duplicate row is one worker, not two: the id is the identity.
-      { sessionId: "fm-worker-1", cwd: "/repo/a", title: "build the thing" },
+      { sessionId: "peer-1", cwd: "/repo/a", title: "build the thing" },
       // No usable id, so no stable key; surfacing it under a blank one would
       // collide with every other unnamed session.
       { sessionId: "   ", cwd: "/repo/b" },
       {
-        sessionId: "fm-worker-2",
+        sessionId: "peer-2",
         cwd: "/repo/b",
         title: "   ",
         updatedAt: " 2026-09-02T00:00:00Z ",
@@ -57,9 +56,9 @@ it("keeps only the sessions this connection did not open itself", () => {
   });
 
   assert.deepStrictEqual(peers, [
-    { sessionId: "fm-worker-1", title: "build the thing", cwd: "/repo/a", updatedAt: undefined },
+    { sessionId: "peer-1", title: "build the thing", cwd: "/repo/a", updatedAt: undefined },
     {
-      sessionId: "fm-worker-2",
+      sessionId: "peer-2",
       title: undefined,
       cwd: "/repo/b",
       updatedAt: "2026-09-02T00:00:00Z",
@@ -76,25 +75,25 @@ it("names what appeared and what disappeared between two answers", () => {
   });
 
   const diff = diffPeerSessions({
-    previous: [session("fm-worker-1"), session("fm-worker-2")],
-    next: [session("fm-worker-2"), session("fm-worker-3")],
+    previous: [session("peer-1"), session("peer-2")],
+    next: [session("peer-2"), session("peer-3")],
   });
 
   assert.deepStrictEqual(
     diff.appeared.map((entry) => entry.sessionId),
-    ["fm-worker-3"],
+    ["peer-3"],
   );
-  assert.deepStrictEqual(diff.disappeared, ["fm-worker-1"]);
+  assert.deepStrictEqual(diff.disappeared, ["peer-1"]);
   // The whole current set travels with every diff, so a consumer that misses
   // one item can still recover the truth from the next.
   assert.deepStrictEqual(
     diff.present.map((entry) => entry.sessionId),
-    ["fm-worker-2", "fm-worker-3"],
+    ["peer-2", "peer-3"],
   );
 
   const unchanged = diffPeerSessions({
-    previous: [session("fm-worker-2")],
-    next: [session("fm-worker-2")],
+    previous: [session("peer-2")],
+    next: [session("peer-2")],
   });
   assert.deepStrictEqual(unchanged.appeared, []);
   assert.deepStrictEqual(unchanged.disappeared, []);
@@ -106,7 +105,7 @@ it("caps how much work one `session/list` answer can hand us", () => {
   // misbehaving door from setting the size of a poll.
   const response = listed(
     Array.from({ length: MAX_PEER_SESSIONS + 10 }, (_unused, index) => ({
-      sessionId: `fm-worker-${String(index)}`,
+      sessionId: `peer-${String(index)}`,
       cwd: "/repo",
     })),
   );

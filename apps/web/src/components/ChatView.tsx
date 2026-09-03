@@ -1491,9 +1491,9 @@ function ChatViewContent(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
-  // FORK DELTA (fm provider) - a window onto work being driven somewhere
-  // else, a First Mate worker for instance. There is nothing to type here,
-  // so there is no composer at all rather than a disabled one.
+  // A window onto work being driven somewhere else, a peer session on a
+  // configured ACP agent for instance. There is nothing to type here, so there
+  // is no composer at all rather than a disabled one.
   const isReadOnlyThread = activeThread?.readOnly === true;
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)

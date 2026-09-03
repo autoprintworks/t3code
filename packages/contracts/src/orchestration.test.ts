@@ -916,7 +916,6 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
   }),
 );
 
-// FORK DELTA (fm provider) - read-only threads.
 it.effect("drops readOnly from a thread.create a client sent", () =>
   Effect.gen(function* () {
     // `readOnly` is server-issued. A client that spells it anyway gets an

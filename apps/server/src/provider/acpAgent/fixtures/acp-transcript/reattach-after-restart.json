@@ -1,0 +1,131 @@
+{
+  "agent": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "agentInfo": {
+          "name": "example-acp-agent",
+          "version": "1.4.0"
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "sess-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "how is the rewrite going?",
+            "type": "text"
+          },
+          "sessionUpdate": "user_message_chunk"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "sess-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "Nine files have landed.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "sess-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "anything waiting on me?",
+            "type": "text"
+          },
+          "sessionUpdate": "user_message_chunk"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "sess-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "One pull request is ready for you.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "models": {
+          "availableModels": [
+            {
+              "description": "balanced; the agent's own default",
+              "modelId": "default",
+              "name": "default"
+            },
+            {
+              "description": "smaller and quicker",
+              "modelId": "fast",
+              "name": "fast"
+            }
+          ],
+          "currentModelId": "default"
+        }
+      }
+    }
+  ],
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "clientCapabilities": {
+          "fs": {},
+          "terminal": false
+        },
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/load",
+      "params": {
+        "cwd": "C:/work/repo",
+        "mcpServers": [],
+        "sessionId": "sess-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "session": "sess-1a2b3c4d5e6f7a8b",
+  "why": "The client was restarted. It sends session/load with the id it kept, and gets the same session back with enough of the conversation replayed to read, rather than a second one started beside it."
+}

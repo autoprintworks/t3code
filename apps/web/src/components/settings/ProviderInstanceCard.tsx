@@ -83,6 +83,12 @@ function makeEnvironmentDraftRow(
  * `string[]` by the concrete driver schemas but arrives here as
  * `Schema.Unknown`.
  */
+function readConfigString(config: unknown, key: string): string | undefined {
+  if (config === null || typeof config !== "object") return undefined;
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
 function readConfigStringArray(config: unknown, key: string): ReadonlyArray<string> {
   if (config === null || typeof config !== "object") return [];
   const value = (config as Record<string, unknown>)[key];
@@ -416,6 +422,10 @@ export function ProviderInstanceCard({
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
+  // The card is where the icon is chosen, so it reads the draft config first:
+  // waiting for the next probe would leave the picked glyph invisible until
+  // the server answered.
+  const iconKey = readConfigString(instance.config, "icon") ?? liveProvider?.iconKey;
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
       toastManager.add({
@@ -505,6 +515,7 @@ export function ProviderInstanceCard({
     <ProviderInstanceIcon
       driverKind={driverKind}
       displayName={displayName}
+      iconKey={iconKey}
       accentColor={accentColor}
       showBadge={Boolean(accentColor)}
       statusDotClassName={statusStyle.dot}

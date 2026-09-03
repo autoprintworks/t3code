@@ -168,7 +168,21 @@ export const ServerProvider = Schema.Struct({
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
+  // Which glyph clients should draw for this instance. Only drivers whose
+  // agent is chosen at runtime set it; every other driver leaves it unset and
+  // clients fall back to their own per-driver artwork. Deliberately a plain
+  // string rather than a closed union: a newer server may name a glyph an
+  // older client does not have, and that must render a fallback rather than
+  // fail the whole config decode. See `PROVIDER_ICON_KEY_CHOICES`.
+  iconKey: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
+  // Whether this instance may be picked as the text generation provider: the
+  // model behind thread titles, summaries and the other short prompts the app
+  // sends without a user asking. Absent means yes, which is what every shipped
+  // driver wants. A driver whose agent is chosen at runtime sets it false: an
+  // arbitrary ACP agent answers a prompt as a coding session, not as a
+  // one-shot completion, and its model ids are its own.
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,

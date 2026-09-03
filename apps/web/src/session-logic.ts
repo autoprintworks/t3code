@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import * as Arr from "effect/Array";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
+  ACP_AGENT_DRIVER_KIND,
   ApprovalRequestId,
   isToolLifecycleItemType,
   type OrchestrationLatestTurn,
@@ -52,12 +53,9 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
-  // FORK DELTA (fm provider): this is what makes `fm` a first-class agent
-  // choice in the new-thread picker rather than a driver you can only reach
-  // through Settings.
   {
-    value: ProviderDriverKind.make("fm"),
-    label: "First Mate",
+    value: ACP_AGENT_DRIVER_KIND,
+    label: "ACP agent",
     available: true,
     pickerSidebarBadge: "new",
   },

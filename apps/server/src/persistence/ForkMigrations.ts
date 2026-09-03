@@ -56,7 +56,6 @@ export const forkMigrationEntries = [
   [2, "ProjectionThreadActivitySequenceNotNull", ForkMigration0002],
   [3, "ProjectionProjectRepositoryIdentity", ForkMigration0003],
   [4, "ProjectionTurnsActivityAnchorBackfill", ForkMigration0004],
-  // FORK DELTA (fm provider) - read-only threads.
   [5, "ProjectionThreadsReadOnly", ForkMigration0005],
 ] as const;
 

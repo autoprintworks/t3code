@@ -48,6 +48,12 @@ export interface ProviderInstanceEntry {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  /**
+   * Glyph this instance asked for. Only drivers with no icon of their own set
+   * it: a configured ACP agent is whatever its user pointed it at, so the icon
+   * is a setting rather than a constant.
+   */
+  readonly iconKey?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
@@ -60,6 +66,11 @@ export interface ProviderInstanceEntry {
   readonly isDefault: boolean;
   /** True when `availability === "unavailable"` is absent or "available". */
   readonly isAvailable: boolean;
+  /**
+   * Whether this instance may back the app's own short prompts, the ones
+   * behind thread titles and summaries. Absent on the snapshot means yes.
+   */
+  readonly supportsTextGeneration: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
@@ -170,12 +181,14 @@ export function deriveProviderInstanceEntries(
       driverKind,
       displayName,
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+      iconKey: snapshot.iconKey,
       continuationGroupKey: snapshot.continuation?.groupKey,
       enabled: snapshot.enabled,
       installed: snapshot.installed,
       status: snapshot.status,
       isDefault,
       isAvailable: snapshot.availability !== "unavailable",
+      supportsTextGeneration: snapshot.supportsTextGeneration !== false,
       snapshot,
       models: snapshot.models,
     } satisfies ProviderInstanceEntry;

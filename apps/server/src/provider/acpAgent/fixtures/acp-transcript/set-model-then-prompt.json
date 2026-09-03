@@ -1,0 +1,120 @@
+{
+  "agent": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "result": {
+        "agentCapabilities": {
+          "loadSession": true,
+          "mcpCapabilities": {
+            "http": false,
+            "sse": false
+          },
+          "promptCapabilities": {
+            "audio": false,
+            "embeddedContext": false,
+            "image": false
+          }
+        },
+        "agentInfo": {
+          "name": "example-acp-agent",
+          "version": "1.4.0"
+        },
+        "authMethods": [],
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "models": {
+          "availableModels": [
+            {
+              "description": "balanced; the agent's own default",
+              "modelId": "default",
+              "name": "default"
+            },
+            {
+              "description": "smaller and quicker",
+              "modelId": "fast",
+              "name": "fast"
+            }
+          ],
+          "currentModelId": "default"
+        },
+        "sessionId": "sess-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "result": {}
+    },
+    {
+      "jsonrpc": "2.0",
+      "method": "session/update",
+      "params": {
+        "sessionId": "sess-1a2b3c4d5e6f7a8b",
+        "update": {
+          "content": {
+            "text": "Ready.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "jsonrpc": "2.0",
+      "result": {
+        "stopReason": "end_turn"
+      }
+    }
+  ],
+  "host": [
+    {
+      "id": 0,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1
+      }
+    },
+    {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "session/new",
+      "params": {
+        "cwd": "C:/work/repo",
+        "mcpServers": []
+      }
+    },
+    {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "method": "session/set_model",
+      "params": {
+        "modelId": "fast",
+        "sessionId": "sess-1a2b3c4d5e6f7a8b"
+      }
+    },
+    {
+      "id": 3,
+      "jsonrpc": "2.0",
+      "method": "session/prompt",
+      "params": {
+        "prompt": [
+          {
+            "text": "say when you are ready",
+            "type": "text"
+          }
+        ],
+        "sessionId": "sess-1a2b3c4d5e6f7a8b"
+      }
+    }
+  ],
+  "session": "sess-1a2b3c4d5e6f7a8b",
+  "why": "The person picked a different model before saying anything. The choice has to reach the prompt, not only the answer to session/set_model: a setting that changed nothing would be worse than one that refused."
+}

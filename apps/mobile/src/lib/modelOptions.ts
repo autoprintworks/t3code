@@ -16,6 +16,8 @@ export type ModelOption = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
+  /** Glyph the instance asked for, when its driver has none of its own. */
+  readonly providerIconKey: string | null;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
@@ -106,6 +108,7 @@ export function buildModelOptions(
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        providerIconKey: provider.iconKey ?? null,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
@@ -137,6 +140,7 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,
+        providerIconKey: null,
         isDefault: false,
         isLegacy: false,
         capabilities: null,
