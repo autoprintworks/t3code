@@ -36,3 +36,6 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# Written into the working tree by the `t3` test suite.
+apps/server/.claude-work-test/

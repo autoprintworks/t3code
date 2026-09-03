@@ -64,6 +64,8 @@ export const cli = makeCli();
 
 if (import.meta.main) {
   // Nothing this process spawns should draw a console window on Windows.
+  // Guarded by `import.meta.main` because importing the CLI as a library must
+  // not patch a host process's prototypes behind its back.
   hideWindowsConsoleWindows();
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,

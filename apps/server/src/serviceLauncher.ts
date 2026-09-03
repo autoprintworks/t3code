@@ -405,7 +405,8 @@ export class Launcher {
       // This file ships as a standalone bundle whose runtime imports stay on
       // Node built-ins, so it cannot use `@t3tools/shared/windowsConsole`. The
       // launcher may itself have no console, and without this the server child
-      // would draw one. See that module for the reasoning.
+      // would draw one. `process.execPath` is console-subsystem, so setting the
+      // flag by hand here is the same decision that module would make.
       windowsHide: true,
     });
     await new Promise<void>((resolve, reject) => {

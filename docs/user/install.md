@@ -41,6 +41,16 @@ Arch Linux:
 yay -S t3code-bin
 ```
 
+### Windows console windows
+
+T3 Code runs helper programs in the background - your provider CLI, `git`, and a few Windows
+system tools. Windows normally gives each of those its own console, so they used to appear as
+black windows that flashed on and off, once every second or two while a terminal was open.
+They no longer do.
+
+Windows that are meant to be seen are unaffected. Opening a project in your editor, or in File
+Explorer, still brings up its window as before.
+
 ## Providers
 
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want

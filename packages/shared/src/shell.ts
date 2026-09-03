@@ -23,9 +23,10 @@ type ExecFileSyncLike = (
   file: string,
   args: ReadonlyArray<string>,
   // `windowsHide` keeps these probes from flashing a console window when the
-  // host process is a GUI process with no console to inherit. The asynchronous
-  // spawn path is covered process-wide by `hideWindowsConsoleWindows`, but
-  // `execFileSync` does not go through it.
+  // host process is a GUI process with no console to inherit. Required, not
+  // optional, so a new probe cannot forget it: `hideWindowsConsoleWindows`
+  // covers the asynchronous spawn path, but `execFileSync` goes through
+  // `internal/child_process.spawnSync` and never reaches the hook.
   options: { encoding: "utf8"; timeout: number; windowsHide: true },
 ) => string;
 

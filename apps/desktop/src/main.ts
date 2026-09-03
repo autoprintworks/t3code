@@ -65,7 +65,8 @@ import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 
 // Electron main is a GUI process with no console, so every console child it
-// starts would otherwise draw a black window. Install before anything spawns.
+// starts would otherwise draw a black window. This is the first statement in the
+// file; the imports above it are evaluated first, and none of them spawns.
 hideWindowsConsoleWindows();
 
 const desktopEnvironmentLayer = Layer.unwrap(
