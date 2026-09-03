@@ -206,6 +206,10 @@
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
+    },
+    "./windowsConsole": {
+      "types": "./src/windowsConsole.ts",
+      "import": "./src/windowsConsole.ts"
     }
   },
   "scripts": {

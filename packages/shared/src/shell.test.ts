@@ -85,7 +85,7 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
-    expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+    expect(options).toEqual({ encoding: "utf8", timeout: 5000, windowsHide: true });
   });
 });
 
@@ -103,6 +103,7 @@ describe("readPathFromLaunchctl", () => {
     expect(execFile).toHaveBeenCalledWith("/bin/launchctl", ["getenv", "PATH"], {
       encoding: "utf8",
       timeout: 2000,
+      windowsHide: true,
     });
   });
 
@@ -234,7 +235,7 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(execFile).toHaveBeenCalledWith(
       "pwsh.exe",
       expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
-      { encoding: "utf8", timeout: 5000 },
+      { encoding: "utf8", timeout: 5000, windowsHide: true },
     );
   });
 
@@ -270,7 +271,7 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(execFile).toHaveBeenCalledWith(
       "pwsh.exe",
       expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
-      { encoding: "utf8", timeout: 5000 },
+      { encoding: "utf8", timeout: 5000, windowsHide: true },
     );
     expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
   });
@@ -295,10 +296,12 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(execFile).toHaveBeenNthCalledWith(1, "pwsh.exe", expect.any(Array), {
       encoding: "utf8",
       timeout: 5000,
+      windowsHide: true,
     });
     expect(execFile).toHaveBeenNthCalledWith(2, "powershell.exe", expect.any(Array), {
       encoding: "utf8",
       timeout: 5000,
+      windowsHide: true,
     });
   });
 });
