@@ -314,9 +314,6 @@ describe("serverSettings helpers", () => {
     });
     expect(next.backgroundActivityProfile).toBe("battery-saver");
     expect(Duration.toMillis(next.automaticGitFetchInterval)).toBe(0);
-    expect(Duration.toMillis(next.providerHealthRefreshInterval)).toBe(
-      Duration.toMillis(Duration.minutes(15)),
-    );
   });
 
   it("turns legacy interval patches into custom background activity overrides", () => {
@@ -343,7 +340,6 @@ describe("serverSettings helpers", () => {
       ...DEFAULT_SERVER_SETTINGS,
       backgroundActivityProfile: "performance" as const,
       automaticGitFetchInterval: Duration.seconds(7),
-      providerHealthRefreshInterval: Duration.minutes(4),
     };
 
     const next = applyServerSettingsPatch(current, {
@@ -359,12 +355,10 @@ describe("serverSettings helpers", () => {
       baseProfile: "performance",
       overrides: {
         automaticGitFetchInterval: Duration.seconds(7),
-        providerHealthRefreshInterval: Duration.minutes(4),
       },
     });
     expect(next.backgroundActivityProfile).toBe("performance");
     expect(Duration.toMillis(next.automaticGitFetchInterval)).toBe(7_000);
-    expect(Duration.toMillis(next.providerHealthRefreshInterval)).toBe(240_000);
   });
 
   it("does not reactivate dormant overrides from a concrete profile", () => {
@@ -374,7 +368,7 @@ describe("serverSettings helpers", () => {
         schemaVersion: 1 as const,
         profile: "battery-saver" as const,
         overrides: {
-          providerHealthRefreshInterval: Duration.seconds(5),
+          idleClientTtl: Duration.seconds(5),
         },
       },
     };
@@ -457,7 +451,7 @@ describe("serverSettings helpers", () => {
         baseProfile: "balanced",
         overrides: {
           automaticGitFetchInterval: Duration.seconds(15),
-          providerHealthRefreshInterval: Duration.minutes(3),
+          idleClientTtl: Duration.minutes(3),
         },
       },
     });
@@ -484,7 +478,6 @@ describe("serverSettings helpers", () => {
     const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       backgroundActivityProfile: "performance",
       automaticGitFetchInterval: Duration.seconds(0),
-      providerHealthRefreshInterval: Duration.minutes(4),
     });
 
     expect(next.backgroundActivity).toEqual({
@@ -493,7 +486,6 @@ describe("serverSettings helpers", () => {
       baseProfile: "performance",
       overrides: {
         automaticGitFetchInterval: Duration.seconds(0),
-        providerHealthRefreshInterval: Duration.minutes(4),
       },
     });
   });
