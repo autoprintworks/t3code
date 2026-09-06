@@ -12,6 +12,7 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as GitWorkDepth from "./GitWorkDepth.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
 const run = (input: VcsProcess.VcsProcessInput) =>
@@ -40,6 +41,7 @@ const captureProcessResult = (
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
+    Effect.provide(GitWorkDepth.layerWith(1)),
     Effect.flatMap((service) => service.run(baseInput)),
     Effect.flip,
   );
