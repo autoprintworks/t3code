@@ -18,9 +18,20 @@ export type ThreadDetailReducerResult =
   | { readonly kind: "deleted" }
   | { readonly kind: "unchanged" };
 
+/**
+ * Transcript ordering. Rows sort by creation time, and the id breaks the tie so
+ * two rows written in the same millisecond keep one stable order everywhere.
+ * Web and mobile use the same pair, so a row cannot sit in one place on one
+ * surface and another place on the other.
+ */
 const proposedPlanOrder = O.combine<OrchestrationThread["proposedPlans"][number]>(
   O.mapInput(O.String, (p) => p.createdAt),
   O.mapInput(O.String, (p) => p.id),
+);
+
+const messageOrder = O.combine<OrchestrationMessage>(
+  O.mapInput(O.String, (m) => m.createdAt),
+  O.mapInput(O.String, (m) => m.id),
 );
 
 const checkpointOrder = O.mapInput(
@@ -29,8 +40,16 @@ const checkpointOrder = O.mapInput(
     cp.checkpointTurnCount ?? Number.MAX_SAFE_INTEGER,
 );
 
+/**
+ * A row with no sequence predates the field, so it is older than anything
+ * carrying one and sorts first. This is the same placement the server's
+ * activity projection uses (`CASE WHEN sequence IS NULL THEN 0`), so a page
+ * read and a live event agree about where such a row belongs.
+ */
+const SEQUENCE_UNKNOWN = Number.MIN_SAFE_INTEGER;
+
 const activityOrder = O.combineAll<OrchestrationThreadActivity>([
-  O.mapInput(O.Number, (a) => a.sequence ?? Number.MAX_SAFE_INTEGER),
+  O.mapInput(O.Number, (a) => a.sequence ?? SEQUENCE_UNKNOWN),
   O.mapInput(O.String, (a) => a.createdAt),
   O.mapInput(O.String, (a) => a.id),
 ]);
@@ -302,7 +321,7 @@ export function applyThreadDetailEvent(
                     : {}),
                 },
           )
-        : Arr.append(thread.messages, message);
+        : Arr.sort(Arr.append(thread.messages, message), messageOrder);
       // Update latestTurn for assistant messages bound to a turn. A completed
       // assistant message only settles the turn once the session is no longer
       // running it — providers may emit several assistant messages per turn

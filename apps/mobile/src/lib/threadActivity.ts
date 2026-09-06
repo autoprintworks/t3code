@@ -1031,12 +1031,29 @@ function compareActivityLifecycleRank(kind: string): number {
   return 1;
 }
 
+/**
+ * A row with no sequence predates the field, so it is older than anything
+ * carrying one and sorts first. This matches the server's activity projection
+ * (`CASE WHEN sequence IS NULL THEN 0`) and the web client.
+ */
+const SEQUENCE_UNKNOWN = Number.MIN_SAFE_INTEGER;
+
 const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
-  Order.mapInput(Order.Number, (activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER),
+  Order.mapInput(Order.Number, (activity) => activity.sequence ?? SEQUENCE_UNKNOWN),
   Order.mapInput(Order.String, (activity) => activity.createdAt),
   Order.mapInput(Order.Number, (activity) => compareActivityLifecycleRank(activity.kind)),
   Order.mapInput(Order.String, (activity) => activity.id),
 ]);
+
+/**
+ * Total order for the merged transcript: creation time, then the id. The web
+ * client sorts its timeline the same way, so a row holds the same position on
+ * both surfaces.
+ */
+const rawThreadFeedEntryOrder = Order.combine<RawThreadFeedEntry>(
+  Order.mapInput(Order.String, (entry) => entry.createdAt),
+  Order.mapInput(Order.String, (entry) => entry.id),
+);
 
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
   if (entry.type !== "message") {
@@ -1458,10 +1475,20 @@ export function buildThreadFeed(
   },
 ): ThreadFeedEntry[] {
   const loadedMessages = options?.loadedMessages ?? thread.messages;
+  // Window bound for a partially loaded transcript: an activity older than the
+  // oldest loaded message belongs to a page that is not on screen. The page is
+  // not assumed to arrive oldest-first, so the bound is the smallest creation
+  // time in it rather than the first row's.
   const oldestLoadedMessageCreatedAt =
-    options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
+    options?.loadedMessages === undefined
+      ? null
+      : loadedMessages.reduce<string | null>(
+          (oldest, message) =>
+            oldest === null || message.createdAt < oldest ? message.createdAt : oldest,
+          null,
+        );
   const workLogEntries = deriveWorkLogEntries(thread.activities);
-  const entries = Arr.sortWith(
+  const entries = Arr.sort(
     [
       ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
         type: "message",
@@ -1510,8 +1537,7 @@ export function buildThreadFeed(
           };
         }),
     ],
-    (s) => new Date(s.createdAt),
-    Order.Date,
+    rawThreadFeedEntryOrder,
   );
 
   return groupAdjacentActivities(entries);

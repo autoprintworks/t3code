@@ -1607,8 +1607,11 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
+  // Creation time, then the id as a tiebreak, so two rows written in the same
+  // millisecond keep one stable order. Mobile's `buildThreadFeed` sorts the
+  // same pair.
+  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   );
 }
 
