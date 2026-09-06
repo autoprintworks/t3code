@@ -215,9 +215,9 @@
       "types": "./src/windowsConsole.ts",
       "import": "./src/windowsConsole.ts"
     },
-    "./providerSkillScope": {
-      "types": "./src/providerSkillScope.ts",
-      "import": "./src/providerSkillScope.ts"
+    "./providerSkillPresentation": {
+      "types": "./src/providerSkillPresentation.ts",
+      "import": "./src/providerSkillPresentation.ts"
     }
   },
   "scripts": {

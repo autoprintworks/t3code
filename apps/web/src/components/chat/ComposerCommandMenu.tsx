@@ -8,7 +8,7 @@ import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
-import { formatProviderSkillScopeLabel } from "~/providerSkillPresentation";
+import { formatProviderSkillScopeLabel } from "@t3tools/shared/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import {
   Command,

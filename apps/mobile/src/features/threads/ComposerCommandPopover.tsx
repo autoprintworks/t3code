@@ -1,7 +1,7 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
-import { formatProviderSkillScopeLabel } from "@t3tools/shared/providerSkillScope";
+import { formatProviderSkillScopeLabel } from "@t3tools/shared/providerSkillPresentation";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
 import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";

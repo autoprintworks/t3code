@@ -4,7 +4,7 @@ import {
   formatProviderSkillDisplayName,
   formatProviderSkillInstallSource,
   formatProviderSkillScopeLabel,
-} from "./providerSkillPresentation";
+} from "./providerSkillPresentation.ts";
 
 describe("formatProviderSkillDisplayName", () => {
   it("prefers the provider display name", () => {

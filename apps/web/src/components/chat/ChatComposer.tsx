@@ -223,7 +223,7 @@ import {
   deriveLatestContextWindowSnapshot,
   formatProviderDisplayName,
 } from "../../lib/contextWindow";
-import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
