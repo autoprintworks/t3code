@@ -13,6 +13,8 @@ export const makeProviderRegistryMock = (
   refreshInstance: () => Effect.succeed(providers),
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
+  listSkills: ({ instanceId }) =>
+    Effect.succeed(providers.find((provider) => provider.instanceId === instanceId)?.skills ?? []),
   setProviderMaintenanceActionState: () => Effect.succeed(providers),
   streamChanges: Stream.empty,
 });

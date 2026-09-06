@@ -188,6 +188,100 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("lists only user skills when the project has none", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "project-a");
+      yield* fs.makeDirectory(workspace, { recursive: true });
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "summarize",
+        ["---", "name: summarize", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope]),
+        [["summarize", "user"]],
+      );
+    }),
+  );
+
+  it.effect("lists only project skills when the user config has none", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "empty-claude-home");
+      const workspace = path.join(tempDir, "project-a");
+
+      yield* writeSkill(
+        path.join(workspace, ".claude", "skills"),
+        "migrate",
+        ["---", "name: migrate", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope]),
+        [["migrate", "project"]],
+      );
+    }),
+  );
+
+  it.effect("omits another project's skill from a thread opened on this project", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const projectA = path.join(tempDir, "project-a");
+      const projectB = path.join(tempDir, "project-b");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "summarize",
+        ["---", "name: summarize", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectA, ".claude", "skills"),
+        "deploy-a",
+        ["---", "name: deploy-a", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectB, ".claude", "skills"),
+        "deploy-b",
+        ["---", "name: deploy-b", "---"].join("\n"),
+      );
+
+      // A thread opened on project A sees user scope plus A's own skills.
+      // Project B's skill is not runnable there, so it must not be listed.
+      const skillsForA = yield* discoverClaudeSkills({ homePath: configDir }, projectA);
+      assert.deepEqual(
+        skillsForA.map((skill) => [skill.name, skill.scope]),
+        [
+          ["deploy-a", "project"],
+          ["summarize", "user"],
+        ],
+      );
+
+      const skillsForB = yield* discoverClaudeSkills({ homePath: configDir }, projectB);
+      assert.deepEqual(
+        skillsForB.map((skill) => [skill.name, skill.scope]),
+        [
+          ["deploy-b", "project"],
+          ["summarize", "user"],
+        ],
+      );
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
