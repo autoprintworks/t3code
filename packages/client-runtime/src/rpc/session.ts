@@ -14,6 +14,7 @@ import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
+import { prepareClientTracing } from "../observability/clientTracing.ts";
 import type {
   ConnectionAttemptError,
   ConnectionTransientError,
@@ -129,6 +130,13 @@ export const make = Effect.gen(function* () {
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+
+    // Point the client tracing exporter at the environment this socket opens against, before
+    // the socket span exists. A span made while the exporter is still being built is handed to
+    // the fallback tracer and never exported, so this is awaited rather than forked; it does no
+    // network work and gives up rather than delaying a connect. A surface that installed no
+    // binding (or a test) skips it and connects with the ambient tracer.
+    yield* prepareClientTracing(connection);
 
     const socketSpan: Tracer.Span = yield* Effect.makeSpan(SOCKET_SPAN_NAME, {
       attributes: {

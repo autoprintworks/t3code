@@ -103,18 +103,10 @@ jq -c 'select(.attributes["connection.id"] == "CONNECTION_ID_HERE") | {
 ```
 
 Client spans only reach the trace file when the client exports them; see `ClientTracingLive` in
-`apps/web/src/observability/clientTracing.ts`.
-
-Which surfaces this covers:
-
-- **web and desktop**: both ends land in the trace file. `apps/web/src/connection/runtime.ts` merges
-  `ClientTracingLive` into the connection runtime, and desktop wraps that same web bundle.
-- **mobile**: the environment end only. The socket span is created in `packages/client-runtime`, so
-  mobile does carry a `traceparent` and the environment's connection span is parented correctly, but
-  mobile has no OTLP exporter, so the client half of the trace is never written. A mobile drop is
-  read from the `server.connection.clientSocket` span alone.
-
-Giving mobile the client half needs an exporter of its own, which is not built.
+`packages/client-runtime/src/observability/clientTracing.ts`. Web, desktop and mobile all merge that
+layer into their connection runtime, and the exporter posts to whichever environment the socket
+opened against, so both halves of a connection trace land in that environment's trace file on every
+surface.
 
 ### Metrics
 

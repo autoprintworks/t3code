@@ -14,12 +14,18 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as Socket from "effect/unstable/socket/Socket";
+import { vi } from "vite-plus/test";
 
 import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
+import {
+  __resetClientTracingForTests,
+  ClientTracingLive,
+  installClientTracing,
+} from "../observability/clientTracing.ts";
 import * as RpcSession from "./session.ts";
 
 type SocketEventType = "open" | "message" | "close" | "error";
@@ -438,6 +444,49 @@ describe("RpcSessionFactory", () => {
       }),
     ),
   );
+
+  // Every surface merges ClientTracingLive into its connection runtime, so this is the shape web,
+  // desktop and mobile all connect in. `connect()` primes the exporter against the environment it
+  // is opening against before it makes the socket span, so the span reaches that environment's
+  // /api/observability/v1/traces rather than a no-op tracer.
+  it.effect("exports the socket span to the environment the connection opened against", () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+    installClientTracing({
+      resource: {
+        serviceName: "t3-mobile",
+        attributes: { "service.runtime": "t3-mobile", "service.mode": "ios" },
+      },
+      fetch: fetchFn,
+      exportIntervalMs: 10,
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const readyFiber = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(readyFiber);
+
+        socket.close(1006, "abnormal closure");
+        yield* Effect.flip(session.closed);
+      }).pipe(Effect.provide(ClientTracingLive));
+
+      // Disposing the exporter flushes what it has batched, so the assertion does not race the
+      // export interval.
+      yield* Effect.promise(() => __resetClientTracingForTests());
+
+      expect(fetchFn).toHaveBeenCalledOnce();
+      const [url, init] = fetchFn.mock.calls[0]!;
+      expect(String(url)).toBe("https://environment.example.test/api/observability/v1/traces");
+      const body = new TextDecoder().decode(init?.body as Uint8Array);
+      expect(body).toContain("clientRuntime.connection.rpcSession.socket");
+      expect(body).toContain("t3-mobile");
+      expect(body).toContain("abnormal closure");
+    }).pipe(Effect.scoped);
+  });
 
   it.effect("fails readiness when the websocket never opens", () =>
     Effect.gen(function* () {

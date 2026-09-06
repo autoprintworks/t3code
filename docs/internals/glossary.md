@@ -187,7 +187,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 
 #### Connection span
 
-One client websocket, end to end, as a trace span. The environment opens `server.connection.clientSocket` when a client connects and ends it when the socket dies, carrying the close code, who sent the close frame, and the keepalive gaps, so a drop is explained rather than inferred. The client opens its own `clientRuntime.connection.rpcSession.socket` in [session.ts][39] and puts that span's `traceparent` on the connect URL, so the environment parents its span on the client's and both ends of one drop share a trace id and a `connection.id`. The client half only reaches the trace file where a client exports it, which today is web and desktop; see [observability.md][40].
+One client websocket, end to end, as a trace span. The environment opens `server.connection.clientSocket` when a client connects and ends it when the socket dies, carrying the close code, who sent the close frame, and the keepalive gaps, so a drop is explained rather than inferred. The client opens its own `clientRuntime.connection.rpcSession.socket` in [session.ts][39] and puts that span's `traceparent` on the connect URL, so the environment parents its span on the client's and both ends of one drop share a trace id and a `connection.id`. The client half only reaches the trace file where a client exports it, which every surface does through the shared exporter in [clientTracing.ts][41]; see [observability.md][40].
 
 ## Practical Shortcuts
 
@@ -245,3 +245,4 @@ One client websocket, end to end, as a trace span. The environment opens `server
 [38]: ../../packages/shared/src/providerSkillPresentation.ts
 [39]: ../../packages/client-runtime/src/rpc/session.ts
 [40]: ../operations/observability.md
+[41]: ../../packages/client-runtime/src/observability/clientTracing.ts
