@@ -78,9 +78,12 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
+  type ClaudeSkillRef,
   discoverClaudeSkills,
+  findLeadingSkillMention,
+  formatInlinedSkillPrompt,
   hasLeadingSkillMention,
-  rewriteLeadingSkillMention,
+  readClaudeSkillBody,
 } from "../Drivers/ClaudeSkills.ts";
 import {
   getClaudeModelCapabilities,
@@ -1179,10 +1182,16 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
-function buildPromptText(
+/**
+ * Apply the prompt-injected effort keyword. `keepTextFirst` is set when the
+ * text is a slash command: a skill only starts when the message *begins* with
+ * it, so the keyword moves to the end instead of the front.
+ */
+function applyPromptEffort(
   input: ProviderSendTurnInput,
   boundInstanceId: ProviderInstanceId,
-  skillNames: ReadonlyArray<string>,
+  text: string,
+  keepTextFirst: boolean,
 ): string {
   const rawEffort =
     input.modelSelection?.instanceId === boundInstanceId
@@ -1193,21 +1202,16 @@ function buildPromptText(
   const caps = getClaudeModelCapabilities(claudeModel);
 
   const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  const raw = input.input?.trim() ?? "";
-  const text = rewriteLeadingSkillMention(raw, skillNames);
   const prefixed = applyClaudePromptEffortPrefix(text, promptEffort);
-  if (text === raw || prefixed === text || !prefixed.endsWith(text)) {
+  if (!keepTextFirst || prefixed === text || !prefixed.endsWith(text)) {
     return prefixed;
   }
-  // A skill only starts when the message begins with its slash command, so the
-  // effort prefix cannot stay in front of it. The keyword still reads as an
-  // effort hint from the end of the message.
   const effortHint = prefixed.slice(0, prefixed.length - text.length).trim();
   return `${text}\n\n${effortHint}`;
 }
 
 function buildUserMessage(input: {
-  readonly sdkContent: Array<Record<string, unknown>>;
+  readonly content: string | Array<Record<string, unknown>>;
 }): SDKUserMessage {
   return {
     type: "user",
@@ -1215,7 +1219,7 @@ function buildUserMessage(input: {
     parent_tool_use_id: null,
     message: {
       role: "user",
-      content: input.sdkContent as unknown as SDKUserMessage["message"]["content"],
+      content: input.content as unknown as SDKUserMessage["message"]["content"],
     },
   } as SDKUserMessage;
 }
@@ -1240,15 +1244,10 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly fileSystem: FileSystem.FileSystem;
     readonly attachmentsDir: string;
     readonly boundInstanceId: ProviderInstanceId;
-    readonly skillNames: ReadonlyArray<string>;
+    readonly skills: ReadonlyArray<ClaudeSkillRef>;
   },
 ) {
-  const text = buildPromptText(input, dependencies.boundInstanceId, dependencies.skillNames);
-  const sdkContent: Array<Record<string, unknown>> = [];
-
-  if (text.length > 0) {
-    sdkContent.push({ type: "text", text });
-  }
+  const imageBlocks: Array<Record<string, unknown>> = [];
 
   for (const attachment of input.attachments ?? []) {
     if (attachment.type !== "image") {
@@ -1287,7 +1286,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
       ),
     );
 
-    sdkContent.push(
+    imageBlocks.push(
       buildClaudeImageContentBlock({
         mimeType: attachment.mimeType,
         bytes,
@@ -1295,7 +1294,46 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     );
   }
 
-  return buildUserMessage({ sdkContent });
+  const raw = input.input?.trim() ?? "";
+  const mention = findLeadingSkillMention(raw, dependencies.skills);
+
+  // Claude Code will not expand `/name` when the message also carries an image
+  // block, so those turns inline the skill's own instructions instead. The
+  // fallback is the slash command: it is what the user asked for, even if an
+  // unreadable SKILL.md means it cannot expand.
+  const inlinedSkillBody =
+    mention && imageBlocks.length > 0
+      ? yield* readClaudeSkillBody(mention.skill.path).pipe(
+          Effect.provideService(FileSystem.FileSystem, dependencies.fileSystem),
+        )
+      : undefined;
+
+  const isSlashCommand = mention !== null && inlinedSkillBody === undefined;
+  const text = mention
+    ? inlinedSkillBody === undefined
+      ? `/${mention.skill.name}${mention.rest}`
+      : formatInlinedSkillPrompt({
+          skill: mention.skill,
+          body: inlinedSkillBody,
+          rest: mention.rest,
+        })
+    : raw;
+
+  const promptText = applyPromptEffort(input, dependencies.boundInstanceId, text, isSlashCommand);
+
+  // Claude Code treats a bare string and a one-element text block differently
+  // when deciding whether a message opens with a slash command, so an
+  // attachment-free turn hands over the string.
+  if (imageBlocks.length === 0 && promptText.length > 0) {
+    return buildUserMessage({ content: promptText });
+  }
+
+  return buildUserMessage({
+    content: [
+      ...(promptText.length > 0 ? [{ type: "text", text: promptText }] : []),
+      ...imageBlocks,
+    ],
+  });
 });
 
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
@@ -4409,17 +4447,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    // Only pay for a skills scan when the message actually leads with a `$name`
-    // token, which is the only shape the rewrite can act on.
-    const skillNames = hasLeadingSkillMention(input.input?.trim() ?? "")
-      ? (yield* discoverSkillsForRewrite(context.session.cwd)).map((skill) => skill.name)
+    // Only pay for a skills scan when the message actually leads with a
+    // `$name` or `/name` token, the only shape the rewrite can act on.
+    const skills: ReadonlyArray<ClaudeSkillRef> = hasLeadingSkillMention(input.input?.trim() ?? "")
+      ? yield* discoverSkillsForRewrite(context.session.cwd)
       : [];
 
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
-      skillNames,
+      skills,
     });
 
     yield* Queue.offer(context.promptQueue, {

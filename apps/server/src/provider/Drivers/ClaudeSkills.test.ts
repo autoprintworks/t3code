@@ -6,8 +6,10 @@ import * as Path from "effect/Path";
 
 import {
   discoverClaudeSkills,
+  findLeadingSkillMention,
+  formatInlinedSkillPrompt,
   hasLeadingSkillMention,
-  rewriteLeadingSkillMention,
+  readClaudeSkillBody,
 } from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
@@ -208,51 +210,124 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
   );
 });
 
-describe("rewriteLeadingSkillMention", () => {
-  const skills = ["to-spec", "code-review"];
+describe("findLeadingSkillMention", () => {
+  const skills = [
+    { name: "to-spec", path: "/skills/to-spec/SKILL.md" },
+    { name: "code-review", path: "/skills/code-review/SKILL.md" },
+  ];
 
-  it("rewrites a chip-only message into a bare slash command", () => {
-    assert.equal(rewriteLeadingSkillMention("$to-spec", skills), "/to-spec");
+  const rewrite = (text: string) => {
+    const mention = findLeadingSkillMention(text, skills);
+    return mention ? `/${mention.skill.name}${mention.rest}` : text;
+  };
+
+  it("matches a chip-only message, leaving nothing after the command", () => {
+    const mention = findLeadingSkillMention("$to-spec", skills);
+    assert.equal(mention?.skill.name, "to-spec");
+    assert.equal(mention?.rest, "");
+    assert.equal(rewrite("$to-spec"), "/to-spec");
   });
 
   it("keeps the rest of the message after the slash command", () => {
-    assert.equal(rewriteLeadingSkillMention("$to-spec route A", skills), "/to-spec route A");
+    assert.equal(findLeadingSkillMention("$to-spec route A", skills)?.rest, " route A");
+    assert.equal(rewrite("$to-spec route A"), "/to-spec route A");
+  });
+
+  // The `/` menu lists the same skills as `/skill:<Display Name>` rows and
+  // inserts the slash form, which must resolve to the same skill.
+  it("matches the slash form the slash menu inserts", () => {
+    assert.equal(findLeadingSkillMention("/to-spec route A", skills)?.skill.name, "to-spec");
+    assert.equal(rewrite("/to-spec route A"), "/to-spec route A");
   });
 
   it("keeps a multi-line message intact below the command line", () => {
-    assert.equal(
-      rewriteLeadingSkillMention("$to-spec route A\nsecond line", skills),
-      "/to-spec route A\nsecond line",
-    );
+    assert.equal(rewrite("$to-spec route A\nsecond line"), "/to-spec route A\nsecond line");
   });
 
   it("leaves an unknown skill name alone", () => {
-    assert.equal(
-      rewriteLeadingSkillMention("$not-a-skill route A", skills),
-      "$not-a-skill route A",
-    );
+    assert.equal(findLeadingSkillMention("$not-a-skill route A", skills), null);
+    assert.equal(rewrite("$not-a-skill route A"), "$not-a-skill route A");
+    // A provider slash command that is not a skill must pass through too.
+    assert.equal(findLeadingSkillMention("/compact", skills), null);
   });
 
   it("leaves a mention that is not at the start alone", () => {
-    assert.equal(rewriteLeadingSkillMention("please run $to-spec", skills), "please run $to-spec");
+    assert.equal(findLeadingSkillMention("please run $to-spec", skills), null);
   });
 
   it("leaves a bare dollar sign and a partial token alone", () => {
-    assert.equal(rewriteLeadingSkillMention("$ to-spec", skills), "$ to-spec");
-    assert.equal(rewriteLeadingSkillMention("$to-spectacular", skills), "$to-spectacular");
+    assert.equal(findLeadingSkillMention("$ to-spec", skills), null);
+    assert.equal(findLeadingSkillMention("$to-spectacular", skills), null);
   });
 
   it("leaves everything alone when no skills were discovered", () => {
-    assert.equal(rewriteLeadingSkillMention("$to-spec", []), "$to-spec");
+    assert.equal(findLeadingSkillMention("$to-spec", []), null);
   });
 });
 
 describe("hasLeadingSkillMention", () => {
-  it("is true only for a message that starts with a `$name` token", () => {
+  it("is true only for a message that starts with a `$name` or `/name` token", () => {
     assert.equal(hasLeadingSkillMention("$to-spec route A"), true);
     assert.equal(hasLeadingSkillMention("$to-spec"), true);
+    assert.equal(hasLeadingSkillMention("/to-spec route A"), true);
     assert.equal(hasLeadingSkillMention("please run $to-spec"), false);
     assert.equal(hasLeadingSkillMention("$ to-spec"), false);
     assert.equal(hasLeadingSkillMention("just some text"), false);
   });
+});
+
+describe("formatInlinedSkillPrompt", () => {
+  const skill = { name: "to-spec", path: "/skills/to-spec/SKILL.md" };
+
+  it("names the skill and its file, then the instructions", () => {
+    const prompt = formatInlinedSkillPrompt({ skill, body: "# Body", rest: "" });
+    assert.equal(prompt.includes("Run the to-spec skill."), true);
+    assert.equal(prompt.includes("/skills/to-spec/SKILL.md"), true);
+    assert.equal(prompt.endsWith("# Body"), true);
+  });
+
+  it("appends the rest of the message below a separator", () => {
+    const prompt = formatInlinedSkillPrompt({ skill, body: "# Body", rest: " route A" });
+    assert.equal(prompt.endsWith("# Body\n\n---\n\nroute A"), true);
+  });
+});
+
+it.layer(NodeServices.layer)("readClaudeSkillBody", (it) => {
+  it.effect("returns the body with the frontmatter stripped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skill-body-" });
+      const skillsDir = path.join(tempDir, "skills");
+
+      yield* writeSkill(
+        skillsDir,
+        "to-spec",
+        ["---", "name: to-spec", "description: Turn notes into a spec.", "---", "", "# Body"].join(
+          "\n",
+        ),
+      );
+
+      const body = yield* readClaudeSkillBody(path.join(skillsDir, "to-spec", "SKILL.md"));
+
+      assert.equal(body, "# Body");
+    }),
+  );
+
+  it.effect("returns undefined for a missing or empty skill file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skill-body-" });
+      const skillsDir = path.join(tempDir, "skills");
+
+      yield* writeSkill(skillsDir, "empty", ["---", "name: empty", "---", ""].join("\n"));
+
+      assert.equal(
+        yield* readClaudeSkillBody(path.join(skillsDir, "empty", "SKILL.md")),
+        undefined,
+      );
+      assert.equal(yield* readClaudeSkillBody(path.join(skillsDir, "gone", "SKILL.md")), undefined);
+    }),
+  );
 });

@@ -4317,16 +4317,40 @@ describe("ClaudeAdapterLive", () => {
       return { tempDir, claudeHome, workspace };
     };
 
-    const sendSkillTurn = (
+    const IMAGE_ATTACHMENT = {
+      type: "image" as const,
+      id: "thread-claude-attachment-12345678-1234-1234-1234-123456789abc",
+      name: "diagram.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+    };
+
+    const sendSkillTurnMessage = (
       text: string,
-      modelSelection?: ReturnType<typeof createModelSelection>,
+      options?: {
+        readonly modelSelection?: ReturnType<typeof createModelSelection>;
+        readonly withImage?: boolean;
+      },
     ) => {
       const { tempDir, claudeHome, workspace } = makeSkillWorkspace();
-      const harness = makeHarness({ claudeConfig: { homePath: claudeHome } });
+      const baseDir = NodePath.join(tempDir, "base");
+      NodeFS.mkdirSync(baseDir, { recursive: true });
+      const harness = makeHarness({ claudeConfig: { homePath: claudeHome }, baseDir });
+      const modelSelection = options?.modelSelection;
       return Effect.gen(function* () {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
         );
+
+        if (options?.withImage) {
+          const { attachmentsDir } = yield* ServerConfig;
+          const attachmentPath = NodePath.join(
+            attachmentsDir,
+            attachmentRelativePath(IMAGE_ATTACHMENT),
+          );
+          NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+          NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+        }
 
         const adapter = yield* ClaudeAdapter;
         const session = yield* adapter.startSession({
@@ -4339,20 +4363,61 @@ describe("ClaudeAdapterLive", () => {
         yield* adapter.sendTurn({
           threadId: session.threadId,
           input: text,
-          attachments: [],
+          attachments: options?.withImage ? [IMAGE_ATTACHMENT] : [],
           ...(modelSelection ? { modelSelection } : {}),
         });
 
-        return yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+        return yield* Effect.promise(() =>
+          readFirstPromptMessage(harness.getLastCreateQueryInput()),
+        );
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),
       );
     };
 
+    const sendSkillTurn = (
+      text: string,
+      modelSelection?: ReturnType<typeof createModelSelection>,
+    ) =>
+      sendSkillTurnMessage(text, modelSelection ? { modelSelection } : {}).pipe(
+        Effect.map((message) => {
+          const content = message?.message.content;
+          return typeof content === "string" ? content : undefined;
+        }),
+      );
+
     it.effect("sends a chip-only message as a bare slash command", () =>
       Effect.gen(function* () {
-        assert.equal(yield* sendSkillTurn("$to-spec"), "/to-spec");
+        // A plain string, not a one-element text block: Claude Code only reads
+        // the leading slash command off the string shape.
+        const message = yield* sendSkillTurnMessage("$to-spec");
+        assert.equal(message?.message.content, "/to-spec");
+      }),
+    );
+
+    // The `/` menu lists discovered skills as `/skill:<Display Name>` rows and
+    // inserts `/name`, which must survive to the process unchanged.
+    it.effect("passes the slash-menu form through as the same slash command", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* sendSkillTurn("/to-spec route A"), "/to-spec route A");
+      }),
+    );
+
+    // Claude Code refuses to expand `/name` when the message also carries an
+    // image block, so the skill's own instructions are inlined instead.
+    it.effect("inlines the skill body when the turn carries an attachment", () =>
+      Effect.gen(function* () {
+        const message = yield* sendSkillTurnMessage("$to-spec route A", { withImage: true });
+        const content = message?.message.content;
+        assert.equal(Array.isArray(content), true);
+        const blocks = content as ReadonlyArray<{ type: string; text?: string }>;
+        assert.equal(blocks[0]?.type, "text");
+        assert.equal(blocks[0]?.text?.startsWith("Run the to-spec skill."), true);
+        assert.equal(blocks[0]?.text?.includes("# Body"), true);
+        assert.equal(blocks[0]?.text?.endsWith("---\n\nroute A"), true);
+        // The image still rides along in the same message.
+        assert.equal(blocks[1]?.type, "image");
       }),
     );
 
