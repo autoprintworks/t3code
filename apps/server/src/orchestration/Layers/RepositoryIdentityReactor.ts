@@ -18,6 +18,12 @@ import {
 interface ResolutionRequest {
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
+  /**
+   * Whether to drop the resolver's cached answer first. Set only for a project
+   * whose workspace root the user just saved, which is the one gesture that can
+   * make a cached answer wrong.
+   */
+  readonly refresh: boolean;
 }
 
 /**
@@ -25,14 +31,23 @@ interface ResolutionRequest {
  *
  * `project.meta-updated` counts whenever it carries a workspace root, even an
  * unchanged one: re-saving a project's folder is how a user forces a re-read
- * after changing the repository's remote.
+ * after changing the repository's remote. That is also the only trigger that
+ * bypasses the resolver's cache, so the manual refresh still reaches `git`.
  */
 function resolutionRequestForEvent(event: OrchestrationEvent): ResolutionRequest | null {
   if (event.type === "project.created") {
-    return { projectId: event.payload.projectId, workspaceRoot: event.payload.workspaceRoot };
+    return {
+      projectId: event.payload.projectId,
+      workspaceRoot: event.payload.workspaceRoot,
+      refresh: false,
+    };
   }
   if (event.type === "project.meta-updated" && event.payload.workspaceRoot !== undefined) {
-    return { projectId: event.payload.projectId, workspaceRoot: event.payload.workspaceRoot };
+    return {
+      projectId: event.payload.projectId,
+      workspaceRoot: event.payload.workspaceRoot,
+      refresh: true,
+    };
   }
   return null;
 }
@@ -50,9 +65,13 @@ const make = Effect.gen(function* () {
   /**
    * Resolving spawns `git`, which blocks the event loop on Windows. That is
    * exactly why it lives here: one project at a time, on a background worker,
-   * never on a request.
+   * never on a request. The resolver caches per workspace root, so several
+   * projects sharing a root cost one resolution between them.
    */
   const resolveAndRecord = Effect.fn("resolveAndRecord")(function* (request: ResolutionRequest) {
+    if (request.refresh) {
+      yield* repositoryIdentityResolver.invalidate(request.workspaceRoot);
+    }
     const repositoryIdentity = yield* repositoryIdentityResolver.resolve(request.workspaceRoot);
     yield* orchestrationEngine.dispatch({
       type: "project.repository-identity.record",
@@ -91,7 +110,11 @@ const make = Effect.gen(function* () {
       if (row.deletedAt !== null || row.repositoryIdentityWorkspaceRoot === row.workspaceRoot) {
         continue;
       }
-      yield* worker.enqueue({ projectId: row.projectId, workspaceRoot: row.workspaceRoot });
+      yield* worker.enqueue({
+        projectId: row.projectId,
+        workspaceRoot: row.workspaceRoot,
+        refresh: false,
+      });
     }
   });
 
