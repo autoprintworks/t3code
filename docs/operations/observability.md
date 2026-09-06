@@ -49,6 +49,62 @@ records instead carry OTLP resource, scope, and optional status fields.
 The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
 `packages/shared/src/observability.ts`.
 
+#### Trace File Size Bound
+
+Trace output cannot grow without limit. Two bounds apply, and neither needs an operator to prune
+anything by hand.
+
+Rotation bounds the bytes on disk:
+
+- one live file plus `T3CODE_TRACE_MAX_FILES` numbered backups (`server.trace.ndjson.1` up to
+  `.10`), each capped at `T3CODE_TRACE_MAX_BYTES`
+- at the defaults of 10 MiB and 10 backups, the worst case is 11 files, so **110 MiB**
+- when the live file would pass the byte cap the sink rotates: the oldest backup is deleted, the
+  rest shift up by one, and the live file becomes `.1`
+- lowering `T3CODE_TRACE_MAX_FILES` prunes backups above the new count at the next server start
+- browser spans forwarded to the environment share this one file, so the ceiling covers both ends
+  of a connection
+
+Truncation bounds one record:
+
+- string attribute values longer than 500 characters are clamped, including strings nested inside
+  arrays and objects such as error stacks, and gain a `…[truncated]` suffix
+- `db.query.text` is always clamped, to 200 characters
+- a single record larger than `T3CODE_TRACE_MAX_BYTES` is dropped rather than written
+
+Both live in `packages/shared/src/observability.ts` and `packages/shared/src/logging.ts`.
+
+#### Connection Spans
+
+Every client websocket produces one `server.connection.clientSocket` span that ends when the socket
+does, so a drop is explained rather than inferred. Useful attributes:
+
+- `connection.close.code`, `connection.close.reason`, `connection.close.clean`
+- `connection.close.initiator`: `server` when the environment sent the close frame, else `client`
+- `connection.close.observed`: `false` when the socket ended with no close frame to read
+- `connection.ping.count`, `connection.pong.count`, `connection.ping.maxGapMs`
+- `connection.ping.lastAgeMs`, `connection.pong.lastAgeMs`: how stale the keepalive was at close
+- `connection.ping.starved`: the client stopped pinging for over 20 seconds, which is what a
+  client-side missed pong looks like from the environment
+- `connection.open.durationMs`, `connection.session.id`, `connection.auth.method`
+
+The client writes its own `clientRuntime.connection.rpcSession.socket` span, and carries that span's
+`traceparent` on the websocket URL. The environment parents its connection span on it, so both ends
+of one drop share a `traceId` and a `connection.id`:
+
+```bash
+jq -c 'select(.attributes["connection.id"] == "CONNECTION_ID_HERE") | {
+  name,
+  durationMs,
+  code: .attributes["connection.close.code"],
+  reason: .attributes["connection.close.reason"],
+  starved: .attributes["connection.ping.starved"]
+}' "$TRACE_FILE"
+```
+
+Client spans only reach the trace file when the client exports them; see `ClientTracingLive` in
+`apps/web/src/observability/clientTracing.ts`.
+
 ### Metrics
 
 Metrics are not written to a local file.
