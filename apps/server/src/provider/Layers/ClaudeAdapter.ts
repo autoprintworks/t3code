@@ -78,6 +78,11 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
+  discoverClaudeSkills,
+  hasLeadingSkillMention,
+  rewriteLeadingSkillMention,
+} from "../Drivers/ClaudeSkills.ts";
+import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
   normalizeClaudeCliEffort,
@@ -1177,6 +1182,7 @@ const CLAUDE_SETTING_SOURCES = [
 function buildPromptText(
   input: ProviderSendTurnInput,
   boundInstanceId: ProviderInstanceId,
+  skillNames: ReadonlyArray<string>,
 ): string {
   const rawEffort =
     input.modelSelection?.instanceId === boundInstanceId
@@ -1187,7 +1193,17 @@ function buildPromptText(
   const caps = getClaudeModelCapabilities(claudeModel);
 
   const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  const raw = input.input?.trim() ?? "";
+  const text = rewriteLeadingSkillMention(raw, skillNames);
+  const prefixed = applyClaudePromptEffortPrefix(text, promptEffort);
+  if (text === raw || prefixed === text || !prefixed.endsWith(text)) {
+    return prefixed;
+  }
+  // A skill only starts when the message begins with its slash command, so the
+  // effort prefix cannot stay in front of it. The keyword still reads as an
+  // effort hint from the end of the message.
+  const effortHint = prefixed.slice(0, prefixed.length - text.length).trim();
+  return `${text}\n\n${effortHint}`;
 }
 
 function buildUserMessage(input: {
@@ -1224,9 +1240,10 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly fileSystem: FileSystem.FileSystem;
     readonly attachmentsDir: string;
     readonly boundInstanceId: ProviderInstanceId;
+    readonly skillNames: ReadonlyArray<string>;
   },
 ) {
-  const text = buildPromptText(input, dependencies.boundInstanceId);
+  const text = buildPromptText(input, dependencies.boundInstanceId, dependencies.skillNames);
   const sdkContent: Array<Record<string, unknown>> = [];
 
   if (text.length > 0) {
@@ -1657,6 +1674,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+
+  /**
+   * Skills the spawned Claude process can see, scanned fresh so a skill added
+   * mid-session is usable in the next turn.
+   */
+  const discoverSkillsForRewrite = (cwd?: string) =>
+    discoverClaudeSkills(claudeSettings, cwd, claudeEnvironment).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -4382,10 +4409,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
+    // Only pay for a skills scan when the message actually leads with a `$name`
+    // token, which is the only shape the rewrite can act on.
+    const skillNames = hasLeadingSkillMention(input.input?.trim() ?? "")
+      ? (yield* discoverSkillsForRewrite(context.session.cwd)).map((skill) => skill.name)
+      : [];
+
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
+      skillNames,
     });
 
     yield* Queue.offer(context.promptQueue, {

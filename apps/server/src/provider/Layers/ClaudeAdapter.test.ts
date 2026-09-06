@@ -4297,4 +4297,87 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  describe("skill mentions", () => {
+    // Claude Code starts a skill only from a leading slash command, so the
+    // composer's `$name` chip has to reach the process as `/name`.
+    const makeSkillWorkspace = () => {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-skills-turn-"));
+      const claudeHome = NodePath.join(tempDir, "claude-home");
+      const workspace = NodePath.join(tempDir, "workspace");
+      const skillDir = NodePath.join(workspace, ".claude", "skills", "to-spec");
+      NodeFS.mkdirSync(claudeHome, { recursive: true });
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(skillDir, "SKILL.md"),
+        ["---", "name: to-spec", "description: Turn notes into a spec.", "---", "", "# Body"].join(
+          "\n",
+        ),
+      );
+      return { tempDir, claudeHome, workspace };
+    };
+
+    const sendSkillTurn = (
+      text: string,
+      modelSelection?: ReturnType<typeof createModelSelection>,
+    ) => {
+      const { tempDir, claudeHome, workspace } = makeSkillWorkspace();
+      const harness = makeHarness({ claudeConfig: { homePath: claudeHome } });
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          cwd: workspace,
+          runtimeMode: "full-access",
+          ...(modelSelection ? { modelSelection } : {}),
+        });
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: text,
+          attachments: [],
+          ...(modelSelection ? { modelSelection } : {}),
+        });
+
+        return yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    };
+
+    it.effect("sends a chip-only message as a bare slash command", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* sendSkillTurn("$to-spec"), "/to-spec");
+      }),
+    );
+
+    it.effect("keeps the rest of the message after the slash command", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* sendSkillTurn("$to-spec route A"), "/to-spec route A");
+      }),
+    );
+
+    it.effect("leaves a mention that matches no discovered skill alone", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* sendSkillTurn("$not-a-skill route A"), "$not-a-skill route A");
+      }),
+    );
+
+    it.effect("moves the ultrathink prefix behind the slash command", () =>
+      Effect.gen(function* () {
+        const promptText = yield* sendSkillTurn(
+          "$to-spec route A",
+          createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-sonnet-4-6", [
+            { id: "effort", value: "ultrathink" },
+          ]),
+        );
+        assert.equal(promptText, "/to-spec route A\n\nUltrathink:");
+      }),
+    );
+  });
 });

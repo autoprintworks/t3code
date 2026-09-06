@@ -8,6 +8,9 @@
  * provider snapshot scans the same locations directly, mirroring how the
  * Codex app-server reports its skills.
  *
+ * That same slash-command-only reality is why this module also owns the
+ * `$name` -> `/name` rewrite the Claude adapter applies to outgoing prompts.
+ *
  * @module provider/Drivers/ClaudeSkills
  */
 import * as NodeOS from "node:os";
@@ -146,3 +149,42 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
+
+/**
+ * Composer skill chips serialize as `$name`, matching the token the Codex
+ * app-server understands. Claude Code has no `$` mention syntax — the Agent
+ * SDK starts a skill only when the user message *begins* with the skill's
+ * slash command — so a leading `$name` has to become `/name` on its way to
+ * the Claude process. Only the leading token is rewritten: a mention further
+ * into the message could never have started a skill anyway.
+ */
+const LEADING_SKILL_MENTION_PATTERN = /^\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/;
+
+/**
+ * Cheap check for whether {@link rewriteLeadingSkillMention} could do anything,
+ * so callers can skip skill discovery for the overwhelming majority of turns.
+ */
+export function hasLeadingSkillMention(text: string): boolean {
+  return LEADING_SKILL_MENTION_PATTERN.test(text);
+}
+
+/**
+ * Rewrite a leading `$name` skill mention into `/name`, leaving the rest of the
+ * message untouched. An unknown name is left alone: it is ordinary text the
+ * user typed, not a skill, and turning it into a slash command would invent a
+ * command Claude Code does not have.
+ */
+export function rewriteLeadingSkillMention(
+  text: string,
+  skillNames: ReadonlyArray<string>,
+): string {
+  const match = LEADING_SKILL_MENTION_PATTERN.exec(text);
+  if (!match) {
+    return text;
+  }
+  const name = match[1] ?? "";
+  if (!skillNames.includes(name)) {
+    return text;
+  }
+  return `/${name}${text.slice(match[0].length)}`;
+}

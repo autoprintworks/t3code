@@ -1,10 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import {
+  discoverClaudeSkills,
+  hasLeadingSkillMention,
+  rewriteLeadingSkillMention,
+} from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -202,4 +206,53 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.deepEqual(skills, []);
     }),
   );
+});
+
+describe("rewriteLeadingSkillMention", () => {
+  const skills = ["to-spec", "code-review"];
+
+  it("rewrites a chip-only message into a bare slash command", () => {
+    assert.equal(rewriteLeadingSkillMention("$to-spec", skills), "/to-spec");
+  });
+
+  it("keeps the rest of the message after the slash command", () => {
+    assert.equal(rewriteLeadingSkillMention("$to-spec route A", skills), "/to-spec route A");
+  });
+
+  it("keeps a multi-line message intact below the command line", () => {
+    assert.equal(
+      rewriteLeadingSkillMention("$to-spec route A\nsecond line", skills),
+      "/to-spec route A\nsecond line",
+    );
+  });
+
+  it("leaves an unknown skill name alone", () => {
+    assert.equal(
+      rewriteLeadingSkillMention("$not-a-skill route A", skills),
+      "$not-a-skill route A",
+    );
+  });
+
+  it("leaves a mention that is not at the start alone", () => {
+    assert.equal(rewriteLeadingSkillMention("please run $to-spec", skills), "please run $to-spec");
+  });
+
+  it("leaves a bare dollar sign and a partial token alone", () => {
+    assert.equal(rewriteLeadingSkillMention("$ to-spec", skills), "$ to-spec");
+    assert.equal(rewriteLeadingSkillMention("$to-spectacular", skills), "$to-spectacular");
+  });
+
+  it("leaves everything alone when no skills were discovered", () => {
+    assert.equal(rewriteLeadingSkillMention("$to-spec", []), "$to-spec");
+  });
+});
+
+describe("hasLeadingSkillMention", () => {
+  it("is true only for a message that starts with a `$name` token", () => {
+    assert.equal(hasLeadingSkillMention("$to-spec route A"), true);
+    assert.equal(hasLeadingSkillMention("$to-spec"), true);
+    assert.equal(hasLeadingSkillMention("please run $to-spec"), false);
+    assert.equal(hasLeadingSkillMention("$ to-spec"), false);
+    assert.equal(hasLeadingSkillMention("just some text"), false);
+  });
 });
