@@ -164,22 +164,20 @@ export const make = Effect.gen(function* () {
       onPong: Effect.sync(() => {
         const now = clock.currentTimeMillisUnsafe();
         lastPongAtMs = now;
-        socketSpan.event("clientRuntime.connection.socket.pong", clock.currentTimeNanosUnsafe(), {
-          ...(lastPingSentAtMs === undefined
-            ? {}
-            : { "connection.pong.rttMs": now - lastPingSentAtMs }),
-        });
+        socketSpan.event(
+          "clientRuntime.connection.socket.pong",
+          clock.currentTimeNanosUnsafe(),
+          lastPingSentAtMs === undefined ? {} : { "connection.pong.rttMs": now - lastPingSentAtMs },
+        );
       }),
       onPingTimeout: Effect.sync(() => {
         const now = clock.currentTimeMillisUnsafe();
         socketSpan.event(
           "clientRuntime.connection.socket.pingTimeout",
           clock.currentTimeNanosUnsafe(),
-          {
-            ...(lastPongAtMs === undefined
-              ? {}
-              : { "connection.pingTimeout.msSinceLastPong": now - lastPongAtMs }),
-          },
+          lastPongAtMs === undefined
+            ? {}
+            : { "connection.pingTimeout.msSinceLastPong": now - lastPongAtMs },
         );
       }),
       onDisconnect: Deferred.isDone(connected).pipe(
