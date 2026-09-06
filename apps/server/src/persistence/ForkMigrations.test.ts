@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "./Migrations.ts";
-import { runForkMigrations } from "./ForkMigrations.ts";
+import { retireLegacyOrderingMigrationRow, runForkMigrations } from "./ForkMigrations.ts";
 import * as NodeSqliteClient from "./NodeSqliteClient.ts";
 
 // `it.layer` builds its layer once per describe block (a `beforeAll`), so
@@ -134,6 +134,7 @@ isolatedLayer()("ForkMigrations - fresh database", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
+      yield* retireLegacyOrderingMigrationRow();
       yield* runMigrations();
       yield* runForkMigrations();
 
@@ -159,6 +160,7 @@ isolatedLayer()("ForkMigrations - upstream-migrated database", (it) => {
           (40, 'ProjectionProjectFaviconPath')
       `;
 
+      yield* retireLegacyOrderingMigrationRow();
       yield* runMigrations();
       yield* runForkMigrations();
 
@@ -196,6 +198,7 @@ isolatedLayer()("ForkMigrations - database carrying the retired ordering column"
       `;
       yield* applyRetiredForkSchema();
 
+      yield* retireLegacyOrderingMigrationRow();
       yield* runMigrations();
       yield* runForkMigrations();
 
@@ -226,13 +229,67 @@ isolatedLayer()("ForkMigrations - repeat startup", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
+      yield* retireLegacyOrderingMigrationRow();
       yield* runMigrations();
       yield* runForkMigrations();
+      // A second startup: the repair runs again on a database that no longer
+      // carries the borrowed row, and neither pass finds anything to do.
+      yield* retireLegacyOrderingMigrationRow();
       const secondPass = yield* runForkMigrations();
 
       assert.deepStrictEqual(secondPass, []);
       yield* assertUpstreamTranscriptSchema();
       assert.deepStrictEqual(yield* forkMigrationRows(sql), EXPECTED_FORK_MIGRATIONS);
+    }),
+  );
+});
+
+// The repair has to hand the id back before upstream's migrator reads the
+// table, not after it. Running it second would work only while upstream owns
+// nothing above 38: a startup that recorded 39 first would leave the borrowed
+// row below the maximum, where deleting it restores nothing.
+isolatedLayer()("ForkMigrations - legacy migration id repair", (it) => {
+  it.effect("frees slot 38 before upstream's migrator runs, and is a no-op without it", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      // A fresh database has no migrations table at all.
+      yield* retireLegacyOrderingMigrationRow();
+
+      yield* runMigrations({ toMigrationInclusive: 37 });
+      yield* sql`
+        INSERT INTO effect_sql_migrations (migration_id, name, created_at)
+        VALUES (38, 'ProjectionTranscriptSequence', '2026-08-01T00:00:00.000Z')
+      `;
+
+      yield* retireLegacyOrderingMigrationRow();
+
+      const maximum = yield* sql<{ readonly maximum: number }>`
+        SELECT MAX(migration_id) AS maximum FROM effect_sql_migrations
+      `;
+      assert.strictEqual(maximum[0]?.maximum, 37);
+    }),
+  );
+});
+
+// An upstream row that happens to sit at 38 is not the fork's to delete.
+isolatedLayer()("ForkMigrations - legacy migration id repair, upstream row at 38", (it) => {
+  it.effect("leaves a row with another name alone", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* runMigrations({ toMigrationInclusive: 37 });
+      yield* sql`
+        INSERT INTO effect_sql_migrations (migration_id, name, created_at)
+        VALUES (38, 'SomeUpstreamMigration', '2026-08-01T00:00:00.000Z')
+      `;
+
+      yield* retireLegacyOrderingMigrationRow();
+
+      const rows = yield* sql<{ readonly name: string }>`
+        SELECT name FROM effect_sql_migrations WHERE migration_id = 38
+      `;
+      assert.deepStrictEqual(rows, [{ name: "SomeUpstreamMigration" }]);
     }),
   );
 });

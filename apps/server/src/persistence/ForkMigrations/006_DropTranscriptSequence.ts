@@ -10,7 +10,7 @@
  * now orders the timeline by creation time, as upstream does, and accepts the
  * clock-jump caveat.
  *
- * Three things have to come back to upstream's shape:
+ * Two things have to come back to upstream's shape here:
  *
  * 1. `projection_thread_messages`, `projection_thread_proposed_plans` and
  *    `projection_turns` lose the `sequence` column fork migration 001 added,
@@ -22,20 +22,16 @@
  *    in place would sort every new activity, written with no sequence, above
  *    the whole existing history. Dropping and re-adding the column restores
  *    upstream's declaration and clears the values in one step.
- * 3. The legacy `effect_sql_migrations` row for id 38 goes. Effect's `Migrator`
- *    tracks progress by the single highest id ever recorded, so a database that
- *    ran the fork's first ordering migration under that id would silently skip
- *    upstream's own migration 38 forever.
+ *
+ * Handing upstream's migration id 38 back is the third part of the same repair,
+ * and it does not live here: it has to run before upstream's migrator, not
+ * after it. See `retireLegacyOrderingMigrationRow` in `../ForkMigrations.ts`.
  *
  * Every step is guarded or `IF EXISTS`, so this is a no-op on a fresh database
  * and on a database only an upstream build has migrated.
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-
-/** The upstream-numbered id and name the fork's first ordering migration ran under. */
-const LEGACY_MIGRATION_ID = 38;
-const LEGACY_MIGRATION_NAME = "ProjectionTranscriptSequence";
 
 type ColumnInfo = { readonly name: string; readonly notnull: number };
 
@@ -82,9 +78,4 @@ export default Effect.gen(function* () {
       ON projection_thread_activities(thread_id, sequence, created_at, activity_id)
     `;
   }
-
-  yield* sql`
-    DELETE FROM effect_sql_migrations
-    WHERE migration_id = ${LEGACY_MIGRATION_ID} AND name = ${LEGACY_MIGRATION_NAME}
-  `;
 });
