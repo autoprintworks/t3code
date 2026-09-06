@@ -1,4 +1,5 @@
 import { type ServerConfig, WS_METHODS } from "@t3tools/contracts";
+import { formatTraceParent, TRACEPARENT_QUERY_PARAM } from "@t3tools/shared/traceContext";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -54,6 +55,24 @@ function instrumentWebSocketConstructor(
     });
     return ws;
   };
+}
+
+// The environment has to be able to line its own view of a dropped socket up against this one.
+// Carrying the socket span's traceparent on the connect URL gives the server a parent to hang its
+// connection span on, so both ends share a trace id in the server trace file, and gives both ends
+// the same `connection.id` to filter on. A URL we cannot parse (never seen in practice) just
+// connects without the parameter rather than failing the attempt.
+function withTraceParent(socketUrl: string, span: Tracer.Span): string {
+  try {
+    const url = new URL(socketUrl);
+    url.searchParams.set(
+      TRACEPARENT_QUERY_PARAM,
+      formatTraceParent({ traceId: span.traceId, spanId: span.spanId, sampled: span.sampled }),
+    );
+    return url.toString();
+  } catch {
+    return socketUrl;
+  }
 }
 
 export interface RpcSession {
@@ -117,6 +136,9 @@ export const make = Effect.gen(function* () {
         "connection.label": connection.label,
       },
     });
+    socketSpan.attribute("connection.id", socketSpan.spanId);
+    const socketUrl = withTraceParent(connection.socketUrl, socketSpan);
+
     let closeInfo: WebSocketCloseInfo | undefined;
     let lastPingSentAtMs: number | undefined;
     let lastPongAtMs: number | undefined;
@@ -181,7 +203,7 @@ export const make = Effect.gen(function* () {
         Effect.asVoid,
       ),
     });
-    const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
+    const socketLayer = Socket.layerWebSocket(socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,
     }).pipe(
       Layer.provide(Layer.succeed(Socket.WebSocketConstructor, instrumentedWebSocketConstructor)),
