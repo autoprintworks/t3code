@@ -512,8 +512,8 @@ export const ProviderRegistryLive = Layer.effect(
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
      *   - subscribe to each newly-added or rebuilt instance's
-     *     `streamChanges` (so periodic + enrichment refreshes land in
-     *     `providersRef`);
+     *     `streamChanges` (so settings-change + enrichment refreshes
+     *     land in `providersRef`);
      *   - read each newly-added/rebuilt instance's current snapshot after
      *     subscribing, closing the race with its independently-running
      *     background startup probe;
