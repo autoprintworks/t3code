@@ -1,4 +1,13 @@
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationThread,
+  ServerProviderSkill,
+  ThreadId,
+} from "@t3tools/contracts";
+import type {
+  ComposerSkillsState,
+  ComposerSkillsTarget,
+} from "@t3tools/client-runtime/state/threads";
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
@@ -11,6 +20,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
+import { serverEnvironment } from "./server";
 import { useEnvironmentQuery } from "./query";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
@@ -24,6 +34,7 @@ const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;
 const COMPOSER_PATH_SEARCH_LIMIT = 20;
 const THREAD_SEARCH_DEBOUNCE_MS = 200;
 const VCS_REF_LIST_LIMIT = 100;
+const EMPTY_PROVIDER_SKILLS: ReadonlyArray<ServerProviderSkill> = Object.freeze([]);
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
@@ -123,6 +134,28 @@ export function useBranches(input: {
         })
       : null,
   );
+}
+
+/**
+ * Skills the thread's own project can run - its `.claude/skills` plus user
+ * scope - asked per project rather than read off the provider snapshot, which
+ * only ever describes the environment's own working directory.
+ */
+export function useComposerSkills(target: ComposerSkillsTarget): ComposerSkillsState {
+  const result = useEnvironmentQuery(
+    target.environmentId !== null && target.providerInstanceId !== null && target.cwd !== null
+      ? serverEnvironment.providerSkills({
+          environmentId: target.environmentId,
+          input: { providerInstanceId: target.providerInstanceId, cwd: target.cwd },
+        })
+      : null,
+  );
+
+  return {
+    skills: result.data?.skills ?? EMPTY_PROVIDER_SKILLS,
+    isPending: result.isPending,
+    error: result.error,
+  };
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {

@@ -40,7 +40,7 @@ import {
   updateComposerDraftSettings,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
-import { useBranches } from "../../state/queries";
+import { useBranches, useComposerSkills } from "../../state/queries";
 import {
   flattenQueuedThreadMessages,
   threadOutboxManager,
@@ -396,13 +396,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderSkills = useMemo(
-    () =>
-      selectedEnvironmentServerConfig?.providers.find(
-        (provider) => provider.instanceId === selectedModel?.instanceId,
-      )?.skills ?? [],
-    [selectedEnvironmentServerConfig, selectedModel?.instanceId],
-  );
+  // Asked per project rather than read off the provider snapshot: that snapshot
+  // is one probe of the environment's own working directory, so it names
+  // whatever project the environment was started in, not the one this draft is
+  // for.
+  const selectedProviderSkills = useComposerSkills({
+    environmentId: selectedProject?.environmentId ?? null,
+    providerInstanceId: selectedModel?.instanceId ?? null,
+    cwd: selectedProject?.workspaceRoot || null,
+  }).skills;
   const setSelectedModelKey = useCallback(
     (key: string | null) => {
       if (!key || !selectedProjectDraftKey) {

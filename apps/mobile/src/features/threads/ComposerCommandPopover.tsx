@@ -1,6 +1,7 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
+import { formatProviderSkillScopeLabel } from "@t3tools/shared/providerSkillScope";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
 import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
@@ -134,6 +135,8 @@ const CommandRow = memo(function CommandRow(props: {
 }) {
   const iconName = itemIcon(props.item);
   const iconColor = "#a1a1aa";
+  const skillScopeLabel =
+    props.item.type === "skill" ? formatProviderSkillScopeLabel(props.item.skill) : null;
 
   return (
     <Pressable
@@ -160,6 +163,11 @@ const CommandRow = memo(function CommandRow(props: {
       {props.item.description ? (
         <Text className="min-w-0 flex-1 text-xs text-zinc-400" numberOfLines={1}>
           {props.item.description}
+        </Text>
+      ) : null}
+      {skillScopeLabel ? (
+        <Text className="shrink-0 text-xs text-zinc-400" numberOfLines={1}>
+          {skillScopeLabel}
         </Text>
       ) : null}
     </Pressable>
