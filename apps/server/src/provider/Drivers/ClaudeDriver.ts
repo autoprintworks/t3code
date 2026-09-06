@@ -54,6 +54,7 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -212,6 +213,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         ),
       );
 
+      // Scanned per call rather than cached with the snapshot: the snapshot is
+      // probed once from the environment's own cwd, and a menu asking about a
+      // thread's project needs that project's `.claude/skills`, not the
+      // environment's.
+      const listSkills = (skillsCwd: string) =>
+        discoverClaudeSkills(effectiveConfig, skillsCwd, processEnv).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -225,6 +236,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        listSkills,
       } satisfies ProviderInstance;
     }),
 };

@@ -97,6 +97,25 @@ export const ServerProviderSkill = Schema.Struct({
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
 /**
+ * Ask one provider instance which skills a thread rooted at `cwd` can run.
+ *
+ * The provider snapshot is probed once from the environment's own working
+ * directory, so any project-scoped skill in it belongs to whatever repository
+ * the environment was started in - not to the thread the user is typing on.
+ * A menu that must name scope truthfully asks per project instead.
+ */
+export const ProviderListSkillsInput = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  cwd: TrimmedNonEmptyString,
+});
+export type ProviderListSkillsInput = typeof ProviderListSkillsInput.Type;
+
+export const ProviderListSkillsResult = Schema.Struct({
+  skills: Schema.Array(ServerProviderSkill),
+});
+export type ProviderListSkillsResult = typeof ProviderListSkillsResult.Type;
+
+/**
  * Availability of a configured provider instance from the runtime's POV.
  *
  *  - `available` — the build ships this driver and an instance is wired

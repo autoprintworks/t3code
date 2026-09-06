@@ -509,6 +509,26 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     /**
+     * Answer for one instance and one project directory. Drivers that can
+     * scope their own discovery do so; the rest fall back to the snapshot,
+     * which is the same list the menu used before scoping existed.
+     */
+    const listSkills = Effect.fn("listSkills")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string;
+    }) {
+      const instance = (yield* Ref.get(liveSubsRef)).get(input.instanceId);
+      if (!instance) {
+        return [];
+      }
+      if (instance.listSkills) {
+        return yield* instance.listSkills(input.cwd);
+      }
+      const snapshot = yield* instance.snapshot.getSnapshot;
+      return snapshot.skills;
+    });
+
+    /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
      *   - subscribe to each newly-added or rebuilt instance's
@@ -711,6 +731,7 @@ export const ProviderRegistryLive = Layer.effect(
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
+      listSkills,
       setProviderMaintenanceActionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
