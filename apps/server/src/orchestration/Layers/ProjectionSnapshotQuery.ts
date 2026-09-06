@@ -1200,8 +1200,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // projection_turns; rows with no turn linkage (user messages always, and
   // turnless activities like pre-turn context-window updates) are bounded by
   // the matching turn-anchor time range so they land on the same page as the
-  // turns around them. Proposed plans and checkpoints stay unwindowed: they
-  // are metadata-scale.
+  // turns around them. A turn's own opening message is claimed through
+  // `pending_message_id` rather than by that time bound: it is written before
+  // the turn row, so its created_at can sit just under the turn's requested_at
+  // and it would otherwise fall off the page it opens. Proposed plans and
+  // checkpoints stay unwindowed: they are metadata-scale.
   const listThreadMessageRowsByThreadWindow = SqlSchema.findAll({
     Request: ThreadTurnRangeLookupInput,
     Result: ProjectionThreadMessageDbRowSchema,
@@ -1243,6 +1246,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               turn_id IS NULL
               AND created_at >= ${minAnchorAt}
               AND created_at < ${beforeAnchorAt}
+            )
+            OR message_id IN (
+              SELECT pending_message_id FROM projection_turns
+              WHERE thread_id = ${threadId}
+                AND pending_message_id IS NOT NULL
+                AND (
+                  requested_at > ${minAnchorAt}
+                  OR (
+                    requested_at = ${minAnchorAt}
+                    AND COALESCE(turn_id, '') >= ${minTurnKey}
+                  )
+                )
+                AND (
+                  requested_at < ${beforeAnchorAt}
+                  OR (
+                    requested_at = ${beforeAnchorAt}
+                    AND COALESCE(turn_id, '') < ${beforeTurnKey}
+                  )
+                )
             )
           )
         ORDER BY created_at ASC, message_id ASC

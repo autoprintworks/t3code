@@ -2127,6 +2127,36 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
+  it.effect("keeps a turn's opening user message when it was written before the turn row", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      // The user message is written first and the turn row follows, so its
+      // created_at can precede the turn's requested_at. The page's lower bound
+      // for turnless rows is that requested_at, and the opening message must
+      // not fall through it.
+      yield* sql`
+        UPDATE projection_thread_messages
+        SET created_at = '2026-03-01T00:02:59.999Z', updated_at = '2026-03-01T00:02:59.999Z'
+        WHERE message_id = 'user-msg-4'
+      `;
+
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        assert.deepEqual(messageIds(snapshot.value), [
+          "turn-4-reply",
+          "turn-5-reply",
+          "user-msg-4",
+          "user-msg-5",
+          "user-msg-straggler",
+        ]);
+      }
+    }),
+  );
+
   it.effect("subagent turns between user turns ride along inside the window", () =>
     Effect.gen(function* () {
       yield* seedFanOutThread();
