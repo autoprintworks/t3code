@@ -4381,9 +4381,14 @@ describe("ClaudeAdapterLive", () => {
       modelSelection?: ReturnType<typeof createModelSelection>,
     ) =>
       sendSkillTurnMessage(text, modelSelection ? { modelSelection } : {}).pipe(
+        // Reads the prompt text out of either wire shape: a slash command goes
+        // over as a bare string, every other turn keeps the block form.
         Effect.map((message) => {
           const content = message?.message.content;
-          return typeof content === "string" ? content : undefined;
+          if (typeof content === "string") return content;
+          if (!Array.isArray(content)) return undefined;
+          const blocks = content as ReadonlyArray<{ type: string; text?: string }>;
+          return blocks[0]?.type === "text" ? blocks[0].text : undefined;
         }),
       );
 
@@ -4430,6 +4435,18 @@ describe("ClaudeAdapterLive", () => {
     it.effect("leaves a mention that matches no discovered skill alone", () =>
       Effect.gen(function* () {
         assert.equal(yield* sendSkillTurn("$not-a-skill route A"), "$not-a-skill route A");
+      }),
+    );
+
+    // Only a slash command needs the bare string. A turn that is not one keeps
+    // the block shape every Claude turn had before skills existed.
+    it.effect("keeps the block shape for a turn that is not a slash command", () =>
+      Effect.gen(function* () {
+        const message = yield* sendSkillTurnMessage("route A");
+        const content = message?.message.content;
+        assert.equal(Array.isArray(content), true);
+        const blocks = content as ReadonlyArray<{ type: string; text?: string }>;
+        assert.deepEqual(blocks, [{ type: "text", text: "route A" }]);
       }),
     );
 

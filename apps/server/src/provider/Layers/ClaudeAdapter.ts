@@ -1322,9 +1322,10 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   const promptText = applyPromptEffort(input, dependencies.boundInstanceId, text, isSlashCommand);
 
   // Claude Code treats a bare string and a one-element text block differently
-  // when deciding whether a message opens with a slash command, so an
-  // attachment-free turn hands over the string.
-  if (imageBlocks.length === 0 && promptText.length > 0) {
+  // when deciding whether a message opens with a slash command, so a turn that
+  // is a slash command and carries no attachment hands over the string. Every
+  // other turn keeps the block shape it has always had.
+  if (isSlashCommand && imageBlocks.length === 0 && promptText.length > 0) {
     return buildUserMessage({ content: promptText });
   }
 
