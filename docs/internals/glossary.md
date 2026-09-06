@@ -142,6 +142,12 @@ The repository a project's workspace root belongs to, keyed by its canonical git
 
 Reads never resolve it. [ProjectionSnapshotQuery.ts][10] serves the stored identity only while its recorded workspace root still equals the project's current one, so moving a project invalidates its identity with no extra write. The reactor re-resolves on project creation, on any project meta update that carries a workspace root (re-saving the folder is the user's manual refresh), and on a start-up sweep over rows whose recorded root no longer matches.
 
+[RepositoryIdentityResolver.ts][35] answers the reactor's question and caches the answer per workspace root, so two projects under one root cost one `git` and a repeated lookup spawns nothing. The cache has no time-to-live: the only thing that makes a stored answer wrong is the root changing, and the reactor invalidates the entry on the meta update that carries a new one.
+
+#### Git work depth
+
+The bound on how much `git` the environment runs for itself at once, defined in [GitWorkDepth.ts][33]. VCS status subscriptions in [VcsProcess.ts][34] and repository identity lookups in [RepositoryIdentityResolver.ts][35] share one process-wide gate, so N watched projects cost at most `depth` concurrent spawns rather than N. The default tracks the host's available parallelism, clamped to 4..16; `T3CODE_GIT_WORK_DEPTH` overrides it, clamped to 1..64. Depth, not the number of open threads, is the lever.
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -216,3 +222,6 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [30]: ../../apps/server/src/provider/acp/AcpPeerSessions.ts
 [31]: ./acp-worker-threads.md
 [32]: ../../apps/server/src/provider/acpAgent/AcpAgentWorkerSessions.ts
+[33]: ../../apps/server/src/vcs/GitWorkDepth.ts
+[34]: ../../apps/server/src/vcs/VcsProcess.ts
+[35]: ../../apps/server/src/project/RepositoryIdentityResolver.ts
