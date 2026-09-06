@@ -1,4 +1,5 @@
 import { type ServerConfig, WS_METHODS } from "@t3tools/contracts";
+import { formatTraceParent, TRACEPARENT_QUERY_PARAM } from "@t3tools/shared/traceContext";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -13,6 +14,7 @@ import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
+import { prepareClientTracing } from "../observability/clientTracing.ts";
 import type {
   ConnectionAttemptError,
   ConnectionTransientError,
@@ -54,6 +56,24 @@ function instrumentWebSocketConstructor(
     });
     return ws;
   };
+}
+
+// The environment has to be able to line its own view of a dropped socket up against this one.
+// Carrying the socket span's traceparent on the connect URL gives the server a parent to hang its
+// connection span on, so both ends share a trace id in the server trace file, and gives both ends
+// the same `connection.id` to filter on. A URL we cannot parse (never seen in practice) just
+// connects without the parameter rather than failing the attempt.
+function withTraceParent(socketUrl: string, span: Tracer.Span): string {
+  try {
+    const url = new URL(socketUrl);
+    url.searchParams.set(
+      TRACEPARENT_QUERY_PARAM,
+      formatTraceParent({ traceId: span.traceId, spanId: span.spanId, sampled: span.sampled }),
+    );
+    return url.toString();
+  } catch {
+    return socketUrl;
+  }
 }
 
 export interface RpcSession {
@@ -111,12 +131,22 @@ export const make = Effect.gen(function* () {
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
 
+    // Point the client tracing exporter at the environment this socket opens against, before
+    // the socket span exists. A span made while the exporter is still being built is handed to
+    // the fallback tracer and never exported, so this is awaited rather than forked; it does no
+    // network work and gives up rather than delaying a connect. A surface that installed no
+    // binding (or a test) skips it and connects with the ambient tracer.
+    yield* prepareClientTracing(connection);
+
     const socketSpan: Tracer.Span = yield* Effect.makeSpan(SOCKET_SPAN_NAME, {
       attributes: {
         "connection.environment.id": connection.environmentId,
         "connection.label": connection.label,
       },
     });
+    socketSpan.attribute("connection.id", socketSpan.spanId);
+    const socketUrl = withTraceParent(connection.socketUrl, socketSpan);
+
     let closeInfo: WebSocketCloseInfo | undefined;
     let lastPingSentAtMs: number | undefined;
     let lastPongAtMs: number | undefined;
@@ -142,22 +172,20 @@ export const make = Effect.gen(function* () {
       onPong: Effect.sync(() => {
         const now = clock.currentTimeMillisUnsafe();
         lastPongAtMs = now;
-        socketSpan.event("clientRuntime.connection.socket.pong", clock.currentTimeNanosUnsafe(), {
-          ...(lastPingSentAtMs === undefined
-            ? {}
-            : { "connection.pong.rttMs": now - lastPingSentAtMs }),
-        });
+        socketSpan.event(
+          "clientRuntime.connection.socket.pong",
+          clock.currentTimeNanosUnsafe(),
+          lastPingSentAtMs === undefined ? {} : { "connection.pong.rttMs": now - lastPingSentAtMs },
+        );
       }),
       onPingTimeout: Effect.sync(() => {
         const now = clock.currentTimeMillisUnsafe();
         socketSpan.event(
           "clientRuntime.connection.socket.pingTimeout",
           clock.currentTimeNanosUnsafe(),
-          {
-            ...(lastPongAtMs === undefined
-              ? {}
-              : { "connection.pingTimeout.msSinceLastPong": now - lastPongAtMs }),
-          },
+          lastPongAtMs === undefined
+            ? {}
+            : { "connection.pingTimeout.msSinceLastPong": now - lastPongAtMs },
         );
       }),
       onDisconnect: Deferred.isDone(connected).pipe(
@@ -181,7 +209,7 @@ export const make = Effect.gen(function* () {
         Effect.asVoid,
       ),
     });
-    const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
+    const socketLayer = Socket.layerWebSocket(socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,
     }).pipe(
       Layer.provide(Layer.succeed(Socket.WebSocketConstructor, instrumentedWebSocketConstructor)),

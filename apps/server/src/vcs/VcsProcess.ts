@@ -1,10 +1,7 @@
-import * as NodeOS from "node:os";
-
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
-import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -19,6 +16,7 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as GitWorkDepth from "./GitWorkDepth.ts";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -52,23 +50,6 @@ export class VcsProcess extends Context.Service<
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
-
-/**
- * Every VCS subprocess in the server passes through `run`, so this is the one
- * place that can stop N watched projects from meaning N concurrent spawns. Each
- * spawn is a burst of filesystem work on the libuv threadpool (PATH resolution
- * alone walks dozens of directories on Windows), and once that queue is deep
- * every unrelated request behind it waits too. The bound tracks the host's
- * parallelism, and stays wide enough that ordinary single-repo use never waits.
- */
-const MIN_CONCURRENT_VCS_PROCESSES = 4;
-const MAX_CONCURRENT_VCS_PROCESSES = 16;
-
-const resolveVcsProcessConcurrency = () =>
-  Math.max(
-    MIN_CONCURRENT_VCS_PROCESSES,
-    Math.min(MAX_CONCURRENT_VCS_PROCESSES, NodeOS.availableParallelism()),
-  );
 
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
@@ -108,7 +89,10 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const spawnSemaphore = yield* Semaphore.make(resolveVcsProcessConcurrency());
+  // Every VCS subprocess in the server passes through `run`, so this is where
+  // N watched projects stop meaning N concurrent spawns. The gate is shared
+  // with repository identity resolution; see `GitWorkDepth`.
+  const gitWorkDepth = yield* GitWorkDepth.GitWorkDepth;
 
   const run = Effect.fn("VcsProcess.run")(function* (input: VcsProcessInput) {
     const baseError = {
@@ -133,7 +117,7 @@ export const make = Effect.gen(function* () {
         timeoutBehavior: "error",
       })
       .pipe(
-        spawnSemaphore.withPermits(1),
+        gitWorkDepth.withPermit,
         Effect.mapError(
           Match.valueTags({
             ProcessSpawnError: (error) =>
@@ -191,4 +175,7 @@ export const make = Effect.gen(function* () {
   return VcsProcess.of({ run });
 });
 
-export const layer = Layer.effect(VcsProcess, make).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(VcsProcess, make).pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(GitWorkDepth.layer),
+);

@@ -11,6 +11,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
+- [Connections](#connections)
 
 ## Concepts
 
@@ -116,6 +117,14 @@ A read-only thread mirroring one peer session on a configured ACP agent's connec
 
 A thread whose transcript is a window onto work driven elsewhere. `readOnly` is set once at creation, never cleared, and enforced in [the decider][8] by `requireThreadPromptable` in [commandInvariants.ts][9], which refuses `thread.turn.start` and `thread.checkpoint.revert`. The clients hide the composer; that is presentation, not the rule. It reaches the read model through fork migration 5 as an integer column, because SQLite has no boolean. See [worker threads][31].
 
+#### Skill
+
+A named unit of provider behavior a user can invoke from the composer, discovered from the filesystem by the driver rather than configured in T3 Code. `ServerProviderSkill` in [the server contracts][36] carries the name, the file path it was found at, an optional scope, and whether the provider has it enabled. Only the Claude driver discovers them today; a driver that cannot scope discovery to a directory answers with its snapshot skills unchanged. See [ClaudeDriver.ts][37].
+
+#### Skill scope
+
+Where a skill came from, as the provider spells it. Discovery answers for one `cwd`, so a thread sees its own project's skills plus the user's, and the raw `scope` string is whatever the provider wrote - `project`, `workspace`, `local`, `user`, `personal`. [providerSkillPresentation.ts][38] narrows those spellings to the two a composer menu must tell apart, Project and User, and leaves a scope it cannot place as `null` so the row falls back to its install source instead of guessing. Scope is per project on purpose: the provider snapshot is probed from the environment's own working directory, so a project-scoped skill in it belongs to wherever the environment started, not to the thread being typed on.
+
 #### Session
 
 The live provider-backed runtime attached to a thread. Session shape is in [the orchestration contracts][1], and lifecycle is managed in [ProviderService.ts][14].
@@ -142,6 +151,12 @@ The repository a project's workspace root belongs to, keyed by its canonical git
 
 Reads never resolve it. [ProjectionSnapshotQuery.ts][10] serves the stored identity only while its recorded workspace root still equals the project's current one, so moving a project invalidates its identity with no extra write. The reactor re-resolves on project creation, on any project meta update that carries a workspace root (re-saving the folder is the user's manual refresh), and on a start-up sweep over rows whose recorded root no longer matches.
 
+[RepositoryIdentityResolver.ts][35] answers the reactor's question and caches the answer per workspace root, so two projects under one root cost one `git` and a repeated lookup spawns nothing. The cache has no time-to-live: the only thing that makes a stored answer wrong is the root changing, and the reactor invalidates the entry on the meta update that carries a new one.
+
+#### Git work depth
+
+The bound on how much `git` the environment runs for itself at once, defined in [GitWorkDepth.ts][33]. VCS status subscriptions in [VcsProcess.ts][34] and repository identity lookups in [RepositoryIdentityResolver.ts][35] share one process-wide gate, so N watched projects cost at most `depth` concurrent spawns rather than N. The default tracks the host's available parallelism, clamped to 4..16; `T3CODE_GIT_WORK_DEPTH` overrides it, clamped to 1..64. Depth, not the number of open threads, is the lever.
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -167,6 +182,12 @@ The patch difference between two checkpoints. Query logic lives in [CheckpointDi
 #### Turn diff
 
 The file patch and changed-file summary for one turn. It is usually computed in [CheckpointDiffQuery.ts][20], represented in [the contracts][1], and recorded into thread state by [projector.ts][4].
+
+### Connections
+
+#### Connection span
+
+One client websocket, end to end, as a trace span. The environment opens `server.connection.clientSocket` when a client connects and ends it when the socket dies, carrying the close code, who sent the close frame, and the keepalive gaps, so a drop is explained rather than inferred. The client opens its own `clientRuntime.connection.rpcSession.socket` in [session.ts][39] and puts that span's `traceparent` on the connect URL, so the environment parents its span on the client's and both ends of one drop share a trace id and a `connection.id`. The client half only reaches the trace file where a client exports it, which every surface does through the shared exporter in [clientTracing.ts][41]; see [observability.md][40].
 
 ## Practical Shortcuts
 
@@ -216,3 +237,12 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [30]: ../../apps/server/src/provider/acp/AcpPeerSessions.ts
 [31]: ./acp-worker-threads.md
 [32]: ../../apps/server/src/provider/acpAgent/AcpAgentWorkerSessions.ts
+[33]: ../../apps/server/src/vcs/GitWorkDepth.ts
+[34]: ../../apps/server/src/vcs/VcsProcess.ts
+[35]: ../../apps/server/src/project/RepositoryIdentityResolver.ts
+[36]: ../../packages/contracts/src/server.ts
+[37]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
+[38]: ../../packages/shared/src/providerSkillPresentation.ts
+[39]: ../../packages/client-runtime/src/rpc/session.ts
+[40]: ../operations/observability.md
+[41]: ../../packages/client-runtime/src/observability/clientTracing.ts

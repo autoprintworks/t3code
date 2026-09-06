@@ -122,17 +122,20 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       );
 
       assert.deepEqual(capabilities, {
-        email: "dev@example.com",
-        subscriptionType: "pro",
-        tokenSource: "oauth",
-        apiProvider: undefined,
-        slashCommands: [
-          {
-            name: "review",
-            description: "Review changes",
-            input: { hint: "[path]" },
-          },
-        ],
+        _tag: "Succeeded",
+        probe: {
+          email: "dev@example.com",
+          subscriptionType: "pro",
+          tokenSource: "oauth",
+          apiProvider: undefined,
+          slashCommands: [
+            {
+              name: "review",
+              description: "Review changes",
+              input: { hint: "[path]" },
+            },
+          ],
+        },
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off

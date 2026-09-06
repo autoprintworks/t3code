@@ -24,7 +24,6 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
-import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -55,7 +54,15 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+/**
+ * How long a project's discovered skills are held. Matches the stale time the
+ * clients' `providerSkills` query uses, so a reopened menu inside that window
+ * costs nothing on either side.
+ */
+const CLAUDE_SKILLS_CACHE_TTL = Duration.seconds(15);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 // Measured on a normal (unloaded) dev machine: 3 back-to-back probes took
@@ -90,7 +97,6 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 });
 
 export type ClaudeDriverEnv =
-  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -189,6 +195,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+        // Probe gate: the instance enabled flag the registry resolved, never the
+        // driver config's own `enabled` field.
+        isEnabled: () => enabled,
         initialSnapshot: (settings) =>
           makePendingClaudeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
@@ -211,6 +220,28 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         ),
       );
 
+      // Keyed on the cwd rather than cached with the snapshot: the snapshot is
+      // probed once from the environment's own cwd, and a menu asking about a
+      // thread's project needs that project's `.claude/skills`, not the
+      // environment's.
+      //
+      // The scan walks two skill directories, so it is held for as long as the
+      // client treats its own copy as fresh. Without that, a menu reopened
+      // inside the client's stale window still costs a directory walk, and one
+      // walk per open project adds up. `capacity` bounds it to the projects a
+      // user realistically has open.
+      const skillsByCwd = yield* Cache.make({
+        capacity: 64,
+        timeToLive: CLAUDE_SKILLS_CACHE_TTL,
+        lookup: (skillsCwd: string) =>
+          discoverClaudeSkills(effectiveConfig, skillsCwd, processEnv).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+      });
+
+      const listSkills = (skillsCwd: string) => Cache.get(skillsByCwd, skillsCwd);
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -224,6 +255,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        listSkills,
       } satisfies ProviderInstance;
     }),
 };

@@ -175,6 +175,10 @@
       "types": "./src/relayTracing.ts",
       "import": "./src/relayTracing.ts"
     },
+    "./traceContext": {
+      "types": "./src/traceContext.ts",
+      "import": "./src/traceContext.ts"
+    },
     "./preview": {
       "types": "./src/preview.ts",
       "import": "./src/preview.ts"
@@ -210,6 +214,10 @@
     "./windowsConsole": {
       "types": "./src/windowsConsole.ts",
       "import": "./src/windowsConsole.ts"
+    },
+    "./providerSkillPresentation": {
+      "types": "./src/providerSkillPresentation.ts",
+      "import": "./src/providerSkillPresentation.ts"
     }
   },
   "scripts": {

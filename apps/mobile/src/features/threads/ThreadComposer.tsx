@@ -69,6 +69,7 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { useComposerSkills } from "../../state/queries";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 
 /**
@@ -366,6 +367,22 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     cwd: composerTrigger?.kind === "path" ? props.projectCwd : null,
     query: composerTrigger?.kind === "path" ? composerTrigger.query : null,
   });
+  // Asked per project rather than read off `selectedProviderStatus.skills`: the
+  // provider snapshot is one probe of the environment's own working directory,
+  // so on a thread opened elsewhere it names another project's skills, which
+  // this thread cannot run.
+  // Asked on the trigger, not on mount: a menu the user may never open must not
+  // cost every open thread a recurring skill discovery on the server. The
+  // editor's own skill tokens keep rendering without it; only the display name
+  // falls back to the skill's own name until the menu has been opened once.
+  const composerSkills = useComposerSkills(
+    {
+      environmentId: props.environmentId,
+      providerInstanceId: props.selectedThread.modelSelection.instanceId,
+      cwd: props.projectCwd,
+    },
+    { enabled: composerTrigger?.kind === "skill" },
+  );
 
   const composerMenuItems: ComposerCommandItem[] = useMemo(() => {
     if (!composerTrigger) return [];
@@ -413,7 +430,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
+      const enabledSkills = composerSkills.skills.filter((s) => s.enabled);
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });
@@ -510,7 +527,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerSkills.skills, composerTrigger, pathSearch.entries, selectedProviderStatus]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -779,7 +796,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               ref={inputRef}
               multiline
               value={props.draftMessage}
-              skills={selectedProviderStatus?.skills ?? []}
+              skills={composerSkills.skills}
               selection={composerSelection}
               onChangeText={props.onChangeDraftMessage}
               onSelectionChange={handleSelectionChange}

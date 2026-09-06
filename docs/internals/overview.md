@@ -104,6 +104,26 @@ Runtime receipts are a test-only mechanism. `RuntimeReceiptBusLive` in
 [`RuntimeReceiptBus.ts`][receipts] publishes nothing; only the test layer is PubSub-backed. Do not
 build production behavior on receipts.
 
+## Git work depth
+
+Every `git` the environment runs for itself takes a permit from [`GitWorkDepth`][gitdepth]: the VCS
+status subscriptions behind [`VcsProcess`][vcsprocess] and the repository identity lookups in
+[`RepositoryIdentityResolver`][identity]. Each spawn is a burst of filesystem work on the libuv
+threadpool, so without a bound a hundred watched projects mean a hundred concurrent spawns and every
+unrelated request queues behind them. Depth, not the number of open threads, is the lever.
+
+The default depth tracks the host's available parallelism, clamped to 4..16.
+`T3CODE_GIT_WORK_DEPTH` overrides it, clamped to 1..64; a missing, non-numeric, or zero value falls
+back to the default. The gate is process-wide, because the threadpool it protects is: `VcsProcess`
+is built once per WebSocket connection, so a per-build semaphore would let N clients cost N times
+the depth.
+
+`RepositoryIdentityResolver` also caches its answer per workspace root, so the same git question is
+not asked twice and two projects sharing a root cost one lookup. The cache has no time-to-live: the
+only thing that makes a stored answer wrong is the root changing, and
+[`RepositoryIdentityReactor`][identityreactor] invalidates the entry when a project's meta update
+carries a new workspace root.
+
 ## Provider drivers
 
 Five drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
@@ -150,3 +170,7 @@ already dispatch.
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
 [receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
+[gitdepth]: ../../apps/server/src/vcs/GitWorkDepth.ts
+[vcsprocess]: ../../apps/server/src/vcs/VcsProcess.ts
+[identity]: ../../apps/server/src/project/RepositoryIdentityResolver.ts
+[identityreactor]: ../../apps/server/src/orchestration/Layers/RepositoryIdentityReactor.ts

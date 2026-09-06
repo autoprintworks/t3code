@@ -1,10 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import {
+  discoverClaudeSkills,
+  findLeadingSkillMention,
+  formatInlinedSkillPrompt,
+  hasLeadingSkillMention,
+  readClaudeSkillBody,
+} from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -188,6 +194,100 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("lists only user skills when the project has none", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "project-a");
+      yield* fs.makeDirectory(workspace, { recursive: true });
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "summarize",
+        ["---", "name: summarize", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope]),
+        [["summarize", "user"]],
+      );
+    }),
+  );
+
+  it.effect("lists only project skills when the user config has none", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "empty-claude-home");
+      const workspace = path.join(tempDir, "project-a");
+
+      yield* writeSkill(
+        path.join(workspace, ".claude", "skills"),
+        "migrate",
+        ["---", "name: migrate", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope]),
+        [["migrate", "project"]],
+      );
+    }),
+  );
+
+  it.effect("omits another project's skill from a thread opened on this project", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const projectA = path.join(tempDir, "project-a");
+      const projectB = path.join(tempDir, "project-b");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "summarize",
+        ["---", "name: summarize", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectA, ".claude", "skills"),
+        "deploy-a",
+        ["---", "name: deploy-a", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectB, ".claude", "skills"),
+        "deploy-b",
+        ["---", "name: deploy-b", "---"].join("\n"),
+      );
+
+      // A thread opened on project A sees user scope plus A's own skills.
+      // Project B's skill is not runnable there, so it must not be listed.
+      const skillsForA = yield* discoverClaudeSkills({ homePath: configDir }, projectA);
+      assert.deepEqual(
+        skillsForA.map((skill) => [skill.name, skill.scope]),
+        [
+          ["deploy-a", "project"],
+          ["summarize", "user"],
+        ],
+      );
+
+      const skillsForB = yield* discoverClaudeSkills({ homePath: configDir }, projectB);
+      assert.deepEqual(
+        skillsForB.map((skill) => [skill.name, skill.scope]),
+        [
+          ["deploy-b", "project"],
+          ["summarize", "user"],
+        ],
+      );
+    }),
+  );
+
   it.effect("returns an empty list when no skill roots exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -200,6 +300,128 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       );
 
       assert.deepEqual(skills, []);
+    }),
+  );
+});
+
+describe("findLeadingSkillMention", () => {
+  const skills = [
+    { name: "to-spec", path: "/skills/to-spec/SKILL.md" },
+    { name: "code-review", path: "/skills/code-review/SKILL.md" },
+  ];
+
+  const rewrite = (text: string) => {
+    const mention = findLeadingSkillMention(text, skills);
+    return mention ? `/${mention.skill.name}${mention.rest}` : text;
+  };
+
+  it("matches a chip-only message, leaving nothing after the command", () => {
+    const mention = findLeadingSkillMention("$to-spec", skills);
+    assert.equal(mention?.skill.name, "to-spec");
+    assert.equal(mention?.rest, "");
+    assert.equal(rewrite("$to-spec"), "/to-spec");
+  });
+
+  it("keeps the rest of the message after the slash command", () => {
+    assert.equal(findLeadingSkillMention("$to-spec route A", skills)?.rest, " route A");
+    assert.equal(rewrite("$to-spec route A"), "/to-spec route A");
+  });
+
+  // The `/` menu lists the same skills as `/skill:<Display Name>` rows and
+  // inserts the slash form, which must resolve to the same skill.
+  it("matches the slash form the slash menu inserts", () => {
+    assert.equal(findLeadingSkillMention("/to-spec route A", skills)?.skill.name, "to-spec");
+    assert.equal(rewrite("/to-spec route A"), "/to-spec route A");
+  });
+
+  it("keeps a multi-line message intact below the command line", () => {
+    assert.equal(rewrite("$to-spec route A\nsecond line"), "/to-spec route A\nsecond line");
+  });
+
+  it("leaves an unknown skill name alone", () => {
+    assert.equal(findLeadingSkillMention("$not-a-skill route A", skills), null);
+    assert.equal(rewrite("$not-a-skill route A"), "$not-a-skill route A");
+    // A provider slash command that is not a skill must pass through too.
+    assert.equal(findLeadingSkillMention("/compact", skills), null);
+  });
+
+  it("leaves a mention that is not at the start alone", () => {
+    assert.equal(findLeadingSkillMention("please run $to-spec", skills), null);
+  });
+
+  it("leaves a bare dollar sign and a partial token alone", () => {
+    assert.equal(findLeadingSkillMention("$ to-spec", skills), null);
+    assert.equal(findLeadingSkillMention("$to-spectacular", skills), null);
+  });
+
+  it("leaves everything alone when no skills were discovered", () => {
+    assert.equal(findLeadingSkillMention("$to-spec", []), null);
+  });
+});
+
+describe("hasLeadingSkillMention", () => {
+  it("is true only for a message that starts with a `$name` or `/name` token", () => {
+    assert.equal(hasLeadingSkillMention("$to-spec route A"), true);
+    assert.equal(hasLeadingSkillMention("$to-spec"), true);
+    assert.equal(hasLeadingSkillMention("/to-spec route A"), true);
+    assert.equal(hasLeadingSkillMention("please run $to-spec"), false);
+    assert.equal(hasLeadingSkillMention("$ to-spec"), false);
+    assert.equal(hasLeadingSkillMention("just some text"), false);
+  });
+});
+
+describe("formatInlinedSkillPrompt", () => {
+  const skill = { name: "to-spec", path: "/skills/to-spec/SKILL.md" };
+
+  it("names the skill and its file, then the instructions", () => {
+    const prompt = formatInlinedSkillPrompt({ skill, body: "# Body", rest: "" });
+    assert.equal(prompt.includes("Run the to-spec skill."), true);
+    assert.equal(prompt.includes("/skills/to-spec/SKILL.md"), true);
+    assert.equal(prompt.endsWith("# Body"), true);
+  });
+
+  it("appends the rest of the message below a separator", () => {
+    const prompt = formatInlinedSkillPrompt({ skill, body: "# Body", rest: " route A" });
+    assert.equal(prompt.endsWith("# Body\n\n---\n\nroute A"), true);
+  });
+});
+
+it.layer(NodeServices.layer)("readClaudeSkillBody", (it) => {
+  it.effect("returns the body with the frontmatter stripped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skill-body-" });
+      const skillsDir = path.join(tempDir, "skills");
+
+      yield* writeSkill(
+        skillsDir,
+        "to-spec",
+        ["---", "name: to-spec", "description: Turn notes into a spec.", "---", "", "# Body"].join(
+          "\n",
+        ),
+      );
+
+      const body = yield* readClaudeSkillBody(path.join(skillsDir, "to-spec", "SKILL.md"));
+
+      assert.equal(body, "# Body");
+    }),
+  );
+
+  it.effect("returns undefined for a missing or empty skill file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skill-body-" });
+      const skillsDir = path.join(tempDir, "skills");
+
+      yield* writeSkill(skillsDir, "empty", ["---", "name: empty", "---", ""].join("\n"));
+
+      assert.equal(
+        yield* readClaudeSkillBody(path.join(skillsDir, "empty", "SKILL.md")),
+        undefined,
+      );
+      assert.equal(yield* readClaudeSkillBody(path.join(skillsDir, "gone", "SKILL.md")), undefined);
     }),
   );
 });

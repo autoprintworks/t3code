@@ -71,8 +71,6 @@ export type WorkLogToolLifecycleStatus =
 export interface WorkLogEntry {
   id: string;
   createdAt: string;
-  /** Event-store sequence of the source activity. See `TimelineEntry`. */
-  sequence?: number;
   turnId?: TurnId | null;
   label: string;
   detail?: string;
@@ -147,61 +145,31 @@ export interface LatestProposedPlanState {
   implementationThreadId: ThreadId | null;
 }
 
-/**
- * One transcript row. `sequence` is the event-store sequence of the event the
- * row came from, and it is the ordering key: `createdAt` is a wall clock, and
- * the host clock can move in either direction between two writes, so ordering
- * by it reorders the transcript against the order things happened.
- *
- * Absent means the row predates the field and is therefore older than anything
- * carrying one, so it sorts first. Optimistic local rows are the exception and
- * set a maximal sequence to pin themselves to the live edge.
- */
 export type TimelineEntry =
   | {
       id: string;
       kind: "message";
       createdAt: string;
-      sequence?: number;
       message: ChatMessage;
     }
   | {
       id: string;
       kind: "proposed-plan";
       createdAt: string;
-      sequence?: number;
       proposedPlan: ProposedPlan;
     }
   | {
       id: string;
       kind: "turn-plan";
       createdAt: string;
-      sequence?: number;
       turnPlan: TurnPlanEntry;
     }
   | {
       id: string;
       kind: "work";
       createdAt: string;
-      sequence?: number;
       entry: WorkLogEntry;
     };
-
-/** Sorts a row with no sequence before every row that has one. */
-export const TIMELINE_SEQUENCE_UNKNOWN = 0;
-
-function compareTimelineEntries(left: TimelineEntry, right: TimelineEntry): number {
-  const sequenceComparison =
-    (left.sequence ?? TIMELINE_SEQUENCE_UNKNOWN) - (right.sequence ?? TIMELINE_SEQUENCE_UNKNOWN);
-  if (sequenceComparison !== 0) {
-    return sequenceComparison;
-  }
-  const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
-  if (createdAtComparison !== 0) {
-    return createdAtComparison;
-  }
-  return left.id.localeCompare(right.id);
-}
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") {
@@ -643,8 +611,6 @@ export interface TurnPlanEntry {
   id: string;
   /** Anchor timestamp: the turn's FIRST plan activity, so the chip renders where planning began. */
   createdAt: string;
-  /** Anchor sequence, from the same first activity. See `TimelineEntry`. */
-  sequence?: number;
   turnId: TurnId | null;
   plan: ActivePlanState;
 }
@@ -678,7 +644,6 @@ export function deriveTurnPlans(
       byTurn.set(key, {
         id: `turn-plan:${key}`,
         createdAt: activity.createdAt,
-        ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
         turnId: activity.turnId,
         plan,
       });
@@ -877,7 +842,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
-    ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
     turnId: activity.turnId,
     label: taskLabel || activity.summary,
     tone:
@@ -1022,7 +986,6 @@ function collapseDerivedWorkLogEntries(
           // keeps React state/virtualization sane.
           id: existing.id,
           createdAt: existing.createdAt,
-          ...(existing.sequence !== undefined ? { sequence: existing.sequence } : {}),
           turnId: existing.turnId ?? null,
           ...(existing.taskId !== undefined ? { taskId: existing.taskId } : {}),
           label: existing.label,
@@ -1624,32 +1587,31 @@ export function deriveTimelineEntries(
     id: message.id,
     kind: "message",
     createdAt: message.createdAt,
-    ...(message.sequence !== undefined ? { sequence: message.sequence } : {}),
     message,
   }));
   const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({
     id: proposedPlan.id,
     kind: "proposed-plan",
     createdAt: proposedPlan.createdAt,
-    ...(proposedPlan.sequence !== undefined ? { sequence: proposedPlan.sequence } : {}),
     proposedPlan,
   }));
   const turnPlanRows: TimelineEntry[] = turnPlans.map((turnPlan) => ({
     id: turnPlan.id,
     kind: "turn-plan",
     createdAt: turnPlan.createdAt,
-    ...(turnPlan.sequence !== undefined ? { sequence: turnPlan.sequence } : {}),
     turnPlan,
   }));
   const workRows: TimelineEntry[] = workEntries.map((entry) => ({
     id: entry.id,
     kind: "work",
     createdAt: entry.createdAt,
-    ...(entry.sequence !== undefined ? { sequence: entry.sequence } : {}),
     entry,
   }));
+  // Creation time, then the id as a tiebreak, so two rows written in the same
+  // millisecond keep one stable order. Mobile's `buildThreadFeed` sorts the
+  // same pair.
   return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted(
-    compareTimelineEntries,
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   );
 }
 

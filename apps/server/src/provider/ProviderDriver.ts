@@ -25,6 +25,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -71,6 +72,13 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /**
+   * Skills a thread rooted at `cwd` can run - user scope plus that one
+   * project's own, each carrying its scope. A driver whose skill inventory
+   * cannot be scoped to a directory omits this, and the registry answers
+   * from the instance snapshot instead.
+   */
+  readonly listSkills?: (cwd: string) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
 }
 
 export interface ProviderContinuationIdentity {

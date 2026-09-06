@@ -63,12 +63,6 @@ type WorkLogToolLifecycleStatus = "inProgress" | "completed" | "failed" | "decli
 interface WorkLogEntry {
   id: string;
   createdAt: string;
-  /**
-   * Event-store sequence of the activity this row came from. This is the
-   * ordering key for the feed; `createdAt` is display data. Absent only for a
-   * row written before the server carried a sequence.
-   */
-  sequence?: number;
   turnId: TurnId | null;
   label: string;
   detail?: string;
@@ -95,14 +89,12 @@ type RawThreadFeedEntry =
       readonly type: "message";
       readonly id: string;
       readonly createdAt: string;
-      readonly sequence?: number;
       readonly message: OrchestrationThread["messages"][number];
     }
   | {
       readonly type: "activity";
       readonly id: string;
       readonly createdAt: string;
-      readonly sequence?: number;
       readonly turnId: TurnId | null;
       readonly activity: ThreadFeedActivity;
     };
@@ -368,7 +360,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
-    ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
     turnId: activity.turnId,
     ...(taskId ? { taskId } : {}),
     label: taskLabel || activity.summary,
@@ -1041,12 +1032,11 @@ function compareActivityLifecycleRank(kind: string): number {
 }
 
 /**
- * Where a row with no event-store sequence sorts. Nothing on this surface is
- * optimistic, so an absent sequence means an old server that does not send the
- * field; the row is placed at the live edge, which is where a row the client
- * has just learned about belongs.
+ * A row with no sequence predates the field, so it is older than anything
+ * carrying one and sorts first. This matches the server's activity projection
+ * (`CASE WHEN sequence IS NULL THEN 0`) and the web client.
  */
-const SEQUENCE_UNKNOWN = Number.MAX_SAFE_INTEGER;
+const SEQUENCE_UNKNOWN = Number.MIN_SAFE_INTEGER;
 
 const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
   Order.mapInput(Order.Number, (activity) => activity.sequence ?? SEQUENCE_UNKNOWN),
@@ -1056,15 +1046,14 @@ const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
 ]);
 
 /**
- * Total order for the merged transcript: event-store sequence, then the wall
- * clock, then the id. Sequence order is write order, so this holds even when
- * the host clock moves backwards between two rows of the same thread.
+ * Total order for the merged transcript: creation time, then the id. The web
+ * client sorts its timeline the same way, so a row holds the same position on
+ * both surfaces.
  */
-const rawThreadFeedEntryOrder = Order.combineAll<RawThreadFeedEntry>([
-  Order.mapInput(Order.Number, (entry) => entry.sequence ?? SEQUENCE_UNKNOWN),
+const rawThreadFeedEntryOrder = Order.combine<RawThreadFeedEntry>(
   Order.mapInput(Order.String, (entry) => entry.createdAt),
   Order.mapInput(Order.String, (entry) => entry.id),
-]);
+);
 
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
   if (entry.type !== "message") {
@@ -1487,11 +1476,17 @@ export function buildThreadFeed(
 ): ThreadFeedEntry[] {
   const loadedMessages = options?.loadedMessages ?? thread.messages;
   // Window bound for a partially loaded transcript: an activity older than the
-  // oldest loaded message belongs to a page that is not on screen. The bound is
-  // the event-store sequence, not the wall clock, so a clock excursion cannot
-  // hide rows at the page seam or drag older ones into the window.
-  const oldestLoadedMessageSequence =
-    options?.loadedMessages !== undefined ? (loadedMessages[0]?.sequence ?? null) : null;
+  // oldest loaded message belongs to a page that is not on screen. The page is
+  // not assumed to arrive oldest-first, so the bound is the smallest creation
+  // time in it rather than the first row's.
+  const oldestLoadedMessageCreatedAt =
+    options?.loadedMessages === undefined
+      ? null
+      : loadedMessages.reduce<string | null>(
+          (oldest, message) =>
+            oldest === null || message.createdAt < oldest ? message.createdAt : oldest,
+          null,
+        );
   const workLogEntries = deriveWorkLogEntries(thread.activities);
   const entries = Arr.sort(
     [
@@ -1499,15 +1494,16 @@ export function buildThreadFeed(
         type: "message",
         id: message.id,
         createdAt: message.createdAt,
-        ...(message.sequence !== undefined ? { sequence: message.sequence } : {}),
         message,
       })),
       ...workLogEntries
         .filter((entry) => {
-          if (options?.loadedMessages === undefined || oldestLoadedMessageSequence === null) {
+          if (options?.loadedMessages === undefined) {
             return true;
           }
-          return (entry.sequence ?? SEQUENCE_UNKNOWN) >= oldestLoadedMessageSequence;
+          return (
+            oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt
+          );
         })
         .map<RawThreadFeedEntry>((entry) => {
           const summary = workEntryHeading(entry);
@@ -1524,7 +1520,6 @@ export function buildThreadFeed(
             type: "activity",
             id: entry.id,
             createdAt: entry.createdAt,
-            ...(entry.sequence !== undefined ? { sequence: entry.sequence } : {}),
             turnId: entry.turnId,
             activity: {
               id: entry.id,

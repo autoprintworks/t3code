@@ -574,8 +574,8 @@ function apiProviderAuthMetadata(
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 
 /**
- * Keep workspace-scoped command discovery intact while isolating the periodic
- * health check from configured MCP servers.
+ * Keep workspace-scoped command discovery intact while isolating the status
+ * probe from configured MCP servers.
  */
 export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "user",
@@ -583,7 +583,7 @@ export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
-/** Build the exact SDK options used by the periodic Claude capability probe. */
+/** Build the exact SDK options used by the Claude capability probe. */
 export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly executablePath: string;
   readonly abortController: AbortController;
