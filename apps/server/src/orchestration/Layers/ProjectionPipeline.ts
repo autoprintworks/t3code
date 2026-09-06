@@ -972,9 +972,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             text: nextText,
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             isStreaming: event.payload.streaming,
-            // A streaming message keeps the sequence of the event that opened
-            // it, the same rule `createdAt` follows.
-            sequence: previousMessage?.sequence ?? event.sequence,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
           });
@@ -1031,7 +1028,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             planMarkdown: event.payload.proposedPlan.planMarkdown,
             implementedAt: event.payload.proposedPlan.implementedAt,
             implementationThreadId: event.payload.proposedPlan.implementationThreadId,
-            sequence: event.sequence,
             createdAt: event.payload.proposedPlan.createdAt,
             updatedAt: event.payload.proposedPlan.updatedAt,
           });
@@ -1084,12 +1080,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             kind: event.payload.activity.kind,
             summary: event.payload.activity.summary,
             payload: event.payload.activity.payload,
-            // The event envelope's own sequence, not `activity.sequence` —
-            // no caller of the `thread.activity.append` command has ever set
-            // that domain field, which is why this column was NULL for every
-            // row until ForkMigrations/002 backfilled it. `event.sequence`
-            // is the event-store sequence every sibling column orders by.
-            sequence: event.sequence,
+            ...(event.payload.activity.sequence !== undefined
+              ? { sequence: event.payload.activity.sequence }
+              : {}),
             createdAt: event.payload.activity.createdAt,
           });
           return;
@@ -1149,18 +1142,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
         case "thread.turn-start-requested": {
-          // A turn is anchored at its opening user message, not at this event.
-          // The message is written first, so anchoring here would push every
-          // turn's own first message onto the previous page.
-          const startingMessage = yield* projectionThreadMessageRepository.getByMessageId({
-            messageId: event.payload.messageId,
-          });
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
-            sequence: Option.getOrUndefined(startingMessage)?.sequence ?? event.sequence,
             requestedAt: event.payload.createdAt,
           });
           return;
@@ -1257,12 +1243,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 (Option.isSome(pendingTurnStart)
                   ? pendingTurnStart.value.sourceProposedPlanId
                   : null),
-              sequence:
-                existingTurn.value.sequence !== 0
-                  ? existingTurn.value.sequence
-                  : Option.isSome(pendingTurnStart)
-                    ? pendingTurnStart.value.sequence
-                    : event.sequence,
               startedAt:
                 existingTurn.value.startedAt ??
                 (Option.isSome(pendingTurnStart)
@@ -1289,9 +1269,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 : null,
               assistantMessageId: null,
               state: "running",
-              sequence: Option.isSome(pendingTurnStart)
-                ? pendingTurnStart.value.sequence
-                : event.sequence,
               requestedAt: Option.isSome(pendingTurnStart)
                 ? pendingTurnStart.value.requestedAt
                 : event.occurredAt,
@@ -1360,7 +1337,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanId: null,
             assistantMessageId: event.payload.messageId,
             state: settlesTurn ? "completed" : "running",
-            sequence: event.sequence,
             requestedAt: event.payload.createdAt,
             startedAt: event.payload.createdAt,
             completedAt: settlesTurn ? event.payload.updatedAt : null,
@@ -1398,7 +1374,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanId: null,
             assistantMessageId: null,
             state: "interrupted",
-            sequence: event.sequence,
             requestedAt: event.payload.createdAt,
             startedAt: event.payload.createdAt,
             completedAt: event.payload.createdAt,
@@ -1454,7 +1429,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanId: null,
             assistantMessageId: event.payload.assistantMessageId,
             state: turnStillRunning ? "running" : nextState,
-            sequence: event.sequence,
             requestedAt: event.payload.completedAt,
             startedAt: event.payload.completedAt,
             completedAt: event.payload.completedAt,

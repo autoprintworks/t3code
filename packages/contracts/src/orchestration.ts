@@ -234,14 +234,6 @@ export const OrchestrationMessage = Schema.Struct({
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
-  /**
-   * Event-store sequence of the `thread.message-sent` event that created this
-   * message. This is the transcript's ordering key: `createdAt` is a wall
-   * clock and disagrees with insertion order whenever the host clock moves.
-   * Absent only for rows written before the sequence column existed whose
-   * originating event could not be resolved.
-   */
-  sequence: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -253,8 +245,6 @@ export type OrchestrationProposedPlanId = typeof OrchestrationProposedPlanId.Typ
 export const OrchestrationProposedPlan = Schema.Struct({
   id: OrchestrationProposedPlanId,
   turnId: Schema.NullOr(TurnId),
-  /** Event-store sequence of the creating event. See `OrchestrationMessage.sequence`. */
-  sequence: Schema.optional(NonNegativeInt),
   planMarkdown: TrimmedNonEmptyString,
   implementedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   implementationThreadId: Schema.NullOr(ThreadId).pipe(
