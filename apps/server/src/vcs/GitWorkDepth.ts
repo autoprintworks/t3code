@@ -70,12 +70,11 @@ export const resolveGitWorkDepth = (options?: {
     return clamp(parsed);
   }
 
+  // The 4..16 default band sits inside MIN..MAX, so it needs no further clamp.
   const availableParallelism = options?.availableParallelism ?? NodeOS.availableParallelism();
-  return clamp(
-    Math.max(
-      DEFAULT_MIN_GIT_WORK_DEPTH,
-      Math.min(DEFAULT_MAX_GIT_WORK_DEPTH, availableParallelism),
-    ),
+  return Math.max(
+    DEFAULT_MIN_GIT_WORK_DEPTH,
+    Math.min(DEFAULT_MAX_GIT_WORK_DEPTH, availableParallelism),
   );
 };
 

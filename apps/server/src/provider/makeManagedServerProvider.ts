@@ -27,8 +27,10 @@ interface ProviderSnapshotState {
  * `initialSnapshot`, which every driver builds without touching the CLI.
  *
  * `isEnabled` reads the instance's own enabled flag, the one the registry
- * resolved from settings and handed to `ProviderDriver.create`. The driver
- * config's own `enabled` field never reaches this decision.
+ * resolved from settings and handed to `ProviderDriver.create`. It takes no
+ * settings on purpose: the driver config's own `enabled` field must never
+ * reach this decision, and a flag flip is a rebuilt instance, not a settings
+ * change this provider sees.
  */
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
@@ -37,7 +39,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly getSettings: Effect.Effect<Settings, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
-  readonly isEnabled: (settings: Settings) => boolean;
+  readonly isEnabled: () => boolean;
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly enrichSnapshot?: (input: {
@@ -113,7 +115,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   // The probe is the only thing the enabled flag gates. A disabled instance
   // still gets a fresh snapshot, built from settings alone.
   const takeSnapshot = (settings: Settings): Effect.Effect<ServerProvider, ServerSettingsError> =>
-    input.isEnabled(settings) ? input.checkProvider : input.initialSnapshot(settings);
+    input.isEnabled() ? input.checkProvider : input.initialSnapshot(settings);
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,

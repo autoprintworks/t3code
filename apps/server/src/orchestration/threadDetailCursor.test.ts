@@ -29,15 +29,37 @@ describe("threadDetailCursor", () => {
     expect(decodeThreadDetailPageCursor(encodeThreadDetailPageCursor(cursor))).toEqual(cursor);
   });
 
+  it("rejects a cursor from another format version", () => {
+    // Version 2 keyed the boundary on an event-store sequence. Reading its
+    // fields under the current meanings would page from the wrong place, so
+    // the version is checked before anything else.
+    expect(
+      decodeThreadDetailPageCursor(
+        Buffer.from(JSON.stringify({ v: 2, t: "thread-1", a: 41, i: "turn-9" })).toString(
+          "base64url",
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      decodeThreadDetailPageCursor(
+        Buffer.from(
+          JSON.stringify({ t: "thread-1", a: "2026-08-01T00:00:00.000Z", i: "turn-9" }),
+        ).toString("base64url"),
+      ),
+    ).toBeNull();
+  });
+
   it("rejects malformed input", () => {
     expect(decodeThreadDetailPageCursor("not-base64-json")).toBeNull();
     expect(decodeThreadDetailPageCursor(Buffer.from("[]").toString("base64url"))).toBeNull();
     expect(
-      decodeThreadDetailPageCursor(Buffer.from(JSON.stringify({ t: "" })).toString("base64url")),
+      decodeThreadDetailPageCursor(
+        Buffer.from(JSON.stringify({ v: 3, t: "" })).toString("base64url"),
+      ),
     ).toBeNull();
     expect(
       decodeThreadDetailPageCursor(
-        Buffer.from(JSON.stringify({ t: "thread-1", a: 5, i: "x" })).toString("base64url"),
+        Buffer.from(JSON.stringify({ v: 3, t: "thread-1", a: 5, i: "x" })).toString("base64url"),
       ),
     ).toBeNull();
   });

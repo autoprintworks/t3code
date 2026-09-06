@@ -16,7 +16,14 @@ import type { ThreadId } from "@t3tools/contracts";
  * user messages, turnless activities). The thread id is embedded so a cursor
  * can never be replayed against a different thread. Clients must treat the
  * string as opaque.
+ *
+ * Version 3. A cursor that does not carry this exact version is rejected, so
+ * the next format change has something to refuse rather than silently reading
+ * an old payload's fields under new meanings. Version 2 keyed the boundary on
+ * an event-store sequence, which this format no longer carries.
  */
+const CURSOR_VERSION = 3;
+
 export interface ThreadDetailPageCursor {
   readonly threadId: ThreadId;
   readonly beforeAnchorAt: string;
@@ -26,7 +33,12 @@ export interface ThreadDetailPageCursor {
 
 export function encodeThreadDetailPageCursor(cursor: ThreadDetailPageCursor): string {
   return Buffer.from(
-    JSON.stringify({ t: cursor.threadId, a: cursor.beforeAnchorAt, i: cursor.beforeTurnId }),
+    JSON.stringify({
+      v: CURSOR_VERSION,
+      t: cursor.threadId,
+      a: cursor.beforeAnchorAt,
+      i: cursor.beforeTurnId,
+    }),
   ).toString("base64url");
 }
 
@@ -45,6 +57,9 @@ export function decodeThreadDetailPageCursor(encoded: string): ThreadDetailPageC
     return null;
   }
   const record = parsed as Record<string, unknown>;
+  if (record.v !== CURSOR_VERSION) {
+    return null;
+  }
   if (typeof record.t !== "string" || record.t.length === 0) {
     return null;
   }

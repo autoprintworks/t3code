@@ -182,12 +182,13 @@ describe("makeManagedServerProvider", () => {
         const checkCalls = yield* Ref.make(0);
         const startupSettled = yield* Deferred.make<void>();
         const buildInitialSnapshot = yield* makeDisabledInitialSnapshot(startupSettled);
+        const enabledFlag = { current: false };
         const provider = yield* makeManagedServerProvider<TestSettings>({
           maintenanceCapabilities,
           getSettings: Effect.succeed({ enabled: false }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          isEnabled: (settings) => settings.enabled,
+          isEnabled: () => enabledFlag.current,
           initialSnapshot: buildInitialSnapshot,
           checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
             Effect.as(refreshedSnapshot),
@@ -247,12 +248,15 @@ describe("makeManagedServerProvider", () => {
         const checkCalls = yield* Ref.make(0);
         const startupSettled = yield* Deferred.make<void>();
         const buildInitialSnapshot = yield* makeDisabledInitialSnapshot(startupSettled);
+        // The registry resolves the enabled flag and hands it to the driver, so
+        // this stands in for the flag the instance was built with.
+        const enabledFlag = { current: false };
         const provider = yield* makeManagedServerProvider<TestSettings>({
           maintenanceCapabilities,
           getSettings: Ref.get(settingsRef),
           streamSettings: Stream.fromPubSub(settingsChanges),
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          isEnabled: (settings) => settings.enabled,
+          isEnabled: () => enabledFlag.current,
           initialSnapshot: buildInitialSnapshot,
           checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
             Effect.as(refreshedSnapshot),
@@ -268,6 +272,7 @@ describe("makeManagedServerProvider", () => {
         );
         yield* Effect.yieldNow;
 
+        enabledFlag.current = true;
         yield* Ref.set(settingsRef, { enabled: true });
         yield* PubSub.publish(settingsChanges, { enabled: true });
 
