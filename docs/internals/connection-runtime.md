@@ -90,6 +90,24 @@ and thread synchronization are independent data states. A healthy RPC transport
 with a failed shell subscription is shown as connected with a synchronization
 error, not as a reconnect that is not actually scheduled.
 
+### Connection Tracing
+
+One socket produces one span on each end, and the two are joined so a drop can be read from either
+side:
+
+- the client opens `clientRuntime.connection.rpcSession.socket` per `connect()` call, records a
+  ping, pong, or ping-timeout event per keepalive tick, and ends it with the native close code,
+  reason, and `wasClean`;
+- the client puts that span's W3C `traceparent` on the websocket URL
+  (`packages/shared/src/traceContext.ts`), and both ends set `connection.id` to its span id;
+- the environment parents `server.connection.clientSocket` on it and records the close code and
+  reason it observed, who sent the close frame, and the keepalive summary, including
+  `connection.ping.starved` when the client stopped pinging for over 20 seconds.
+
+Tracing is passive. It does not close, retry, or time out a connection. The environment-side
+attributes and the trace file's size bound are documented in
+[docs/operations/observability.md](../operations/observability.md).
+
 ## Data Boundary
 
 Finite requests, durable subscriptions, and commands are separate APIs:

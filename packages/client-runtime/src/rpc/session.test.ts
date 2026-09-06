@@ -5,6 +5,7 @@ import {
   type ServerConfig as ServerConfigType,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { parseTraceParent } from "@t3tools/shared/traceContext";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -240,7 +241,16 @@ describe("RpcSessionFactory", () => {
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
 
-      expect(socket.url).toBe(PREPARED.socketUrl);
+      // The connect URL keeps everything the environment authenticates on, and gains the socket
+      // span's traceparent so the environment can parent its own connection span on this one.
+      const socketUrl = new URL(socket.url);
+      expect(socketUrl.origin + socketUrl.pathname).toBe("wss://environment.example.test/ws");
+      expect(socketUrl.searchParams.get("wsTicket")).toBe("test");
+      expect(parseTraceParent(socketUrl.searchParams.get("traceparent"))).toEqual({
+        traceId: socketSpan(spans)?.traceId,
+        spanId: socketSpan(spans)?.spanId,
+        sampled: true,
+      });
       socket.open();
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);

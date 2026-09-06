@@ -102,6 +102,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
+import * as ConnectionSpan from "./observability/ConnectionSpan.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
@@ -2207,11 +2208,17 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ),
           ),
         );
+        // The RPC server upgrades the request itself, so the observed socket is handed to it by
+        // swapping `upgrade` on the request it reads.
+        const instrumentedRequest = yield* ConnectionSpan.instrumentUpgrade(request, {
+          "connection.session.id": session.sessionId,
+          "connection.auth.method": session.method,
+        });
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () => rpcWebSocketHttpEffect,
           () => sessions.markDisconnected(session.sessionId),
-        );
+        ).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, instrumentedRequest));
       }).pipe(
         Effect.catchTags({
           EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
