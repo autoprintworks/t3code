@@ -57,6 +57,13 @@ import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
+/**
+ * How long a project's discovered skills are held. Matches the stale time the
+ * clients' `providerSkills` query uses, so a reopened menu inside that window
+ * costs nothing on either side.
+ */
+const CLAUDE_SKILLS_CACHE_TTL = Duration.seconds(15);
+
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 // Measured on a normal (unloaded) dev machine: 3 back-to-back probes took
 // 9.5s, 10.9s, and 12.7s — 40-50% of the 25s CAPABILITIES_PROBE_TIMEOUT_MS
@@ -213,15 +220,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         ),
       );
 
-      // Scanned per call rather than cached with the snapshot: the snapshot is
+      // Keyed on the cwd rather than cached with the snapshot: the snapshot is
       // probed once from the environment's own cwd, and a menu asking about a
       // thread's project needs that project's `.claude/skills`, not the
       // environment's.
-      const listSkills = (skillsCwd: string) =>
-        discoverClaudeSkills(effectiveConfig, skillsCwd, processEnv).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        );
+      //
+      // The scan walks two skill directories, so it is held for as long as the
+      // client treats its own copy as fresh. Without that, a menu reopened
+      // inside the client's stale window still costs a directory walk, and one
+      // walk per open project adds up. `capacity` bounds it to the projects a
+      // user realistically has open.
+      const skillsByCwd = yield* Cache.make({
+        capacity: 64,
+        timeToLive: CLAUDE_SKILLS_CACHE_TTL,
+        lookup: (skillsCwd: string) =>
+          discoverClaudeSkills(effectiveConfig, skillsCwd, processEnv).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+      });
+
+      const listSkills = (skillsCwd: string) => Cache.get(skillsByCwd, skillsCwd);
 
       return {
         instanceId,

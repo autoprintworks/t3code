@@ -1028,12 +1028,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // snapshot is one probe of the environment's own working directory, so on a
   // thread opened elsewhere it names another project's skills, which this
   // thread cannot run.
+  // Asked on the trigger, not on mount: a menu the user may never open must not
+  // cost every open thread a recurring skill discovery on the server.
   const isSkillTrigger = composerTriggerKind === "skill";
-  const composerSkills = useComposerSkills({
-    environmentId,
-    providerInstanceId: selectedInstanceId,
-    cwd: gitCwd,
-  });
+  const composerSkills = useComposerSkills(
+    {
+      environmentId,
+      providerInstanceId: selectedInstanceId,
+      cwd: gitCwd,
+    },
+    { enabled: isSkillTrigger },
+  );
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];

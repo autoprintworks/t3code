@@ -56,6 +56,7 @@ import {
   setPendingConnectionError,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
@@ -400,11 +401,21 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // is one probe of the environment's own working directory, so it names
   // whatever project the environment was started in, not the one this draft is
   // for.
-  const selectedProviderSkills = useComposerSkills({
-    environmentId: selectedProject?.environmentId ?? null,
-    providerInstanceId: selectedModel?.instanceId ?? null,
-    cwd: selectedProject?.workspaceRoot || null,
-  }).skills;
+  // This screen has no skill menu; the skills only name the `$` tokens the
+  // draft already carries. Asking only once such a token exists keeps a draft
+  // with no skill in it from paying for a skill discovery on the server.
+  const draftMentionsSkill = useMemo(
+    () => collectComposerInlineTokens(prompt).some((token) => token.type === "skill"),
+    [prompt],
+  );
+  const selectedProviderSkills = useComposerSkills(
+    {
+      environmentId: selectedProject?.environmentId ?? null,
+      providerInstanceId: selectedModel?.instanceId ?? null,
+      cwd: selectedProject?.workspaceRoot || null,
+    },
+    { enabled: draftMentionsSkill },
+  ).skills;
   const setSelectedModelKey = useCallback(
     (key: string | null) => {
       if (!key || !selectedProjectDraftKey) {
