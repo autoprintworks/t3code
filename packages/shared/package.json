@@ -210,6 +210,10 @@
     "./windowsConsole": {
       "types": "./src/windowsConsole.ts",
       "import": "./src/windowsConsole.ts"
+    },
+    "./providerSkillScope": {
+      "types": "./src/providerSkillScope.ts",
+      "import": "./src/providerSkillScope.ts"
     }
   },
   "scripts": {

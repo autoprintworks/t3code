@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatProviderSkillDisplayName,
   formatProviderSkillInstallSource,
+  formatProviderSkillScopeLabel,
 } from "./providerSkillPresentation";
 
 describe("formatProviderSkillDisplayName", () => {
@@ -53,5 +54,36 @@ describe("formatProviderSkillInstallSource", () => {
         scope: "project",
       }),
     ).toBe("Project");
+  });
+});
+
+describe("formatProviderSkillScopeLabel", () => {
+  it("names project and user scope so a menu row can be read at a glance", () => {
+    expect(
+      formatProviderSkillScopeLabel({
+        path: "/projects/project-a/.claude/skills/deploy/SKILL.md",
+        scope: "project",
+      }),
+    ).toBe("Project");
+    expect(
+      formatProviderSkillScopeLabel({
+        path: "/Users/julius/.claude/skills/summarize/SKILL.md",
+        scope: "user",
+      }),
+    ).toBe("User");
+  });
+
+  it("keeps the install source for a scope it cannot place", () => {
+    expect(
+      formatProviderSkillScopeLabel({
+        path: "/usr/local/share/codex/skills/imagegen/SKILL.md",
+        scope: "system",
+      }),
+    ).toBe("System");
+    expect(
+      formatProviderSkillScopeLabel({
+        path: "/workspace/skills/mystery/SKILL.md",
+      }),
+    ).toBe(null);
   });
 });

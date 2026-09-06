@@ -1,4 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { formatProviderSkillScopeLabel as formatSkillScope } from "@t3tools/shared/providerSkillScope";
 
 function titleCaseWords(value: string): string {
   const words: string[] = [];
@@ -50,4 +51,16 @@ export function formatProviderSkillInstallSource(
   }
 
   return null;
+}
+
+/**
+ * The badge a composer menu row carries so a user can tell, before picking,
+ * whether a skill comes from this thread's own project or from their user
+ * scope. A scope the shared classifier cannot place keeps its install source,
+ * which is still true about where the skill lives.
+ */
+export function formatProviderSkillScopeLabel(
+  skill: Pick<ServerProviderSkill, "path" | "scope">,
+): string | null {
+  return formatSkillScope(skill) ?? formatProviderSkillInstallSource(skill);
 }

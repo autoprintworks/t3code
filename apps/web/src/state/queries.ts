@@ -2,6 +2,8 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
+  type ComposerSkillsState,
+  type ComposerSkillsTarget,
 } from "@t3tools/client-runtime/state/threads";
 import {
   createThreadSearchResultsAtomFamily,
@@ -14,6 +16,7 @@ import type {
   OrchestrationThread,
   ProjectContentMatch,
   ProjectEntryKind,
+  ServerProviderSkill,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -28,6 +31,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 
@@ -39,6 +43,7 @@ const THREAD_SEARCH_DEBOUNCE_MS = 200;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const EMPTY_CONTENT_MATCHES: ReadonlyArray<ProjectContentMatch> = [];
+const EMPTY_PROVIDER_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
@@ -295,6 +300,28 @@ export function useProjectPathSearch(
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT);
+}
+
+/**
+ * Skills the thread's own project can run - its `.claude/skills` plus user
+ * scope - asked per project rather than read off the provider snapshot, which
+ * only ever describes the environment's own working directory.
+ */
+export function useComposerSkills(target: ComposerSkillsTarget): ComposerSkillsState {
+  const result = useEnvironmentQuery(
+    target.environmentId !== null && target.providerInstanceId !== null && target.cwd !== null
+      ? serverEnvironment.providerSkills({
+          environmentId: target.environmentId,
+          input: { providerInstanceId: target.providerInstanceId, cwd: target.cwd },
+        })
+      : null,
+  );
+
+  return {
+    skills: result.data?.skills ?? EMPTY_PROVIDER_SKILLS,
+    isPending: result.isPending,
+    error: result.error,
+  };
 }
 
 interface ProjectContentSearchTarget {
