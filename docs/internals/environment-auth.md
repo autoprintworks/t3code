@@ -28,6 +28,22 @@ managed relay connectivity:
 The desktop bootstrap credential and command-line administrative bootstrap
 credentials additionally grant `access:read access:write relay:write`.
 
+### Subject
+
+Scopes say what a session may do. Its `subject` says who it is, and a handful of
+rules key on that instead. Two subjects are named in code:
+
+| Subject         | Who                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `cloud-connect` | A session the managed relay minted, rather than a person on this machine.                    |
+| `firstmate`     | The First Mate daemon's own bearer, minted with `t3 auth session issue --subject firstmate`. |
+
+`firstmate` is `AuthFleetSubject` in the contracts. A session carrying it is the
+fleet's, so the daemon may create a read-only thread and then prompt it, which
+the person the thread is read-only for may not. The scopes it comes with are the
+ordinary client ones; the subject is the whole difference. See
+[worker threads](./acp-worker-threads.md).
+
 ## Authentication Flows
 
 ### Browser Session

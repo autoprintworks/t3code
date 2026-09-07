@@ -115,7 +115,11 @@ A read-only thread mirroring one peer session on a configured ACP agent's connec
 
 #### Read-only thread
 
-A thread whose transcript is a window onto work driven elsewhere. `readOnly` is set once at creation, never cleared, and enforced in [the decider][8] by `requireThreadPromptable` in [commandInvariants.ts][9], which refuses `thread.turn.start` and `thread.checkpoint.revert`. The clients hide the composer; that is presentation, not the rule. It reaches the read model through fork migration 5 as an integer column, because SQLite has no boolean. See [worker threads][31].
+A thread whose transcript is a window onto work driven elsewhere. `readOnly` is set once at creation, never cleared, and enforced in [the decider][8] by `requireThreadPromptable` in [commandInvariants.ts][9], which refuses `thread.turn.start` and `thread.checkpoint.revert`. The one exception is a turn a door stamped as the [fleet](#fleet-subject)'s: a thread the First Mate daemon started is read-only to the person and still the daemon's to prompt. The clients hide the composer; that is presentation, not the rule. It reaches the read model through fork migration 5 as an integer column, because SQLite has no boolean. See [worker threads][31].
+
+#### Fleet subject
+
+The session `subject` string the First Mate daemon mints its own bearer under, `"firstmate"`, exported as `AuthFleetSubject` from [the auth contracts][42]. It says who is asking, not what they may do; the scopes on the session are the ordinary client ones. A door reads it once and hands `commandIssuerForSubject`'s answer to `normalizeDispatchCommand`, which is what allows a fleet `thread.create` to carry `readOnly` and stamps a fleet `thread.turn.start`. It is never read off a payload, because a payload is what an ordinary client controls. See [environment auth][43].
 
 #### Skill
 
@@ -246,3 +250,5 @@ One client websocket, end to end, as a trace span. The environment opens `server
 [39]: ../../packages/client-runtime/src/rpc/session.ts
 [40]: ../operations/observability.md
 [41]: ../../packages/client-runtime/src/observability/clientTracing.ts
+[42]: ../../packages/contracts/src/auth.ts
+[43]: ./environment-auth.md

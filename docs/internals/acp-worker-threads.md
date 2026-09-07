@@ -118,8 +118,18 @@ web and mobile clients is presentation; the refusal is what makes it true for
 an old client build, a script, and a bare `POST /api/orchestration/dispatch`
 alike.
 
-`readOnly` is also absent from `ClientThreadCreateCommand`, so nothing arriving
-over the wire can mint a read-only thread in the first place.
+`readOnly` is absent from `ClientThreadCreateCommand`, so a client cannot mint a
+read-only thread. The wire schema a door decodes, `DispatchOrchestrationCommand`,
+is wider than that, because the First Mate daemon does start threads read-only
+for the person over the same door. Which of the two a payload is read as is not
+decided by the payload: `normalizeDispatchCommand` is handed the issuer, read
+from the authenticated session's subject, and drops `readOnly` from anything a
+client sent however it was spelled. The mirror of that is on the turn: a door
+stamps `issuer: "fleet"` on a `thread.turn.start` from that session, and
+`requireThreadPromptable` lets a stamped turn run on a read-only thread. The
+person's turn on the same thread is refused as before, and a
+`thread.checkpoint.revert` has no stamp at all, so it is refused whoever sent it.
+See [the fleet subject](./environment-auth.md#subject).
 
 ## The measurements
 
