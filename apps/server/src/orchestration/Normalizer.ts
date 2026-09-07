@@ -3,9 +3,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
-  type ClientOrchestrationCommand,
+  AuthFleetSubject,
+  type DispatchOrchestrationCommand,
   type IsoDateTime,
   type OrchestrationCommand,
+  type OrchestrationCommandIssuer,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
@@ -15,10 +17,20 @@ import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
+/**
+ * Who a door may treat as the fleet.
+ *
+ * The subject of the authenticated session and nothing else. A door never
+ * reads this off a payload, because a payload is exactly what an ordinary
+ * client controls.
+ */
+export const commandIssuerForSubject = (subject: string): OrchestrationCommandIssuer =>
+  subject === AuthFleetSubject ? "fleet" : "client";
+
 export const canonicalizeClientCommandTimestamps = (
-  command: ClientOrchestrationCommand,
+  command: DispatchOrchestrationCommand,
   receivedAt: IsoDateTime,
-): ClientOrchestrationCommand => {
+): DispatchOrchestrationCommand => {
   const canonicalCommand =
     "createdAt" in command
       ? {
@@ -43,7 +55,10 @@ export const canonicalizeClientCommandTimestamps = (
   };
 };
 
-export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
+export const normalizeDispatchCommand = (
+  command: DispatchOrchestrationCommand,
+  issuer: OrchestrationCommandIssuer,
+) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const canonicalCommand = canonicalizeClientCommandTimestamps(command, receivedAt);
@@ -98,6 +113,18 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ...canonicalCommand,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot),
       } satisfies OrchestrationCommand;
+    }
+
+    if (canonicalCommand.type === "thread.create") {
+      if (issuer === "fleet") {
+        return canonicalCommand satisfies OrchestrationCommand;
+      }
+      // A client that spelled `readOnly` anyway gets an ordinary promptable
+      // thread, not a thread it is then refused permission to use, and not a
+      // decode failure that would break an older build. This is what the
+      // narrower client schema used to do by leaving the field out.
+      const { readOnly: _readOnly, ...withoutReadOnly } = canonicalCommand;
+      return withoutReadOnly satisfies OrchestrationCommand;
     }
 
     if (canonicalCommand.type !== "thread.turn.start") {
@@ -169,11 +196,18 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       { concurrency: 1 },
     );
 
-    return {
+    const turnStart = {
       ...canonicalCommand,
       message: {
         ...canonicalCommand.message,
         attachments: normalizedAttachments,
       },
-    } satisfies OrchestrationCommand;
+    };
+
+    // Stamped here and nowhere else. The decider reads it to let the fleet
+    // drive a thread it made read-only for the person; see
+    // `requireThreadPromptable`.
+    return (
+      issuer === "fleet" ? { ...turnStart, issuer } : turnStart
+    ) satisfies OrchestrationCommand;
   });

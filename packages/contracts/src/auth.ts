@@ -73,6 +73,18 @@ export const ServerAuthSessionMethod = Schema.Literals([
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
+/**
+ * The session subject the First Mate daemon mints its own bearer under.
+ *
+ * A session carrying it is the fleet's, not a person's, and that is the whole
+ * difference between a fleet create and an ordinary client create. The daemon
+ * asks for it with `t3 auth session issue --subject firstmate`; nothing else
+ * on this machine does. It is a subject and not a scope on purpose: it says
+ * who is asking, not what they are allowed, and the scopes it comes with are
+ * the ordinary client ones.
+ */
+export const AuthFleetSubject = "firstmate" as const;
+
 export const AuthOrchestrationReadScope = "orchestration:read" as const;
 export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
 export const AuthTerminalOperateScope = "terminal:operate" as const;

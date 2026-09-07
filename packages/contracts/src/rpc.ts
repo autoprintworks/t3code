@@ -53,7 +53,7 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
-  ClientOrchestrationCommand,
+  DispatchOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
@@ -705,7 +705,10 @@ export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
-    payload: ClientOrchestrationCommand,
+    // The wider union, as the HTTP door takes. Both doors read the same
+    // schema and hand the issuer to the same normaliser, so which one the
+    // fleet knocks on is not a rule of its own.
+    payload: DispatchOrchestrationCommand,
     success: OrchestrationRpcSchemas.dispatchCommand.output,
     error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
   },

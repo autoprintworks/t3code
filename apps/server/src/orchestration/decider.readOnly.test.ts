@@ -74,6 +74,16 @@ function turnStart(commandId: string) {
   } as const;
 }
 
+/**
+ * The same turn, as the door writes it when the fleet bearer sent it.
+ *
+ * `issuer` cannot be spelled on the wire, so a command carrying it has been
+ * through a door that authenticated a session minted under `AuthFleetSubject`.
+ */
+function fleetTurnStart(commandId: string) {
+  return { ...turnStart(commandId), issuer: "fleet" } as const;
+}
+
 function revert(commandId: string) {
   return {
     type: "thread.checkpoint.revert",
@@ -109,9 +119,28 @@ it.layer(NodeServices.layer)("read-only thread decider", (it) => {
     }),
   );
 
+  it.effect("runs a fleet turn start on a read-only thread", () =>
+    Effect.gen(function* () {
+      // A fleet thread is read-only to the person and still the daemon's to
+      // drive. That is the whole reason the daemon creates one: the person
+      // watches the transcript, and only First Mate steers.
+      const result = yield* decideOrchestrationCommand({
+        command: fleetTurnStart("cmd-turn-fleet"),
+        readModel: makeReadModel(true),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((entry) => entry.type)).toEqual([
+        "thread.message-sent",
+        "thread.turn-start-requested",
+      ]);
+    }),
+  );
+
   it.effect("refuses a checkpoint revert on a read-only thread", () =>
     Effect.gen(function* () {
-      // A revert drives the provider on the thread just as a turn does.
+      // A revert drives the provider on the thread just as a turn does, and
+      // no door can stamp one as the fleet's: only `thread.turn.start` has
+      // the field, so this refusal has no exception at all.
       const error = yield* decideOrchestrationCommand({
         command: revert("cmd-revert-read-only"),
         readModel: makeReadModel(true),

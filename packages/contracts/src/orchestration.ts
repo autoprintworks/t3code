@@ -668,10 +668,12 @@ const ThreadCreateCommandFields = {
 
 const ThreadCreateCommand = Schema.Struct({
   ...ThreadCreateCommandFields,
-  // A window onto work owned elsewhere. Server-issued only: this field is
-  // absent from the client command, so a payload arriving over the websocket
-  // or the dispatch endpoint cannot set it however it is spelled. The decider
-  // is what enforces what it means; see `requireThreadPromptable`.
+  // A window onto work owned elsewhere. Two callers may set it: the server
+  // itself, and the fleet bearer over a door. It is absent from
+  // `ClientThreadCreateCommand`, and a door drops it from anything an
+  // ordinary client sent, so a person's client cannot mint a thread it is
+  // then refused permission to use. The decider is what enforces what it
+  // means; see `requireThreadPromptable`.
   readOnly: Schema.optional(Schema.Boolean),
 });
 
@@ -680,7 +682,8 @@ const ThreadCreateCommand = Schema.Struct({
  *
  * Identical to the server-side command minus `readOnly`, so a client cannot
  * mint a read-only thread and, more importantly, cannot mint one it is then
- * refused permission to use.
+ * refused permission to use. A fleet create is read as the server-side
+ * command instead; see `DispatchOrchestrationCommand`.
  */
 const ClientThreadCreateCommand = Schema.Struct(ThreadCreateCommandFields);
 
@@ -829,6 +832,11 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // Who asked for this turn. Stamped by the door from the authenticated
+  // session and absent from the client command, so a payload cannot claim it
+  // however it is spelled. It is what lets the fleet drive a thread it made
+  // read-only for the person; see `requireThreadPromptable`.
+  issuer: Schema.optional(Schema.Literal("fleet")),
   createdAt: IsoDateTime,
 });
 
@@ -919,11 +927,17 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
 
-export const ClientOrchestrationCommand = Schema.Union([
+/**
+ * Every command that reaches a door and reads the same whoever sent it.
+ *
+ * `thread.create` is the one that does not, so it is the one left out here
+ * and named by each union below. Shared rather than written twice so the two
+ * cannot drift apart in the other twenty-one.
+ */
+const SharedClientOrchestrationCommands = [
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
-  ClientThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -942,8 +956,40 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+] as const;
+
+export const ClientOrchestrationCommand = Schema.Union([
+  ClientThreadCreateCommand,
+  ...SharedClientOrchestrationCommands,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
+
+/**
+ * Who sent a command to a door.
+ *
+ * `fleet` is a session minted under `AuthFleetSubject`, which on this machine
+ * is the First Mate daemon and nothing else; every other session is
+ * `client`. A door reads this off the authenticated session and never off the
+ * payload, so a client cannot claim it however it spells what it sends.
+ */
+export const OrchestrationCommandIssuer = Schema.Literals(["client", "fleet"]);
+export type OrchestrationCommandIssuer = typeof OrchestrationCommandIssuer.Type;
+
+/**
+ * What a door decodes a dispatched payload as, before it knows who sent it.
+ *
+ * The client union with the wider `thread.create`, so a fleet create can
+ * carry `readOnly` at all. Decoding once and then dropping what the issuer
+ * may not say is deliberate: there is one schema on the wire and one place
+ * that decides what survives it. That place is `normalizeDispatchCommand`,
+ * and an ordinary client create comes out of it with no `readOnly` exactly as
+ * before.
+ */
+export const DispatchOrchestrationCommand = Schema.Union([
+  ThreadCreateCommand,
+  ...SharedClientOrchestrationCommands,
+]);
+export type DispatchOrchestrationCommand = typeof DispatchOrchestrationCommand.Type;
 
 const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
@@ -1658,7 +1704,7 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass
 
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
-    input: ClientOrchestrationCommand,
+    input: DispatchOrchestrationCommand,
     output: DispatchResult,
   },
   getWorkflowScript: {
