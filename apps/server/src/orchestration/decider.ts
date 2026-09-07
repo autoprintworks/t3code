@@ -32,9 +32,8 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
  * The client clock is not authoritative. A phone in the wrong timezone, a
  * laptop resuming from sleep, or a host whose clock is deliberately moved all
  * hand us a `createdAt` that disagrees with the order the event actually
- * landed in. Ordering never depends on these values — that is the event-store
- * sequence's job — but they are still what the transcript displays, so a wild
- * one reads as a bug.
+ * landed in. The transcript both displays and orders by these values, so a
+ * wild one reads as a bug and lands the row in the wrong place.
  *
  * When the thread's own last write is itself in the future (its history was
  * written during a clock excursion) the range is empty; the server clock wins,

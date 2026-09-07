@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalTimers:off globalFetch:off globalDate:off globalDateInEffect:off - Dev-only load harness: it drives a running server from the host shell and prints a report, so it uses Node and console APIs directly.
 /**
  * Load harness for the "cut filesystem request depth" work.
  *
@@ -17,7 +18,9 @@ import {
   AuthAccessTokenType,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
+  CommandId,
   ORCHESTRATION_WS_METHODS,
+  ProjectId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -174,8 +177,8 @@ const seedProjects = (accessToken: string, repoPaths: readonly string[]) =>
       (repoPath, index) =>
         client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
           type: "project.create",
-          commandId: NodeCrypto.randomUUID(),
-          projectId: benchProjectId(repoPath),
+          commandId: CommandId.make(NodeCrypto.randomUUID()),
+          projectId: ProjectId.make(benchProjectId(repoPath)),
           title: `bench-${index}`,
           workspaceRoot: repoPath,
           createdAt: new Date().toISOString(),

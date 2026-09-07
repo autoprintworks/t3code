@@ -1325,6 +1325,143 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("scopes listSkills per instance, falling back to the snapshot", () =>
+        Effect.gen(function* () {
+          const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const snapshotSkill = {
+            name: "environment-cwd-skill",
+            path: "/environment/.claude/skills/environment-cwd-skill/SKILL.md",
+            enabled: true,
+            scope: "project",
+          } as const;
+          const makeProvider = (
+            instanceId: ProviderInstanceId,
+            driver: string,
+          ): ServerProvider => ({
+            instanceId,
+            driver: ProviderDriverKind.make(driver),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-05-01T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [snapshotSkill],
+          });
+          const makeInstance = (
+            provider: ServerProvider,
+            listSkills?: ProviderInstance["listSkills"],
+          ): ProviderInstance => ({
+            instanceId: provider.instanceId,
+            driverKind: provider.driver,
+            continuationIdentity: {
+              driverKind: provider.driver,
+              continuationKey: `${provider.driver}:instance:${provider.instanceId}`,
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: provider.driver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.empty,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+            ...(listSkills ? { listSkills } : {}),
+          });
+          const claudeProvider = makeProvider(claudeInstanceId, "claudeAgent");
+          const codexProvider = makeProvider(codexInstanceId, "codex");
+          // A driver that can scope discovery answers about the directory it
+          // was asked about, not about the environment's own cwd.
+          const claudeInstance = makeInstance(claudeProvider, (cwd) =>
+            Effect.succeed([
+              {
+                name: "user-skill",
+                path: "/home/.claude/skills/user-skill/SKILL.md",
+                enabled: true,
+                scope: "user",
+              },
+              {
+                name: "project-skill",
+                path: `${cwd}/.claude/skills/project-skill/SKILL.md`,
+                enabled: true,
+                scope: "project",
+              },
+            ]),
+          );
+          const codexInstance = makeInstance(codexProvider);
+
+          const changes = yield* PubSub.unbounded<void>();
+          const instances = [claudeInstance, codexInstance];
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+              listInstances: Effect.succeed(instances),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.fromPubSub(changes),
+              subscribeChanges: PubSub.subscribe(changes),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-list-skills-",
+                }),
+              ),
+              Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+
+            const scoped = yield* registry.listSkills({
+              instanceId: claudeInstanceId,
+              cwd: "/projects/project-a",
+            });
+            assert.deepStrictEqual(
+              scoped.map((skill) => [skill.name, skill.scope, skill.path]),
+              [
+                ["user-skill", "user", "/home/.claude/skills/user-skill/SKILL.md"],
+                [
+                  "project-skill",
+                  "project",
+                  "/projects/project-a/.claude/skills/project-skill/SKILL.md",
+                ],
+              ],
+            );
+
+            // A driver that cannot scope discovery answers with its snapshot
+            // skills unchanged, so nothing regresses for it.
+            const unscoped = yield* registry.listSkills({
+              instanceId: codexInstanceId,
+              cwd: "/projects/project-a",
+            });
+            assert.deepStrictEqual(unscoped, [snapshotSkill]);
+
+            const unknown = yield* registry.listSkills({
+              instanceId: ProviderInstanceId.make("not-configured"),
+              cwd: "/projects/project-a",
+            });
+            assert.deepStrictEqual(unknown, []);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("keeps consuming registry changes after one sync fails", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");

@@ -23,6 +23,10 @@
       "types": "./src/rpc/index.ts",
       "default": "./src/rpc/index.ts"
     },
+    "./observability": {
+      "types": "./src/observability/clientTracing.ts",
+      "default": "./src/observability/clientTracing.ts"
+    },
     "./operations": {
       "types": "./src/operations/index.ts",
       "default": "./src/operations/index.ts"

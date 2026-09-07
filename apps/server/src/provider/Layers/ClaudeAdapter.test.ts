@@ -4297,4 +4297,169 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  describe("skill mentions", () => {
+    // Claude Code starts a skill only from a leading slash command, so the
+    // composer's `$name` chip has to reach the process as `/name`.
+    const makeSkillWorkspace = () => {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-skills-turn-"));
+      const claudeHome = NodePath.join(tempDir, "claude-home");
+      const workspace = NodePath.join(tempDir, "workspace");
+      const skillDir = NodePath.join(workspace, ".claude", "skills", "to-spec");
+      NodeFS.mkdirSync(claudeHome, { recursive: true });
+      NodeFS.mkdirSync(skillDir, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(skillDir, "SKILL.md"),
+        ["---", "name: to-spec", "description: Turn notes into a spec.", "---", "", "# Body"].join(
+          "\n",
+        ),
+      );
+      return { tempDir, claudeHome, workspace };
+    };
+
+    const IMAGE_ATTACHMENT = {
+      type: "image" as const,
+      id: "thread-claude-attachment-12345678-1234-1234-1234-123456789abc",
+      name: "diagram.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+    };
+
+    const sendSkillTurnMessage = (
+      text: string,
+      options?: {
+        readonly modelSelection?: ReturnType<typeof createModelSelection>;
+        readonly withImage?: boolean;
+      },
+    ) => {
+      const { tempDir, claudeHome, workspace } = makeSkillWorkspace();
+      const baseDir = NodePath.join(tempDir, "base");
+      NodeFS.mkdirSync(baseDir, { recursive: true });
+      const harness = makeHarness({ claudeConfig: { homePath: claudeHome }, baseDir });
+      const modelSelection = options?.modelSelection;
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+
+        if (options?.withImage) {
+          const { attachmentsDir } = yield* ServerConfig;
+          const attachmentPath = NodePath.join(
+            attachmentsDir,
+            attachmentRelativePath(IMAGE_ATTACHMENT),
+          );
+          NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+          NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+        }
+
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          cwd: workspace,
+          runtimeMode: "full-access",
+          ...(modelSelection ? { modelSelection } : {}),
+        });
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: text,
+          attachments: options?.withImage ? [IMAGE_ATTACHMENT] : [],
+          ...(modelSelection ? { modelSelection } : {}),
+        });
+
+        return yield* Effect.promise(() =>
+          readFirstPromptMessage(harness.getLastCreateQueryInput()),
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    };
+
+    const sendSkillTurn = (
+      text: string,
+      modelSelection?: ReturnType<typeof createModelSelection>,
+    ) =>
+      sendSkillTurnMessage(text, modelSelection ? { modelSelection } : {}).pipe(
+        // Reads the prompt text out of either wire shape: a slash command goes
+        // over as a bare string, every other turn keeps the block form.
+        Effect.map((message) => {
+          const content = message?.message.content;
+          if (typeof content === "string") return content;
+          if (!Array.isArray(content)) return undefined;
+          const blocks = content as ReadonlyArray<{ type: string; text?: string }>;
+          return blocks[0]?.type === "text" ? blocks[0].text : undefined;
+        }),
+      );
+
+    it.effect("sends a chip-only message as a bare slash command", () =>
+      Effect.gen(function* () {
+        // A plain string, not a one-element text block: Claude Code only reads
+        // the leading slash command off the string shape.
+        const message = yield* sendSkillTurnMessage("$to-spec");
+        assert.equal(message?.message.content, "/to-spec");
+      }),
+    );
+
+    // The `/` menu lists discovered skills as `/skill:<Display Name>` rows and
+    // inserts `/name`, which must survive to the process unchanged.
+    it.effect("passes the slash-menu form through as the same slash command", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* sendSkillTurn("/to-spec route A"), "/to-spec route A");
+      }),
+    );
+
+    // Claude Code refuses to expand `/name` when the message also carries an
+    // image block, so the skill's own instructions are inlined instead.
+    it.effect("inlines the skill body when the turn carries an attachment", () =>
+      Effect.gen(function* () {
+        const message = yield* sendSkillTurnMessage("$to-spec route A", { withImage: true });
+        const content = message?.message.content;
+        assert.equal(Array.isArray(content), true);
+        const blocks = content as ReadonlyArray<{ type: string; text?: string }>;
+        assert.equal(blocks[0]?.type, "text");
+        assert.equal(blocks[0]?.text?.startsWith("Run the to-spec skill."), true);
+        assert.equal(blocks[0]?.text?.includes("# Body"), true);
+        assert.equal(blocks[0]?.text?.endsWith("---\n\nroute A"), true);
+        // The image still rides along in the same message.
+        assert.equal(blocks[1]?.type, "image");
+      }),
+    );
+
+    it.effect("keeps the rest of the message after the slash command", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* sendSkillTurn("$to-spec route A"), "/to-spec route A");
+      }),
+    );
+
+    it.effect("leaves a mention that matches no discovered skill alone", () =>
+      Effect.gen(function* () {
+        assert.equal(yield* sendSkillTurn("$not-a-skill route A"), "$not-a-skill route A");
+      }),
+    );
+
+    // Only a slash command needs the bare string. A turn that is not one keeps
+    // the block shape every Claude turn had before skills existed.
+    it.effect("keeps the block shape for a turn that is not a slash command", () =>
+      Effect.gen(function* () {
+        const message = yield* sendSkillTurnMessage("route A");
+        const content = message?.message.content;
+        assert.equal(Array.isArray(content), true);
+        const blocks = content as ReadonlyArray<{ type: string; text?: string }>;
+        assert.deepEqual(blocks, [{ type: "text", text: "route A" }]);
+      }),
+    );
+
+    it.effect("moves the ultrathink prefix behind the slash command", () =>
+      Effect.gen(function* () {
+        const promptText = yield* sendSkillTurn(
+          "$to-spec route A",
+          createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-sonnet-4-6", [
+            { id: "effort", value: "ultrathink" },
+          ]),
+        );
+        assert.equal(promptText, "/to-spec route A\n\nUltrathink:");
+      }),
+    );
+  });
 });

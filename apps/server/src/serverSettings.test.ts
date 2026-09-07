@@ -638,6 +638,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
         JSON.stringify({
           providers: {
             codex: { binaryPath: "/opt/homebrew/bin/codex" },

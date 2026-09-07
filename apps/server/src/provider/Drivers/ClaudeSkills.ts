@@ -8,6 +8,9 @@
  * provider snapshot scans the same locations directly, mirroring how the
  * Codex app-server reports its skills.
  *
+ * That same slash-command-only reality is why this module also owns the
+ * `$name` -> `/name` rewrite the Claude adapter applies to outgoing prompts.
+ *
  * @module provider/Drivers/ClaudeSkills
  */
 import * as NodeOS from "node:os";
@@ -146,3 +149,88 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
+
+/**
+ * A message can reach a skill by two routes, and both land here. The `$` picker
+ * inserts a chip that serializes to `$name`, the token the Codex app-server
+ * understands; the `/` menu lists the same skills (Claude Code reports every
+ * skill as a plain slash command) and inserts `/name`. Claude Code itself only
+ * runs the `/name` form, so `$name` has to be rewritten on the way out.
+ *
+ * Only the leading token counts: a mention further into the message could never
+ * have started a skill.
+ */
+const LEADING_SKILL_MENTION_PATTERN = /^[$/]([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/;
+
+/** The parts of a discovered skill the outgoing-prompt code needs. */
+export type ClaudeSkillRef = Pick<ServerProviderSkill, "name" | "path">;
+
+export interface LeadingSkillMention {
+  readonly skill: ClaudeSkillRef;
+  /** Everything after the token, leading whitespace included. */
+  readonly rest: string;
+}
+
+/**
+ * Cheap check for whether {@link findLeadingSkillMention} could match, so
+ * callers can skip skill discovery for the overwhelming majority of turns.
+ */
+export function hasLeadingSkillMention(text: string): boolean {
+  return LEADING_SKILL_MENTION_PATTERN.test(text);
+}
+
+/**
+ * Resolve a leading `$name` or `/name` token against the discovered skills.
+ * An unknown name yields `null`: it is ordinary text, or a provider slash
+ * command that is not a skill, and either way it must be left alone.
+ */
+export function findLeadingSkillMention(
+  text: string,
+  skills: ReadonlyArray<ClaudeSkillRef>,
+): LeadingSkillMention | null {
+  const match = LEADING_SKILL_MENTION_PATTERN.exec(text);
+  if (!match) {
+    return null;
+  }
+  const skill = skills.find((candidate) => candidate.name === match[1]);
+  return skill ? { skill, rest: text.slice(match[0].length) } : null;
+}
+
+/**
+ * Read a skill's instructions, dropping the frontmatter Claude Code strips too.
+ * Unreadable skills yield `undefined` so the caller can fall back rather than
+ * fail a turn.
+ */
+export const readClaudeSkillBody = Effect.fn("readClaudeSkillBody")(function* (
+  skillPath: string,
+): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const contents = yield* fileSystem
+    .readFileString(skillPath)
+    .pipe(Effect.orElseSucceed(() => undefined));
+  if (contents === undefined) {
+    return undefined;
+  }
+  const body = contents.replace(FRONTMATTER_PATTERN, "").trim();
+  return body.length > 0 ? body : undefined;
+});
+
+/**
+ * Build the prompt for a skill invocation that cannot use a slash command.
+ * Claude Code refuses to expand `/name` when the user message also carries an
+ * image block, so those turns inline the skill's own instructions instead. The
+ * path is named because skill bodies routinely point at sibling files.
+ */
+export function formatInlinedSkillPrompt(input: {
+  readonly skill: ClaudeSkillRef;
+  readonly body: string;
+  readonly rest: string;
+}): string {
+  const rest = input.rest.trim();
+  return [
+    `Run the ${input.skill.name} skill. Its instructions follow, from ${input.skill.path}; any relative path inside them is relative to that file's directory.`,
+    "",
+    input.body,
+    ...(rest ? ["", "---", "", rest] : []),
+  ].join("\n");
+}

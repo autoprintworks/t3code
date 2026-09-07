@@ -280,7 +280,34 @@ const makeAuthTestLayer = () =>
     Layer.provide(ServerSecretStore.layer),
   );
 
-const makeBrowserOtlpPayload = (spanName: string) =>
+const WEB_CLIENT_TRACING_RESOURCE = {
+  serviceName: "t3-web",
+  attributes: {
+    "service.runtime": "t3-web",
+    "service.mode": "browser",
+    "service.version": "test",
+  },
+} as const;
+
+// Every client surface exports through the same layer (see
+// packages/client-runtime/src/observability/clientTracing.ts) and only names itself differently,
+// so a surface is modelled here by the resource it sends.
+const MOBILE_CLIENT_TRACING_RESOURCE = {
+  serviceName: "t3-mobile",
+  attributes: {
+    "service.runtime": "t3-mobile",
+    "service.mode": "ios",
+    "service.version": "test",
+  },
+} as const;
+
+const makeBrowserOtlpPayload = (
+  spanName: string,
+  resource: {
+    readonly serviceName: string;
+    readonly attributes: Readonly<Record<string, string>>;
+  } = WEB_CLIENT_TRACING_RESOURCE,
+) =>
   Effect.gen(function* () {
     const collector = yield* Effect.acquireRelease(
       Effect.promise(async () => {
@@ -352,14 +379,7 @@ const makeBrowserOtlpPayload = (spanName: string) =>
       OtlpTracer.layer({
         url: collector.url,
         exportInterval: "10 millis",
-        resource: {
-          serviceName: "t3-web",
-          attributes: {
-            "service.runtime": "t3-web",
-            "service.mode": "browser",
-            "service.version": "test",
-          },
-        },
+        resource,
       }).pipe(Layer.provide(browserOtlpTracingLayer)),
     );
 
@@ -4363,6 +4383,59 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(record.resourceAttributes["service.name"], "t3-web");
         assert.equal(record.status?.code, String(span.status.code));
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("stores a mobile connection span exported over OTLP", () =>
+    Effect.gen(function* () {
+      const localTraceRecords: Array<unknown> = [];
+      const payload = yield* makeBrowserOtlpPayload(
+        "clientRuntime.connection.rpcSession.socket",
+        MOBILE_CLIENT_TRACING_RESOURCE,
+      );
+      const span = payload.resourceSpans[0]?.scopeSpans[0]?.spans[0];
+
+      assert.notEqual(span, undefined);
+      if (!span) {
+        return;
+      }
+
+      yield* buildAppUnderTest({
+        layers: {
+          browserTraceCollector: {
+            record: (records) =>
+              Effect.sync(() => {
+                localTraceRecords.push(...records);
+              }),
+          },
+        },
+      });
+
+      const response = yield* HttpClient.post("/api/observability/v1/traces", {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          "content-type": "application/json",
+        },
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        body: HttpBody.text(JSON.stringify(payload), "application/json"),
+      });
+
+      assert.equal(response.status, 204);
+      assert.equal(localTraceRecords.length, 1);
+      const record = localTraceRecords[0] as {
+        readonly type: string;
+        readonly name: string;
+        readonly traceId: string;
+        readonly spanId: string;
+        readonly resourceAttributes: Readonly<Record<string, unknown>>;
+      };
+
+      assert.equal(record.type, "otlp-span");
+      assert.equal(record.name, "clientRuntime.connection.rpcSession.socket");
+      assert.equal(record.traceId, span.traceId);
+      assert.equal(record.spanId, span.spanId);
+      assert.equal(record.resourceAttributes["service.name"], "t3-mobile");
+      assert.equal(record.resourceAttributes["service.runtime"], "t3-mobile");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc server.upsertKeybinding", () =>

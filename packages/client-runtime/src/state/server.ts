@@ -707,6 +707,15 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
     }),
+    // Skills the thread's own project can run. Kept out of the provider
+    // snapshot because the snapshot is one probe of the environment's own
+    // working directory, while this answer differs per project.
+    providerSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:provider-skills",
+      tag: WS_METHODS.providerListSkills,
+      staleTimeMs: 15_000,
+      idleTtlMs: 5 * 60_000,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

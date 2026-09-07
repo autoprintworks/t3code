@@ -1,4 +1,5 @@
 import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
+import { createUseComposerSkills } from "@t3tools/client-runtime/state/threads";
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
@@ -11,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
+import { serverEnvironment } from "./server";
 import { useEnvironmentQuery } from "./query";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
@@ -124,6 +126,16 @@ export function useBranches(input: {
       : null,
   );
 }
+
+/**
+ * Skills the thread's own project can run - its `.claude/skills` plus user
+ * scope - asked per project rather than read off the provider snapshot, which
+ * only ever describes the environment's own working directory.
+ */
+export const useComposerSkills = createUseComposerSkills({
+  useEnvironmentQuery,
+  providerSkillsQuery: serverEnvironment.providerSkills,
+});
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   const normalizedTarget = useMemo(

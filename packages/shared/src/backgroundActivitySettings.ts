@@ -3,7 +3,6 @@ import {
   type BackgroundActivitySettings,
   DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
-  DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -11,7 +10,6 @@ import * as Duration from "effect/Duration";
 export interface ResolvedBackgroundActivitySettings {
   readonly profile: BackgroundActivityProfile;
   readonly automaticGitFetchInterval: Duration.Duration;
-  readonly providerHealthRefreshInterval: Duration.Duration;
   readonly hostPowerMonitorActiveInterval: Duration.Duration;
   readonly hostPowerMonitorIdleInterval: Duration.Duration;
   readonly idleClientTtl: Duration.Duration;
@@ -25,7 +23,6 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
   performance: {
     profile: "performance",
     automaticGitFetchInterval: Duration.seconds(15),
-    providerHealthRefreshInterval: Duration.minutes(1),
     hostPowerMonitorActiveInterval: Duration.seconds(30),
     hostPowerMonitorIdleInterval: Duration.minutes(2),
     idleClientTtl: Duration.seconds(45),
@@ -37,7 +34,6 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
   balanced: {
     profile: "balanced",
     automaticGitFetchInterval: DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
-    providerHealthRefreshInterval: DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
     hostPowerMonitorActiveInterval: Duration.seconds(30),
     hostPowerMonitorIdleInterval: Duration.minutes(5),
     idleClientTtl: Duration.seconds(45),
@@ -49,7 +45,6 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
   "battery-saver": {
     profile: "battery-saver",
     automaticGitFetchInterval: Duration.seconds(0),
-    providerHealthRefreshInterval: Duration.minutes(15),
     hostPowerMonitorActiveInterval: Duration.minutes(1),
     hostPowerMonitorIdleInterval: Duration.minutes(10),
     idleClientTtl: Duration.seconds(45),
@@ -85,8 +80,6 @@ export function resolveBackgroundActivitySettings(
     profile: baseProfile,
     automaticGitFetchInterval:
       overrides.automaticGitFetchInterval ?? preset.automaticGitFetchInterval,
-    providerHealthRefreshInterval:
-      overrides.providerHealthRefreshInterval ?? preset.providerHealthRefreshInterval,
     hostPowerMonitorActiveInterval:
       overrides.hostPowerMonitorActiveInterval ?? preset.hostPowerMonitorActiveInterval,
     hostPowerMonitorIdleInterval:
@@ -109,7 +102,6 @@ function resolvedSettingsEqual(
 ): boolean {
   return (
     durationsEqual(a.automaticGitFetchInterval, b.automaticGitFetchInterval) &&
-    durationsEqual(a.providerHealthRefreshInterval, b.providerHealthRefreshInterval) &&
     durationsEqual(a.hostPowerMonitorActiveInterval, b.hostPowerMonitorActiveInterval) &&
     durationsEqual(a.hostPowerMonitorIdleInterval, b.hostPowerMonitorIdleInterval) &&
     durationsEqual(a.idleClientTtl, b.idleClientTtl) &&
@@ -153,12 +145,6 @@ export function normalizeBackgroundActivitySettings(
   const overrides: BackgroundActivitySettings["overrides"] = {
     ...(!durationsEqual(resolved.automaticGitFetchInterval, preset.automaticGitFetchInterval)
       ? { automaticGitFetchInterval: resolved.automaticGitFetchInterval }
-      : {}),
-    ...(!durationsEqual(
-      resolved.providerHealthRefreshInterval,
-      preset.providerHealthRefreshInterval,
-    )
-      ? { providerHealthRefreshInterval: resolved.providerHealthRefreshInterval }
       : {}),
     ...(!durationsEqual(
       resolved.hostPowerMonitorActiveInterval,
@@ -210,38 +196,25 @@ export function resolveServerBackgroundActivitySettings(
   const hasLegacyOverrides =
     legacyProfile !== DEFAULT_BACKGROUND_ACTIVITY_PROFILE ||
     Duration.toMillis(settings.automaticGitFetchInterval) !==
-      Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL) ||
-    Duration.toMillis(settings.providerHealthRefreshInterval) !==
-      Duration.toMillis(DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL);
+      Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL);
   if (backgroundActivityIsDefault && hasLegacyOverrides) {
     return resolveBackgroundActivitySettings({
       schemaVersion: 1,
       profile:
         Duration.toMillis(settings.automaticGitFetchInterval) ===
-          Duration.toMillis(
-            getBackgroundActivityPresetSettings(legacyProfile).automaticGitFetchInterval,
-          ) &&
-        Duration.toMillis(settings.providerHealthRefreshInterval) ===
-          Duration.toMillis(
-            getBackgroundActivityPresetSettings(legacyProfile).providerHealthRefreshInterval,
-          )
+        Duration.toMillis(
+          getBackgroundActivityPresetSettings(legacyProfile).automaticGitFetchInterval,
+        )
           ? legacyProfile
           : "custom",
       baseProfile: legacyProfile,
-      overrides: {
-        ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
+      overrides:
+        Duration.toMillis(settings.automaticGitFetchInterval) !==
         Duration.toMillis(
           getBackgroundActivityPresetSettings(legacyProfile).automaticGitFetchInterval,
         )
           ? { automaticGitFetchInterval: settings.automaticGitFetchInterval }
-          : {}),
-        ...(Duration.toMillis(settings.providerHealthRefreshInterval) !==
-        Duration.toMillis(
-          getBackgroundActivityPresetSettings(legacyProfile).providerHealthRefreshInterval,
-        )
-          ? { providerHealthRefreshInterval: settings.providerHealthRefreshInterval }
-          : {}),
-      },
+          : {},
     });
   }
   return resolveBackgroundActivitySettings(settings.backgroundActivity);
@@ -257,7 +230,6 @@ export function normalizeServerBackgroundActivitySettings(
     baseProfile: resolved.profile,
     overrides: {
       automaticGitFetchInterval: resolved.automaticGitFetchInterval,
-      providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
       hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
       hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
       idleClientTtl: resolved.idleClientTtl,

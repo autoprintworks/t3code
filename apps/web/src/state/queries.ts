@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  createUseComposerSkills,
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
 } from "@t3tools/client-runtime/state/threads";
@@ -28,6 +29,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 
@@ -296,6 +298,16 @@ export function useProjectPathSearch(
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT);
 }
+
+/**
+ * Skills the thread's own project can run - its `.claude/skills` plus user
+ * scope - asked per project rather than read off the provider snapshot, which
+ * only ever describes the environment's own working directory.
+ */
+export const useComposerSkills = createUseComposerSkills({
+  useEnvironmentQuery,
+  providerSkillsQuery: serverEnvironment.providerSkills,
+});
 
 interface ProjectContentSearchTarget {
   readonly environmentId: EnvironmentId | null;

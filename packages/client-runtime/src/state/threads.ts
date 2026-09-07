@@ -761,6 +761,7 @@ export * from "./archivedThreads.ts";
 export * from "./checkpointDiff.ts";
 export * from "./threadSnapshotHttp.ts";
 export * from "./composerPathSearch.ts";
+export * from "./composerSkills.ts";
 export * from "./threadCommands.ts";
 export * from "./threadDetail.ts";
 export * from "./threadReducer.ts";

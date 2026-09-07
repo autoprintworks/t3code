@@ -10,6 +10,7 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
+  ServerProviderSkill,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -68,6 +69,21 @@ export interface ProviderRegistryShape {
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Skills a thread rooted at `cwd` can run on one configured instance.
+   *
+   * The instance snapshot is probed once from the environment's own working
+   * directory, so its project-scoped entries name whatever repository the
+   * environment was started in. This asks the instance about `cwd` instead,
+   * so a menu can list the thread's own project skills and no other's. An
+   * unknown instance answers with no skills; a driver that cannot scope
+   * discovery answers with its snapshot skills unchanged.
+   */
+  readonly listSkills: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
 
   /**
    * Stream of provider snapshot updates — one emission per aggregated

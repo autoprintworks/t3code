@@ -1,7 +1,5 @@
-import { NonNegativeInt } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
@@ -14,12 +12,6 @@ import {
   type ProjectionThreadProposedPlanRepositoryShape,
 } from "../Services/ProjectionThreadProposedPlans.ts";
 
-const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan.mapFields(
-  Struct.assign({
-    sequence: NonNegativeInt,
-  }),
-);
-
 const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -30,7 +22,6 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         plan_id,
         thread_id,
         turn_id,
-        sequence,
         plan_markdown,
         implemented_at,
         implementation_thread_id,
@@ -41,17 +32,6 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         ${row.planId},
         ${row.threadId},
         ${row.turnId},
-        -- A plan is upserted again on every edit; it keeps the sequence of the
-        -- event that first created it, so it holds its transcript position.
-        COALESCE(
-          (
-            SELECT sequence
-            FROM projection_thread_proposed_plans
-            WHERE plan_id = ${row.planId}
-          ),
-          ${row.sequence ?? null},
-          0
-        ),
         ${row.planMarkdown},
         ${row.implementedAt},
         ${row.implementationThreadId},
@@ -62,7 +42,6 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
       DO UPDATE SET
         thread_id = excluded.thread_id,
         turn_id = excluded.turn_id,
-        sequence = excluded.sequence,
         plan_markdown = excluded.plan_markdown,
         implemented_at = excluded.implemented_at,
         implementation_thread_id = excluded.implementation_thread_id,
@@ -73,13 +52,12 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const listProjectionThreadProposedPlanRows = SqlSchema.findAll({
     Request: ListProjectionThreadProposedPlansInput,
-    Result: ProjectionThreadProposedPlanDbRowSchema,
+    Result: ProjectionThreadProposedPlan,
     execute: ({ threadId }) => sql`
       SELECT
         plan_id AS "planId",
         thread_id AS "threadId",
         turn_id AS "turnId",
-        sequence,
         plan_markdown AS "planMarkdown",
         implemented_at AS "implementedAt",
         implementation_thread_id AS "implementationThreadId",
@@ -87,10 +65,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         updated_at AS "updatedAt"
       FROM projection_thread_proposed_plans
       WHERE thread_id = ${threadId}
-      ORDER BY
-        sequence ASC,
-        created_at ASC,
-        plan_id ASC
+      ORDER BY created_at ASC, plan_id ASC
     `,
   });
 

@@ -29,7 +29,7 @@ type ConnectionLayerSource =
 
 // ClientTracingLive routes every span created inside the connection runtime (RPC session
 // connect/probe, ping/pong, socket close - see packages/client-runtime/src/rpc/session.ts) to
-// the configured client tracing exporter, which posts to the primary environment's
+// the client tracing exporter, which posts to the connected environment's
 // /api/observability/v1/traces and lands in that server's trace file as otlp-span records.
 // Without this, connection spans use the ambient no-op Tracer and never leave the process -
 // see docs/operations/observability.md.

@@ -41,16 +41,6 @@ export const ProjectionTurn = Schema.Struct({
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   assistantMessageId: Schema.NullOr(MessageId),
   state: ProjectionTurnState,
-  /**
-   * Event-store sequence this turn is anchored at: the sequence of its pending
-   * user message, which is the first event of the turn. This is the keyset for
-   * windowed transcript reads. `requestedAt` is a wall clock and disagrees with
-   * insertion order whenever the host clock moves.
-   *
-   * Zero for rows written before the sequence column existed whose anchoring
-   * event could not be resolved; zero sorts before every real sequence.
-   */
-  sequence: NonNegativeInt,
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
@@ -69,16 +59,6 @@ export const ProjectionTurnById = Schema.Struct({
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   assistantMessageId: Schema.NullOr(MessageId),
   state: ProjectionTurnState,
-  /**
-   * Event-store sequence this turn is anchored at: the sequence of its pending
-   * user message, which is the first event of the turn. This is the keyset for
-   * windowed transcript reads. `requestedAt` is a wall clock and disagrees with
-   * insertion order whenever the host clock moves.
-   *
-   * Zero for rows written before the sequence column existed whose anchoring
-   * event could not be resolved; zero sorts before every real sequence.
-   */
-  sequence: NonNegativeInt,
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
@@ -94,16 +74,6 @@ export const ProjectionPendingTurnStart = Schema.Struct({
   messageId: MessageId,
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
-  /**
-   * Event-store sequence this turn is anchored at: the sequence of its pending
-   * user message, which is the first event of the turn. This is the keyset for
-   * windowed transcript reads. `requestedAt` is a wall clock and disagrees with
-   * insertion order whenever the host clock moves.
-   *
-   * Zero for rows written before the sequence column existed whose anchoring
-   * event could not be resolved; zero sorts before every real sequence.
-   */
-  sequence: NonNegativeInt,
   requestedAt: IsoDateTime,
 });
 export type ProjectionPendingTurnStart = typeof ProjectionPendingTurnStart.Type;

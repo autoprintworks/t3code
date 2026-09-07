@@ -6,7 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import { runMigrations } from "../Migrations.ts";
-import { runForkMigrations } from "../ForkMigrations.ts";
+import { retireLegacyOrderingMigrationRow, runForkMigrations } from "../ForkMigrations.ts";
 import { ServerConfig } from "../../config.ts";
 
 type RuntimeSqliteLayerConfig = {
@@ -36,6 +36,9 @@ const setup = Layer.effectDiscard(
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    // Before upstream's migrator reads the table, so the id an older fork build
+    // borrowed is free the first time upstream looks at this database.
+    yield* retireLegacyOrderingMigrationRow();
     yield* runMigrations();
     yield* runForkMigrations();
   }),

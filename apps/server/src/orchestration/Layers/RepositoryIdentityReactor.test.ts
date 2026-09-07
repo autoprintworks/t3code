@@ -65,6 +65,7 @@ const projectRow = (input: {
 
 interface Harness {
   readonly resolveCalls: Array<string>;
+  readonly invalidateCalls: Array<string>;
   readonly dispatched: Queue.Queue<OrchestrationCommand>;
   readonly events: Queue.Queue<OrchestrationEvent>;
 }
@@ -82,6 +83,7 @@ const makeHarness = (input: {
 }) =>
   Effect.gen(function* () {
     const resolveCalls: Array<string> = [];
+    const invalidateCalls: Array<string> = [];
     const dispatched = yield* Queue.unbounded<OrchestrationCommand>();
     const events = yield* Queue.unbounded<OrchestrationEvent>();
 
@@ -108,13 +110,20 @@ const makeHarness = (input: {
             ? Effect.die(new Error(`git failed for ${cwd}`))
             : Effect.succeed(identityFor(cwd));
         }),
+      invalidate: (cwd: string) =>
+        Effect.sync(() => {
+          invalidateCalls.push(cwd);
+        }),
     });
 
     const layer = RepositoryIdentityReactorLive.pipe(
       Layer.provide(Layer.mergeAll(engineLayer, projectsLayer, resolverLayer, NodeCrypto.layer)),
     );
 
-    return { layer, harness: { resolveCalls, dispatched, events } satisfies Harness };
+    return {
+      layer,
+      harness: { resolveCalls, invalidateCalls, dispatched, events } satisfies Harness,
+    };
   });
 
 /** The workspace root a recorded identity command is about. */
