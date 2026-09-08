@@ -1,6 +1,6 @@
 import * as NodeNet from "node:net";
 
-import { it as effectIt } from "@effect/vitest";
+import { it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
@@ -97,7 +97,7 @@ const commonDevServer = Effect.acquireRelease(
  * platform so the tests exercise the TCP-probe fallback without depending on
  * `lsof` being installed.
  */
-effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fallback)", (it) => {
+it.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fallback)", (it) => {
   it.effect(
     "scan() returns a server we just opened on a curated dev port",
     Effect.fn("PortScannerTest.scanFindsCommonDevServer")(function* () {
@@ -127,7 +127,7 @@ effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fall
   );
 });
 
-effectIt.effect("does not swallow process probe defects", () =>
+it.effect("does not swallow process probe defects", () =>
   Effect.gen(function* () {
     const defect = new Error("unexpected process probe defect");
     const layer = makeProbeFailureLayer(() => Effect.die(defect));
@@ -145,7 +145,7 @@ effectIt.effect("does not swallow process probe defects", () =>
   }),
 );
 
-effectIt.effect("does not swallow process probe interruption", () =>
+it.effect("does not swallow process probe interruption", () =>
   Effect.gen(function* () {
     const layer = makeProbeFailureLayer(() => Effect.interrupt);
 
@@ -226,9 +226,25 @@ describe("parseWindowsListenerOutput", () => {
 
   it("drops a final row that the output cap cut short", () => {
     const truncated = `${netstatFixture}  TCP    127.0.0.1:517`;
-    const ports = PortScanner.parseWindowsListenerOutput(truncated).map((row) => row.port);
+    const ports = PortScanner.parseWindowsListenerOutput(truncated, { truncated: true }).map(
+      (row) => row.port,
+    );
     // 517 is what the row would read as if the tail were parsed anyway.
     expect(ports).toEqual([135, 1042, 7679]);
+  });
+
+  it("keeps the last row when the output has no trailing newline", () => {
+    const complete = `${netstatFixture}  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       4242`;
+    const rows = PortScanner.parseWindowsListenerOutput(complete);
+    expect(rows.find((row) => row.port === 5173)).toEqual({ port: 5173, pid: 4242 });
+  });
+
+  it("reads the pid when the localised state word contains a space", () => {
+    // Italian Windows prints LISTENING as "IN ASCOLTO", which splits into two
+    // columns, so the pid is not the fifth field.
+    const localised =
+      "  TCP    127.0.0.1:5173         0.0.0.0:0              IN ASCOLTO      4242\r\n";
+    expect(PortScanner.parseWindowsListenerOutput(localised)).toEqual([{ port: 5173, pid: 4242 }]);
   });
 });
 
@@ -276,6 +292,8 @@ interface FakeRunnerOptions {
   readonly tasklistStdout?: (pid: string) => string;
   /** Held by every netstat run, so a scan can be parked mid-flight. */
   readonly gate?: Latch.Latch;
+  /** Asked before each tasklist run; true makes that run fail to spawn. */
+  readonly tasklistFails?: () => boolean;
 }
 
 const recordingWindowsLayer = (runs: string[], options: FakeRunnerOptions = {}) =>
@@ -290,6 +308,14 @@ const recordingWindowsLayer = (runs: string[], options: FakeRunnerOptions = {}) 
                 yield* Latch.await(options.gate);
               }
               const pid = /PID eq (\d+)/.exec(input.args.join(" "))?.[1] ?? "0";
+              if (input.command === "tasklist.exe" && options.tasklistFails?.() === true) {
+                return yield* new ProcessRunner.ProcessTimeoutError({
+                  command: input.command,
+                  argumentCount: input.args.length,
+                  cwd: input.cwd,
+                  timeoutMs: 500,
+                });
+              }
               return {
                 stdout:
                   input.command === "netstat.exe"
@@ -313,7 +339,7 @@ const recordingWindowsLayer = (runs: string[], options: FakeRunnerOptions = {}) 
 const countOf = (runs: ReadonlyArray<string>, command: string): number =>
   runs.filter((run) => run.startsWith(command)).length;
 
-effectIt.effect("spawns one netstat per scan and caches tasklist names across scans", () =>
+it.effect("spawns one netstat per scan and caches tasklist names across scans", () =>
   Effect.gen(function* () {
     const runs: string[] = [];
     yield* Effect.gen(function* () {
@@ -332,7 +358,7 @@ effectIt.effect("spawns one netstat per scan and caches tasklist names across sc
   }),
 );
 
-effectIt.effect("re-probes a name once its cache entry has aged out", () =>
+it.effect("re-probes a name once its cache entry has aged out", () =>
   Effect.gen(function* () {
     const runs: string[] = [];
     yield* Effect.gen(function* () {
@@ -354,7 +380,7 @@ effectIt.effect("re-probes a name once its cache entry has aged out", () =>
   }),
 );
 
-effectIt.effect("caches the pids tasklist cannot name, so they are not re-probed every scan", () =>
+it.effect("caches the pids tasklist cannot name, so they are not re-probed every scan", () =>
   Effect.gen(function* () {
     const runs: string[] = [];
     const layer = recordingWindowsLayer(runs, {
@@ -372,36 +398,89 @@ effectIt.effect("caches the pids tasklist cannot name, so they are not re-probed
   }),
 );
 
-effectIt.effect(
-  "resolves at most one batch of names per scan and finishes the rest next scan",
-  () =>
-    Effect.gen(function* () {
-      const runs: string[] = [];
-      // Twenty listeners on twenty pids, against a batch cap of eight.
-      const rows = Array.from(
-        { length: 20 },
-        (_, index) =>
-          `  TCP    127.0.0.1:${9000 + index}         0.0.0.0:0              LISTENING       ${1000 + index}`,
-      );
-      const layer = recordingWindowsLayer(runs, { netstatStdout: `${rows.join("\r\n")}\r\n` });
+it.effect("resolves at most one batch of names per scan and finishes the rest next scan", () =>
+  Effect.gen(function* () {
+    const runs: string[] = [];
+    // Twenty listeners on twenty pids, against a batch cap of eight.
+    const rows = Array.from(
+      { length: 20 },
+      (_, index) =>
+        `  TCP    127.0.0.1:${9000 + index}         0.0.0.0:0              LISTENING       ${1000 + index}`,
+    );
+    const layer = recordingWindowsLayer(runs, { netstatStdout: `${rows.join("\r\n")}\r\n` });
 
-      yield* Effect.gen(function* () {
-        const scanner = yield* PortScanner.PortDiscovery;
-        const first = yield* scanner.scan();
-        expect(first).toHaveLength(20);
-        expect(countOf(runs, "tasklist.exe")).toBe(8);
-        expect(first.filter((server) => server.processName !== null)).toHaveLength(8);
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const first = yield* scanner.scan();
+      expect(first).toHaveLength(20);
+      expect(countOf(runs, "tasklist.exe")).toBe(8);
+      expect(first.filter((server) => server.processName !== null)).toHaveLength(8);
 
-        yield* scanner.scan();
-        expect(countOf(runs, "tasklist.exe")).toBe(16);
-        const third = yield* scanner.scan();
-        expect(countOf(runs, "tasklist.exe")).toBe(20);
-        expect(third.filter((server) => server.processName !== null)).toHaveLength(20);
-      }).pipe(Effect.provide(layer));
-    }),
+      yield* scanner.scan();
+      expect(countOf(runs, "tasklist.exe")).toBe(16);
+      const third = yield* scanner.scan();
+      expect(countOf(runs, "tasklist.exe")).toBe(20);
+      expect(third.filter((server) => server.processName !== null)).toHaveLength(20);
+    }).pipe(Effect.provide(layer));
+  }),
 );
 
-effectIt.effect("a retainer arriving mid-scan is served as soon as that scan ends", () =>
+it.effect("does not cache a name for a pid whose tasklist run failed", () =>
+  Effect.gen(function* () {
+    const runs: string[] = [];
+    let failing = true;
+    const layer = recordingWindowsLayer(runs, { tasklistFails: () => failing });
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const first = yield* scanner.scan();
+      expect(first.map((server) => server.processName)).toEqual([null, null, null]);
+      expect(countOf(runs, "tasklist.exe")).toBe(3);
+
+      // A tasklist that failed said nothing about the pid, so the next scan asks
+      // again instead of serving "unnameable" from the cache for a minute.
+      failing = false;
+      const second = yield* scanner.scan();
+      expect(countOf(runs, "tasklist.exe")).toBe(6);
+      expect(second.map((server) => server.processName)).toEqual(["node", "node", "node"]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("keeps an expired name until a probe replaces it", () =>
+  Effect.gen(function* () {
+    const runs: string[] = [];
+    // Twenty listeners against a batch cap of eight, so a scan can never
+    // re-probe every expired entry.
+    const rows = Array.from(
+      { length: 20 },
+      (_, index) =>
+        `  TCP    127.0.0.1:${9000 + index}         0.0.0.0:0              LISTENING       ${1000 + index}`,
+    );
+    const layer = recordingWindowsLayer(runs, { netstatStdout: `${rows.join("\r\n")}\r\n` });
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* scanner.scan();
+      yield* scanner.scan();
+      const third = yield* scanner.scan();
+      expect(countOf(runs, "tasklist.exe")).toBe(20);
+      expect(third.filter((server) => server.processName === null)).toEqual([]);
+
+      // Every entry is past its lifetime now, and this scan can re-probe only
+      // eight of them. The other twelve keep the name they already had: no name
+      // goes from a string to null without a probe that says so.
+      yield* TestClock.adjust("61 seconds");
+      const fourth = yield* scanner.scan();
+      expect(countOf(runs, "tasklist.exe")).toBe(28);
+      expect(fourth.map((server) => server.processName)).toEqual(
+        third.map((server) => server.processName),
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a retainer arriving mid-scan is served as soon as that scan ends", () =>
   Effect.gen(function* () {
     const runs: string[] = [];
     const gate = yield* Latch.make(true);

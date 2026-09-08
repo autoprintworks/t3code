@@ -76,6 +76,11 @@ const LSOF_TIMEOUT_MS = 2_500;
 const WINDOWS_LISTENER_TIMEOUT_MS = 1_500;
 const WINDOWS_PROCESS_NAME_TIMEOUT_MS = 500;
 const WINDOWS_PROCESS_NAME_CONCURRENCY = 4;
+// The netstat/lsof failure path. It is inside the round, so it gets the same
+// treatment: 16 ports, 4 at a time, 250 ms each is 1000 ms against a 3000 ms
+// period, where an unbounded fan-out of untimed connects had no ceiling at all.
+const COMMON_PORT_PROBE_CONCURRENCY = 4;
+const COMMON_PORT_PROBE_TIMEOUT_MS = 250;
 // Pids left over after this many lookups are resolved by the next round rather
 // than pushing this one past its period. A first scan on a busy host sees ~36
 // listeners, so a cold cache fills over about five rounds.
@@ -206,19 +211,25 @@ export interface WindowsListenerRow {
  * is recognised by its foreign address being the wildcard `0.0.0.0:0` /
  * `[::]:0`, not by the state word, which netstat localises.
  */
-export const parseWindowsListenerOutput = (raw: string): ReadonlyArray<WindowsListenerRow> => {
+export const parseWindowsListenerOutput = (
+  raw: string,
+  options: { readonly truncated?: boolean } = {},
+): ReadonlyArray<WindowsListenerRow> => {
   const lines = raw.split(/\r?\n/g);
-  // netstat's output can be cut mid-row by the output cap. Real output always
-  // ends with a line terminator, so a non-empty tail segment is a partial row,
-  // whose port or pid would otherwise be read as a smaller whole number.
-  if (lines.at(-1) !== "") lines.pop();
+  // Only a run the output cap cut short can end mid-row, and that row's port or
+  // pid would be read as a smaller whole number. Output that ended on its own
+  // keeps its last row, with or without a trailing line terminator.
+  if (options.truncated === true && lines.at(-1) !== "") lines.pop();
   const seen = new Map<number, WindowsListenerRow>();
   for (const line of lines) {
     const parts = line.trim().split(/\s+/g);
-    // Proto, local address, foreign address, state, pid. A TCP row with fewer
-    // columns is not a row we can trust.
-    if (parts.length !== 5) continue;
-    const [proto, localRaw, foreignRaw, , pidRaw] = parts;
+    // Proto, local address, foreign address, state, pid. The state word is
+    // localised and some locales print it with a space in it, so the pid is read
+    // from the end rather than from a fixed column. A UDP row has no state and
+    // four columns; it is dropped by the proto check below.
+    if (parts.length < 5) continue;
+    const [proto, localRaw, foreignRaw] = parts;
+    const pidRaw = parts.at(-1);
     if (
       proto === undefined ||
       localRaw === undefined ||
@@ -338,12 +349,15 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       COMMON_DEV_PORTS,
       (port) =>
         net.isPortAvailableOnLoopback(port).pipe(
+          Effect.timeout(Duration.millis(COMMON_PORT_PROBE_TIMEOUT_MS)),
+          // A probe that does not answer in time is not evidence of a listener.
+          Effect.orElseSucceed(() => true),
           Effect.map((available) => ({
             port,
             listening: !available,
           })),
         ),
-      { concurrency: "unbounded" },
+      { concurrency: COMMON_PORT_PROBE_CONCURRENCY },
     );
     return results
       .filter((result) => result.listening)
@@ -399,12 +413,20 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           })
           .pipe(
             Effect.map((result) => [pid, parseTasklistProcessName(result.stdout)] as const),
-            Effect.orElseSucceed(() => [pid, null] as const),
+            // A tasklist that timed out or would not spawn said nothing about
+            // this pid. Dropping it from this round's results is what keeps it
+            // out of the cache, so the next round probes it again. A tasklist
+            // that ran and named nothing is an answer, and is cached as `null`.
+            Effect.catch((cause) =>
+              Effect.logDebug("tasklist failed for a listening pid", { cause, pid }).pipe(
+                Effect.as(null),
+              ),
+            ),
           ),
       { concurrency: WINDOWS_PROCESS_NAME_CONCURRENCY },
     );
     const resolvedAt = yield* Clock.currentTimeMillis;
-    const resolvedByPid = new Map(resolved);
+    const resolvedByPid = new Map(resolved.filter((entry) => entry !== null));
     // One read-modify-write, so two overlapping callers cannot lose each
     // other's lookups.
     return yield* Ref.modify(processNameCacheRef, (current) => {
@@ -413,11 +435,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       for (const pid of wanted) {
         const probed = resolvedByPid.get(pid);
         const existing = current.get(pid);
+        // An expired entry that this round had no room to re-probe keeps its
+        // old name. It stays expired, so it is still first in the queue for the
+        // next round; dropping it instead would blink the label to null and back
+        // on no new evidence, and every blink broadcasts and wakes the poll.
         const entry: ProcessNameEntry | undefined =
           probed === undefined
-            ? existing !== undefined && existing.expiresAtMs > resolvedAt
-              ? existing
-              : undefined
+            ? existing
             : { name: probed, expiresAtMs: resolvedAt + PROCESS_NAME_TTL_MS };
         if (entry === undefined) continue;
         next.set(pid, entry);
@@ -450,7 +474,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           outputMode: "truncate",
         })
         .pipe(
-          Effect.map((result) => result.stdout),
+          Effect.map((result) => ({
+            stdout: result.stdout,
+            truncated: result.stdoutTruncated,
+          })),
           Effect.catchTags({
             ProcessSpawnError: recoverWindowsProbeFailure,
             ProcessStdinError: recoverWindowsProbeFailure,
@@ -460,7 +487,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           }),
         );
       if (raw === null) return yield* probeCommonPorts();
-      const rows = parseWindowsListenerOutput(raw);
+      const rows = parseWindowsListenerOutput(raw.stdout, { truncated: raw.truncated });
       const processNameByPid = yield* windowsProcessNames(
         rows.map((row) => row.pid).filter((pid): pid is number => pid !== null),
       );
