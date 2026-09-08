@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 import {
   MessageId,
   CommandId,
@@ -170,65 +170,68 @@ describe("issuedByFleet", () => {
 });
 
 describe("requireThreadPromptable", () => {
-  it("lets the fleet prompt a read-only thread the fleet owns", async () => {
-    const thread = await Effect.runPromise(
-      requireThreadPromptable({
+  it.effect("lets the fleet prompt a read-only thread the fleet owns", () =>
+    Effect.gen(function* () {
+      const thread = yield* requireThreadPromptable({
         readModel: readOnlyReadModel(true),
         command: fleetTurnStartCommand,
         threadId: ThreadId.make("thread-1"),
-      }),
-    );
-    expect(thread.id).toBe(ThreadId.make("thread-1"));
-  });
+      });
+      expect(thread.id).toBe(ThreadId.make("thread-1"));
+    }),
+  );
 
-  it("refuses a user on that same thread", async () => {
-    await expect(
-      Effect.runPromise(
+  it.effect("refuses a user on that same thread", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
         requireThreadPromptable({
           readModel: readOnlyReadModel(true),
           command: messageSendCommand,
           threadId: ThreadId.make("thread-1"),
         }),
-      ),
-    ).rejects.toThrow("is read-only");
-  });
+      );
+      expect(error.detail).toContain("is read-only");
+    }),
+  );
 
-  it("refuses the fleet on a read-only thread the fleet does not own", async () => {
+  it.effect("refuses the fleet on a read-only thread the fleet does not own", () =>
     // The ACP worker mirror. The stamp is genuine and buys nothing, because
     // ownership is the other half of the rule.
-    await expect(
-      Effect.runPromise(
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
         requireThreadPromptable({
           readModel: readOnlyReadModel(false),
           command: fleetTurnStartCommand,
           threadId: ThreadId.make("thread-1"),
         }),
-      ),
-    ).rejects.toThrow("is read-only");
-  });
+      );
+      expect(error.detail).toContain("is read-only");
+    }),
+  );
 
-  it("refuses a checkpoint revert even on the fleet's own thread", async () => {
-    await expect(
-      Effect.runPromise(
+  it.effect("refuses a checkpoint revert even on the fleet's own thread", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
         requireThreadPromptable({
           readModel: readOnlyReadModel(true),
           command: revertCommand,
           threadId: ThreadId.make("thread-1"),
         }),
-      ),
-    ).rejects.toThrow("is read-only");
-  });
+      );
+      expect(error.detail).toContain("is read-only");
+    }),
+  );
 
-  it("lets anyone prompt an ordinary thread", async () => {
-    const thread = await Effect.runPromise(
-      requireThreadPromptable({
+  it.effect("lets anyone prompt an ordinary thread", () =>
+    Effect.gen(function* () {
+      const thread = yield* requireThreadPromptable({
         readModel,
         command: messageSendCommand,
         threadId: ThreadId.make("thread-1"),
-      }),
-    );
-    expect(thread.readOnly).toBeUndefined();
-  });
+      });
+      expect(thread.readOnly).toBeUndefined();
+    }),
+  );
 });
 
 describe("commandInvariants", () => {
