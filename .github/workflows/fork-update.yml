@@ -8,12 +8,6 @@
 name: Fork Update
 
 on:
-  # TEMPORARY, removed before this branch merges. GitHub only accepts a workflow_dispatch for a
-  # workflow that already sits on the default branch, and #94 forbids pushing there. This trigger
-  # is how the clean run and the conflict run in the pull request body were produced.
-  push:
-    branches:
-      - fork/94-update-workflow
   schedule:
     # Upstream cuts nightlies through the day. Take the newest one each morning.
     - cron: "0 6 * * *"
@@ -39,9 +33,6 @@ permissions: {}
 env:
   UPSTREAM_REMOTE: https://github.com/pingdotgg/t3code
   FORK_DEFAULT_BRANCH: main
-  # TEMPORARY, removed with the push trigger above. Stands in for the upstream_ref input, which
-  # a push event cannot carry. Empty means the newest upstream nightly tag.
-  FORK_UPDATE_PROOF_REF: "origin/fork/94-clean-probe"
 
 jobs:
   gate:
@@ -91,7 +82,7 @@ jobs:
             exit 1
           fi
 
-          ref="${INPUT_UPSTREAM_REF:-${FORK_UPDATE_PROOF_REF:-}}"
+          ref="${INPUT_UPSTREAM_REF:-}"
           if [ -z "$ref" ]; then
             ref=$(git ls-remote --tags --refs "$UPSTREAM_REMOTE" 'v*-nightly.*' \
               | awk '{ print $2 }' | sed 's#^refs/tags/##' | sort -V | tail -n 1)

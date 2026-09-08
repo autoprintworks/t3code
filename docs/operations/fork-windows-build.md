@@ -91,6 +91,19 @@ separate decision this ticket does not make.
 release. The installed fork points its update button at `autoprintworks/t3code`, so a published
 release is how a fix reaches the desktop without anyone running a build by hand.
 
+### Before any of it runs
+
+GitHub Actions is disabled on `autoprintworks/t3code` today
+(`gh api repos/autoprintworks/t3code/actions/permissions` returns `enabled: false`). Nothing in this
+section runs until a maintainer turns Actions on in Settings -> Actions -> General.
+
+Turning Actions on also arms the scheduled workflows this fork inherited from upstream, including
+`release.yml`, which this ticket may not change. Decide about `release.yml` in the same pass.
+
+A `workflow_dispatch` workflow must also sit on the default branch before GitHub will accept a
+dispatch, even a dispatch aimed at another branch. So the first dispatch of this workflow happens
+after it is merged to `main`.
+
 ### What runs when
 
 The workflow runs on a schedule at 06:00 UTC, and on `workflow_dispatch`. Dispatch takes two inputs:
@@ -169,6 +182,23 @@ also publishes nothing and pushes nothing.
 A worker resolves a conflict by hand, in a normal pull request against `main`: merge the upstream tag
 locally, fix the conflicting files, open the pull request. Do not rebase. Once that pull request is
 on `main`, dispatch the workflow again against the same tag.
+
+### The fork is behind upstream
+
+`main` last took upstream at `v0.0.32` (`3c7959c04 Merge upstream v0.0.32`). Upstream is on
+`v0.0.41-nightly`. No upstream tag merges into `main` cleanly today:
+
+| upstream ref                    | conflicting files |
+| ------------------------------- | ----------------- |
+| `v0.0.33-nightly.20260807.1025` | 4                 |
+| `v0.0.33`                       | 15                |
+| `v0.0.41-nightly.20260908.1414` | 105               |
+
+Measured with `git merge-tree --write-tree --name-only main <ref>`.
+
+So the first scheduled run will file a conflict issue, not a release. Someone has to walk the fork
+forward by hand first, one upstream tag at a time, before the pipeline can take the newest nightly on
+its own. That catch-up is not part of #94.
 
 ### The manual build as fallback
 
