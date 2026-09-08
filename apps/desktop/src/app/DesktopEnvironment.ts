@@ -4,7 +4,7 @@ import type {
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
-import { resolveForkBuildIdentity } from "@t3tools/shared/forkBuild";
+import { FORK_APP_ID, resolveForkBuildIdentity } from "@t3tools/shared/forkBuild";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -99,9 +99,10 @@ function resolveDesktopAppBranding(input: {
   const stageLabel = resolveDesktopAppStageLabel(input);
   // Deliberately distinct from upstream's "T3 Code": this fork never goes
   // upstream (#34), so the window title, About panel and app name must not
-  // read the same as an official T3 Code install (#59). The identity, default
-  // data directory and protocol scheme below stay fork-only regardless.
-  const baseName = resolveForkBuildIdentity(input.appVersion).appBaseName;
+  // read the same as an official T3 Code install (#59). It holds on every
+  // channel, nightly included, because the seam reads the fork's app id rather
+  // than the version string the nightly channel rewrites.
+  const baseName = resolveForkBuildIdentity().appBaseName;
   return {
     baseName,
     stageLabel,
@@ -219,7 +220,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.autoprintworks.t3code.dev" : "com.autoprintworks.t3code",
+      isDevelopment ? `${FORK_APP_ID}.dev` : FORK_APP_ID,
     ),
     linuxDesktopEntryName: isDevelopment ? "t3code-fork-dev.desktop" : "t3code-fork.desktop",
     linuxWmClass: isDevelopment ? "t3code-fork-dev" : "t3code-fork",

@@ -10,10 +10,14 @@
  *
  *   node scripts/generate-fork-icons.ts
  *
+ * `generate-fork-icons.test.ts` re-runs the generator and compares it against
+ * the committed bytes, so the assets cannot drift away from this file.
+ *
  * Outputs (all committed):
  *   assets/fork/fork-universal-1024.png   Linux and Windows master
  *   assets/fork/fork-macos-1024.png       macOS master, keeping upstream's grid padding
  *   assets/fork/fork-windows.ico          16, 24, 32, 48, 64, 128, 256
+ *   assets/fork/fork-web-*                favicons and the apple touch icon
  *   apps/desktop/resources/icon.png, icon.ico, icon.icns
  */
 
@@ -42,8 +46,17 @@ const GLYPH_WIDTH = 0.079;
 const GLYPH_GAP = 0.024;
 const GLYPH_STROKE = 0.025;
 
+/** Glyph proportions, as fractions of the glyph box rather than of the master. */
+const A_CROSSBAR_ABOVE_BASE = 0.34;
+const A_COUNTER_APEX_DROP = 1.7;
+const A_COUNTER_SIDE_INSET = 1.2;
+const P_BOWL_HEIGHT = 0.62;
+
 /** Samples per output pixel edge when rasterising the badge. */
 const BADGE_SUPERSAMPLE = 3;
+
+/** Sizes the hosted web build asks for: two favicons and the apple touch icon. */
+const WEB_ICON_SIZES = [16, 32, 180] as const;
 
 interface Rgba {
   readonly r: number;
@@ -52,42 +65,76 @@ interface Rgba {
   readonly a: number;
 }
 
+/** The box a glyph is drawn into, in master pixels, with its stroke weight. */
+interface GlyphBox {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly stroke: number;
+}
+
+/** An upward triangle, in master pixels. */
+interface Triangle {
+  readonly apexX: number;
+  readonly apexY: number;
+  readonly baseLeftX: number;
+  readonly baseRightX: number;
+  readonly baseY: number;
+}
+
 const inEllipse = (x: number, y: number, cx: number, cy: number, rx: number, ry: number) =>
   rx > 0 && ry > 0 && ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1;
 
-const inTriangle = (
-  x: number,
-  y: number,
-  apexX: number,
-  apexY: number,
-  baseLeftX: number,
-  baseRightX: number,
-  baseY: number,
-) => {
-  if (y < apexY || y > baseY) return false;
-  const t = (y - apexY) / (baseY - apexY);
-  return x >= apexX + (baseLeftX - apexX) * t && x <= apexX + (baseRightX - apexX) * t;
+const inTriangle = (x: number, y: number, triangle: Triangle) => {
+  if (y < triangle.apexY || y > triangle.baseY) return false;
+  const t = (y - triangle.apexY) / (triangle.baseY - triangle.apexY);
+  return (
+    x >= triangle.apexX + (triangle.baseLeftX - triangle.apexX) * t &&
+    x <= triangle.apexX + (triangle.baseRightX - triangle.apexX) * t
+  );
 };
 
 /** Upper-case "A", drawn as a triangular outline with a crossbar. */
-const inGlyphA = (x: number, y: number, x0: number, y0: number, w: number, h: number, t: number) => {
-  const apexX = x0 + w / 2;
-  const baseY = y0 + h;
-  if (!inTriangle(x, y, apexX, y0, x0, x0 + w, baseY)) return false;
-  const crossbarCentre = baseY - h * 0.34;
-  if (Math.abs(y - crossbarCentre) <= t / 2) return true;
-  return !inTriangle(x, y, apexX, y0 + t * 1.7, x0 + t * 1.2, x0 + w - t * 1.2, baseY);
+const inGlyphA = (x: number, y: number, box: GlyphBox) => {
+  const apexX = box.x + box.width / 2;
+  const baseY = box.y + box.height;
+  if (
+    !inTriangle(x, y, {
+      apexX,
+      apexY: box.y,
+      baseLeftX: box.x,
+      baseRightX: box.x + box.width,
+      baseY,
+    })
+  ) {
+    return false;
+  }
+
+  const crossbarCentre = baseY - box.height * A_CROSSBAR_ABOVE_BASE;
+  if (Math.abs(y - crossbarCentre) <= box.stroke / 2) return true;
+
+  return !inTriangle(x, y, {
+    apexX,
+    apexY: box.y + box.stroke * A_COUNTER_APEX_DROP,
+    baseLeftX: box.x + box.stroke * A_COUNTER_SIDE_INSET,
+    baseRightX: box.x + box.width - box.stroke * A_COUNTER_SIDE_INSET,
+    baseY,
+  });
 };
 
 /** Upper-case "P", drawn as a stem plus a half-elliptical bowl. */
-const inGlyphP = (x: number, y: number, x0: number, y0: number, w: number, h: number, t: number) => {
-  if (x >= x0 && x <= x0 + t && y >= y0 && y <= y0 + h) return true;
-  const bowlHeight = h * 0.62;
-  const cy = y0 + bowlHeight / 2;
-  if (x < x0 + t / 2) return false;
+const inGlyphP = (x: number, y: number, box: GlyphBox) => {
+  if (x >= box.x && x <= box.x + box.stroke && y >= box.y && y <= box.y + box.height) return true;
+
+  const bowlHeight = box.height * P_BOWL_HEIGHT;
+  const cx = box.x + box.stroke / 2;
+  const cy = box.y + bowlHeight / 2;
+  if (x < cx) return false;
+
   return (
-    inEllipse(x, y, x0 + t / 2, cy, w - t / 2, bowlHeight / 2) &&
-    !inEllipse(x, y, x0 + t / 2, cy, w - t / 2 - t, bowlHeight / 2 - t)
+    inEllipse(x, y, cx, cy, box.width - box.stroke / 2, bowlHeight / 2) &&
+    !inEllipse(x, y, cx, cy, box.width - box.stroke / 2 - box.stroke, bowlHeight / 2 - box.stroke)
   );
 };
 
@@ -98,17 +145,16 @@ function badgeAt(x: number, y: number, size: number): Rgba | null {
   if (distance > BADGE_RING_RADIUS * size) return null;
   if (distance > BADGE_FILL_RADIUS * size) return { ...BADGE_RING, a: 255 };
 
-  const glyphWidth = GLYPH_WIDTH * size;
-  const glyphHeight = GLYPH_HEIGHT * size;
-  const glyphGap = GLYPH_GAP * size;
+  const width = GLYPH_WIDTH * size;
+  const height = GLYPH_HEIGHT * size;
+  const gap = GLYPH_GAP * size;
   const stroke = GLYPH_STROKE * size;
-  const left = centre - (glyphWidth * 2 + glyphGap) / 2;
-  const top = centre - glyphHeight / 2;
+  const left = centre - (width * 2 + gap) / 2;
+  const top = centre - height / 2;
+  const glyphA: GlyphBox = { x: left, y: top, width, height, stroke };
+  const glyphP: GlyphBox = { ...glyphA, x: left + width + gap };
 
-  if (
-    inGlyphA(x, y, left, top, glyphWidth, glyphHeight, stroke) ||
-    inGlyphP(x, y, left + glyphWidth + glyphGap, top, glyphWidth, glyphHeight, stroke)
-  ) {
+  if (inGlyphA(x, y, glyphA) || inGlyphP(x, y, glyphP)) {
     return { ...BADGE_RING, a: 255 };
   }
 
@@ -253,47 +299,97 @@ function encodeIcns(renditions: ReadonlyMap<number, Buffer>): Buffer {
   return Buffer.concat([header, body]);
 }
 
+/** Encodes one PNG per requested size, reusing the master where the size matches. */
+function renderSizes(master: PNG, sizes: Iterable<number>): ReadonlyMap<number, Buffer> {
+  return new Map(
+    [...new Set(sizes)].map((size) => [
+      size,
+      PNG.sync.write(size === master.width ? master : resize(master, size)),
+    ]),
+  );
+}
+
+/** The upstream masters this generator brands. */
+export const FORK_ICON_MASTER_PATHS = {
+  universal: "assets/prod/black-universal-1024.png",
+  macos: "assets/prod/black-macos-1024.png",
+} as const;
+
+export interface ForkIconArtifact {
+  readonly relativePath: string;
+  readonly contents: Buffer;
+}
+
+/**
+ * Everything the fork commits, derived purely from the two masters, so a test
+ * can re-derive it and compare against the committed bytes.
+ */
+export function buildForkIconArtifacts(masters: {
+  readonly universal: Buffer;
+  readonly macos: Buffer;
+}): ReadonlyArray<ForkIconArtifact> {
+  const universal = brandMaster(PNG.sync.read(masters.universal));
+  const macos = brandMaster(PNG.sync.read(masters.macos));
+
+  // Windows, Linux and the web read the edge-to-edge plate; macOS wants
+  // upstream's grid padding, so its own master feeds the .icns and the 512px
+  // dock icon rather than the universal one.
+  const universalRenditions = renderSizes(universal, [...WINDOWS_ICON_SIZES, ...WEB_ICON_SIZES]);
+  const macosRenditions = renderSizes(macos, [...ICNS_ENTRIES.map(([, size]) => size), 512]);
+
+  const windowsIco = encodePngIco(
+    WINDOWS_ICON_SIZES.map((size) => ({ size, contents: universalRenditions.get(size)! })),
+  );
+
+  return [
+    { relativePath: "assets/fork/fork-universal-1024.png", contents: PNG.sync.write(universal) },
+    { relativePath: "assets/fork/fork-macos-1024.png", contents: PNG.sync.write(macos) },
+    { relativePath: "assets/fork/fork-windows.ico", contents: windowsIco },
+    { relativePath: "assets/fork/fork-web-favicon.ico", contents: windowsIco },
+    {
+      relativePath: "assets/fork/fork-web-favicon-16x16.png",
+      contents: universalRenditions.get(16)!,
+    },
+    {
+      relativePath: "assets/fork/fork-web-favicon-32x32.png",
+      contents: universalRenditions.get(32)!,
+    },
+    {
+      relativePath: "assets/fork/fork-web-apple-touch-180.png",
+      contents: universalRenditions.get(180)!,
+    },
+    { relativePath: "apps/desktop/resources/icon.ico", contents: windowsIco },
+    { relativePath: "apps/desktop/resources/icon.png", contents: macosRenditions.get(512)! },
+    { relativePath: "apps/desktop/resources/icon.icns", contents: encodeIcns(macosRenditions) },
+  ];
+}
+
+/** Reads the masters and brands them, without writing anything. */
+export const collectForkIconArtifacts = Effect.fn("collectForkIconArtifacts")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
+  const read = (relativePath: string) =>
+    fs.readFile(path.join(repoRoot, relativePath)).pipe(Effect.map((bytes) => Buffer.from(bytes)));
+
+  return buildForkIconArtifacts({
+    universal: yield* read(FORK_ICON_MASTER_PATHS.universal),
+    macos: yield* read(FORK_ICON_MASTER_PATHS.macos),
+  });
+});
+
 export const generateForkIcons = Effect.fn("generateForkIcons")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
+  const artifacts = yield* collectForkIconArtifacts();
 
-  const write = (relativePath: string, contents: Buffer) =>
-    Effect.gen(function* () {
-      const target = path.join(repoRoot, relativePath);
-      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-      yield* fs.writeFile(target, contents);
-      yield* Console.log(`wrote ${relativePath} (${contents.length} bytes)`);
-    });
-
-  const readMaster = (relativePath: string) =>
-    fs
-      .readFile(path.join(repoRoot, relativePath))
-      .pipe(Effect.map((bytes) => brandMaster(PNG.sync.read(Buffer.from(bytes)))));
-
-  const universal = yield* readMaster("assets/prod/black-universal-1024.png");
-  const macos = yield* readMaster("assets/prod/black-macos-1024.png");
-
-  const renditionSizes = [
-    ...new Set<number>([...WINDOWS_ICON_SIZES, ...ICNS_ENTRIES.map(([, size]) => size), 512]),
-  ];
-  const renditions = new Map<number, Buffer>(
-    renditionSizes.map((size) => [
-      size,
-      PNG.sync.write(size === universal.width ? universal : resize(universal, size)),
-    ]),
-  );
-
-  const windowsIco = encodePngIco(
-    WINDOWS_ICON_SIZES.map((size) => ({ size, contents: renditions.get(size)! })),
-  );
-
-  yield* write("assets/fork/fork-universal-1024.png", PNG.sync.write(universal));
-  yield* write("assets/fork/fork-macos-1024.png", PNG.sync.write(macos));
-  yield* write("assets/fork/fork-windows.ico", windowsIco);
-  yield* write("apps/desktop/resources/icon.ico", windowsIco);
-  yield* write("apps/desktop/resources/icon.png", renditions.get(512)!);
-  yield* write("apps/desktop/resources/icon.icns", encodeIcns(renditions));
+  for (const artifact of artifacts) {
+    const target = path.join(repoRoot, artifact.relativePath);
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+    yield* fs.writeFile(target, artifact.contents);
+    yield* Console.log(`wrote ${artifact.relativePath} (${artifact.contents.length} bytes)`);
+  }
 });
 
 export const generateForkIconsCommand = Command.make("generate-fork-icons", {}, () =>

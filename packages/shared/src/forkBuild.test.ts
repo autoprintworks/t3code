@@ -1,27 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveForkBuildIdentity } from "./forkBuild.ts";
+import { FORK_APP_ID, resolveForkBuildIdentity } from "./forkBuild.ts";
 
 describe("resolveForkBuildIdentity", () => {
-  it.each(["0.0.32-ap.4", "1.2.3-ap.10", "0.0.32-ap.4+build.7"])(
-    "recognizes the fork release tag in %s",
-    (version) => {
-      expect(resolveForkBuildIdentity(version)).toEqual({
-        isFork: true,
-        appBaseName: "T3 Code Fork",
-        tagLabel: "FORK",
-      });
-    },
-  );
+  it("names every build this repository makes after the fork", () => {
+    expect(resolveForkBuildIdentity()).toEqual({
+      appId: FORK_APP_ID,
+      appBaseName: "T3 Code Fork",
+      tagLabel: "FORK",
+    });
+  });
 
-  it.each(["0.0.32", "0.0.28-nightly.20260616.12", "0.0.32-ap", "0.0.32-apx.4", "", undefined, null])(
-    "treats %s as an upstream build",
-    (version) => {
-      expect(resolveForkBuildIdentity(version)).toEqual({
-        isFork: false,
-        appBaseName: "T3 Code",
-        tagLabel: null,
-      });
-    },
-  );
+  it("keeps the fork name out of upstream's namespace", () => {
+    // A build that answered to upstream's app id would collide with an official
+    // install: same taskbar grouping, same protocol registration.
+    expect(FORK_APP_ID).toBe("com.autoprintworks.t3code");
+    expect(resolveForkBuildIdentity().appBaseName).not.toBe("T3 Code");
+  });
 });

@@ -29,6 +29,10 @@ export const BRAND_ASSET_PATHS = {
   forkMacIconPng: "assets/fork/fork-macos-1024.png",
   forkLinuxIconPng: "assets/fork/fork-universal-1024.png",
   forkWindowsIconIco: "assets/fork/fork-windows.ico",
+  forkWebFaviconIco: "assets/fork/fork-web-favicon.ico",
+  forkWebFavicon16Png: "assets/fork/fork-web-favicon-16x16.png",
+  forkWebFavicon32Png: "assets/fork/fork-web-favicon-32x32.png",
+  forkWebAppleTouchIconPng: "assets/fork/fork-web-apple-touch-180.png",
 
   developmentDesktopIconPng: "assets/dev/blueprint-macos-1024.png",
   developmentWindowsIconIco: "assets/dev/blueprint-windows.ico",
@@ -38,7 +42,7 @@ export const BRAND_ASSET_PATHS = {
   developmentWebAppleTouchIconPng: "assets/dev/blueprint-web-apple-touch-180.png",
 } as const;
 
-export type WebAssetBrand = "development" | "nightly" | "production";
+export type WebAssetBrand = "development" | "fork" | "nightly" | "production";
 
 export const WEB_ASSET_CHANNELS = ["latest", "nightly"] as const;
 
@@ -70,6 +74,12 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     favicon16Png: BRAND_ASSET_PATHS.developmentWebFavicon16Png,
     favicon32Png: BRAND_ASSET_PATHS.developmentWebFavicon32Png,
     appleTouchIconPng: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
+  },
+  fork: {
+    faviconIco: BRAND_ASSET_PATHS.forkWebFaviconIco,
+    favicon16Png: BRAND_ASSET_PATHS.forkWebFavicon16Png,
+    favicon32Png: BRAND_ASSET_PATHS.forkWebFavicon32Png,
+    appleTouchIconPng: BRAND_ASSET_PATHS.forkWebAppleTouchIconPng,
   },
   nightly: {
     faviconIco: BRAND_ASSET_PATHS.nightlyWebFaviconIco,

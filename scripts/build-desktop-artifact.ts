@@ -12,11 +12,7 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
-import {
-  BRAND_ASSET_PATHS,
-  resolveWebAssetBrandForChannel,
-  type WebAssetBrand,
-} from "./lib/brand-assets.ts";
+import { BRAND_ASSET_PATHS, type WebAssetBrand } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
@@ -39,7 +35,10 @@ const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 // Deliberately distinct from upstream's "com.t3tools.t3code": this fork never goes
 // upstream (#34), so its builds must not collide with an official T3 Code install's
 // appId, install directory, or protocol handler. See docs/operations/fork-windows-build.md.
-const DESKTOP_APP_ID = "com.autoprintworks.t3code";
+// It is also the signal the identity seam reads, so stamping it here is what makes
+// every artifact this repository builds answer to the fork's name.
+const FORK_BUILD_IDENTITY = resolveForkBuildIdentity();
+const DESKTOP_APP_ID = FORK_BUILD_IDENTITY.appId;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1482,33 +1481,21 @@ export function resolveDesktopUpdateChannel(version: string): "latest" | "nightl
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
-export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
-  return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
+/**
+ * Every artifact this repository builds is the fork, on every channel, so the
+ * packaged artwork does not vary. The desktop icons and the bundled web icons
+ * take this one branch together: a nightly whose taskbar icon was badged but
+ * whose favicon was upstream's would be worse than either (#59).
+ */
+export function resolveDesktopWebAssetBrand(): WebAssetBrand {
+  return "fork";
 }
 
-export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
-  // The fork's own artwork wins over the channel artwork: this build installs
-  // beside an official release, so the taskbar has to tell them apart (#59).
-  if (resolveForkBuildIdentity(version).isFork) {
-    return {
-      macIconPng: BRAND_ASSET_PATHS.forkMacIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.forkLinuxIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.forkWindowsIconIco,
-    };
-  }
-
-  if (resolveDesktopUpdateChannel(version) === "nightly") {
-    return {
-      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
-    };
-  }
-
+export function resolveDesktopBuildIconAssets(): DesktopBuildIconAssets {
   return {
-    macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
-    linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
-    windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
+    macIconPng: BRAND_ASSET_PATHS.forkMacIconPng,
+    linuxIconPng: BRAND_ASSET_PATHS.forkLinuxIconPng,
+    windowsIconIco: BRAND_ASSET_PATHS.forkWindowsIconIco,
   };
 }
 
@@ -1529,10 +1516,15 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
+/**
+ * Matches what the app calls itself at runtime (`resolveDesktopAppBranding` in
+ * apps/desktop), so the installer, the shortcut and the window title agree.
+ * `apps/desktop/package.json` cannot read code, so the seam is the source and a
+ * test pins the manifest string to it rather than the other way around.
+ */
 export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code Fork (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code Fork");
+  const stageLabel = resolveDesktopUpdateChannel(version) === "nightly" ? "Nightly" : "Alpha";
+  return `${FORK_BUILD_IDENTITY.appBaseName} (${stageLabel})`;
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -1584,7 +1576,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       protocols: [
         {
-          name: "T3 Code Fork",
+          name: FORK_BUILD_IDENTITY.appBaseName,
           schemes: ["t3code-fork", "t3code-fork-dev"],
         },
       ],
@@ -1608,7 +1600,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // t3code:// OAuth callbacks to the app.
       protocols: [
         {
-          name: "T3 Code Fork",
+          name: FORK_BUILD_IDENTITY.appBaseName,
           schemes: ["t3code-fork", "t3code-fork-dev"],
         },
       ],
@@ -1789,7 +1781,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
 
   const appVersion = options.version ?? serverPackageJson.version;
-  const iconAssets = resolveDesktopBuildIconAssets(appVersion);
+  const iconAssets = resolveDesktopBuildIconAssets();
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
@@ -1839,7 +1831,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     });
   }
 
-  const webAssetBrand = resolveDesktopWebAssetBrand(appVersion);
+  const webAssetBrand = resolveDesktopWebAssetBrand();
   yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client");
   yield* Effect.log(`[desktop-artifact] Applied ${webAssetBrand} web client branding.`);
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));

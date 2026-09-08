@@ -82,12 +82,26 @@ robocopy "%USERPROFILE%\.t3\userdata" "%USERPROFILE%\.t3\userdata-backup-YYYYMMD
 
 ## Fork identity
 
-One function decides whether a build is the fork: `resolveForkBuildIdentity` in
-`packages/shared/src/forkBuild.ts`. It reads the fork's own `-ap.<n>` release tag off the package
-version, a marker upstream never publishes, so no build flag or env var is needed. The desktop reads
-that version from `Electron.app.getVersion()` and the web reads it from `import.meta.env.APP_VERSION`,
-which Vite bakes in from `apps/web/package.json`. Everything that shows fork identity goes through that
-one function, so an upstream merge has one place to conflict.
+One function says what a build calls itself: `resolveForkBuildIdentity` in
+`packages/shared/src/forkBuild.ts`. Everything that shows fork identity goes through it, so an upstream
+merge has one place to conflict.
+
+The signal is the fork's own application id, `com.autoprintworks.t3code`, a build-time constant. This
+repository never produces an official build, so identity does not vary and nothing at runtime can lose
+it: the same constant is stamped by `scripts/build-desktop-artifact.ts` as the electron-builder `appId`,
+set by `DesktopEnvironment.ts` as the Windows AppUserModelID, and compiled into the desktop main bundle
+and the web bundle alike.
+
+It used to read the fork's `-ap.<n>` release tag off the package version. That was wrong on the nightly
+channel: `scripts/resolve-nightly-release.ts` rewrites the version to `<base>-nightly.<date>.<n>`, which
+strips any prerelease tag, so a nightly would have de-forked itself — the installer would still have
+said `T3 Code Fork (Nightly)` while the running app called itself `T3 Code`. An app id cannot be lost
+that way, because no channel rewrites it.
+
+`apps/desktop/package.json` still repeats the product name, because electron and electron-builder read
+that manifest rather than code, and `packages/shared` cannot import an app's manifest without inverting
+the dependency. The seam is the source; a test in `scripts/build-desktop-artifact.test.ts` pins the
+manifest string to `resolveDesktopProductName`, so the copy cannot drift.
 
 Icons are generated, not hand-drawn per size:
 
@@ -96,8 +110,18 @@ node scripts/generate-fork-icons.ts
 ```
 
 That tints upstream's 1024px masters in `assets/prod/`, composites the badge, and writes every size the
-packagers need to `assets/fork/` and `apps/desktop/resources/`. All outputs are committed. Re-run it
-after upstream changes its artwork.
+packagers need to `assets/fork/` and `apps/desktop/resources/`: the Windows `.ico`, the web favicons and
+apple touch icon, and — from upstream's macOS master, which keeps Apple's grid padding — `icon.icns` and
+the 512px dock icon. All outputs are committed. Re-run it after upstream changes its artwork.
+
+`scripts/generate-fork-icons.test.ts` re-runs the generator and compares it against the committed bytes,
+so an edited generator or a hand-edited asset fails the suite instead of shipping.
+
+Before and after, on the Windows taskbar:
+
+| Before                                                           | After                                                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| ![Upstream's black plate](./images/fork-icon-taskbar-before.png) | ![The fork's tinted, badged plate](./images/fork-icon-taskbar-after.png) |
 
 ## Unsigned installer cost
 

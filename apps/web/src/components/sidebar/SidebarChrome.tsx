@@ -89,19 +89,15 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       >
         Code
       </span>
-      {APP_FORK_TAG_LABEL ? (
-        <span
-          className={cn(
-            "shrink-0 rounded-[3px] border px-1 py-px text-[9px] leading-[1.4] font-semibold tracking-[0.08em]",
-            onBackdrop
-              ? "border-white/40 text-white/80"
-              : "border-border text-muted-foreground",
-          )}
-          data-fork-tag=""
-        >
-          {APP_FORK_TAG_LABEL}
-        </span>
-      ) : null}
+      <span
+        className={cn(
+          "shrink-0 rounded-[3px] border px-1 py-px text-[9px] leading-[1.4] font-semibold tracking-[0.08em]",
+          onBackdrop ? "border-white/40 text-white/80" : "border-border text-muted-foreground",
+        )}
+        data-fork-tag=""
+      >
+        {APP_FORK_TAG_LABEL}
+      </span>
     </Link>
   );
 }

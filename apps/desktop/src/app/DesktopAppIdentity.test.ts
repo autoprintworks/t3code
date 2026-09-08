@@ -19,9 +19,7 @@ const defaultEnvironmentInput = {
   homeDirectory: "/Users/alice",
   platform: "darwin",
   processArch: "arm64",
-  // Carries the fork's `-ap.<n>` release tag, the signal `resolveForkBuildIdentity`
-  // reads to name this build "T3 Code Fork".
-  appVersion: "1.2.3-ap.4",
+  appVersion: "1.2.3",
   appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
   isPackaged: true,
   resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
@@ -184,6 +182,29 @@ describe("DesktopAppIdentity", () => {
     );
   });
 
+  it.effect.each([
+    { expected: "T3 Code Fork (Alpha)", version: "1.2.3" },
+    { expected: "T3 Code Fork (Nightly)", version: "1.2.3-nightly.20260908.7" },
+  ])("names the app $expected on version $version", ({ expected, version }) => {
+    // The version string carries no fork marker, and the nightly channel strips
+    // any prerelease tag it might carry. Fork naming must survive both (#59).
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.deepEqual(calls.setName, [expected]);
+      }),
+      { calls, environment: { appVersion: version } },
+    );
+  });
+
   it.effect("configures app identity from the environment commit override", () => {
     const calls: ElectronAppCalls = {
       setAboutPanelOptions: [],
@@ -198,7 +219,7 @@ describe("DesktopAppIdentity", () => {
 
         assert.deepEqual(calls.setName, ["T3 Code Fork (Alpha)"]);
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code Fork (Alpha)");
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3-ap.4");
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
         assert.deepEqual(calls.setDockIcon, ["/icon.png"]);
       }),

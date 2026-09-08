@@ -1,42 +1,43 @@
 /**
- * The single seam that answers "is this build the fork?".
+ * The single seam that says what this build calls itself.
  *
  * This fork never goes upstream (#34) and installs beside an official T3 Code
- * release, so it has to look different in the taskbar and in the sidebar
- * (#59). Every surface that shows fork identity reads it from here, so an
- * upstream merge has one place to conflict.
+ * release, so it has to look different in the taskbar and in the sidebar (#59).
+ * Every surface that shows fork identity reads it from here, so an upstream
+ * merge has one place to conflict.
  *
- * The signal is the fork's own release tag: this repo versions its packages
- * `<upstream version>-ap.<n>` (see `docs/operations/fork-windows-build.md`),
- * a marker upstream never publishes. Both surfaces can already see that version
- * without a new build flag: the desktop through `Electron.app.getVersion()`,
- * the web through `import.meta.env.APP_VERSION`, which Vite bakes in from
- * `apps/web/package.json`.
+ * The signal is the fork's own application id. Every artifact this repository
+ * builds carries `com.autoprintworks.t3code`, on every channel: the desktop
+ * build stamps it as the electron-builder `appId` and as the Windows app user
+ * model id, and the same constant is compiled into the desktop main bundle and
+ * into the web bundle. This repository never produces an official build, so the
+ * identity does not vary and nothing at runtime can lose it. A nightly keeps it:
+ * the nightly channel only rewrites the version string
+ * (`scripts/resolve-nightly-release.ts`), which is why the version is not the
+ * signal.
  */
 
-const FORK_PRERELEASE_TAG_PATTERN = /-ap\.\d+(?:\+[\w.-]+)?$/;
+/** The application id every artifact this repository builds carries. */
+export const FORK_APP_ID = "com.autoprintworks.t3code";
 
-export const UPSTREAM_APP_BASE_NAME = "T3 Code";
-export const FORK_APP_BASE_NAME = "T3 Code Fork";
-export const FORK_TAG_LABEL = "FORK";
+const FORK_APP_BASE_NAME = "T3 Code Fork";
+const FORK_TAG_LABEL = "FORK";
 
 export interface ForkBuildIdentity {
-  readonly isFork: boolean;
+  /** The `appId` of every artifact built here, and the signal this seam reads. */
+  readonly appId: string;
   /** Product name for the window title, the About panel and the app name. */
   readonly appBaseName: string;
-  /** Short tag for the sidebar wordmark, or `null` on a non-fork build. */
-  readonly tagLabel: string | null;
+  /** Short tag the wordmark carries on every client. */
+  readonly tagLabel: string;
 }
 
-export function resolveForkBuildIdentity(
-  appVersion: string | null | undefined,
-): ForkBuildIdentity {
-  const isFork =
-    typeof appVersion === "string" && FORK_PRERELEASE_TAG_PATTERN.test(appVersion.trim());
+const FORK_BUILD_IDENTITY: ForkBuildIdentity = {
+  appId: FORK_APP_ID,
+  appBaseName: FORK_APP_BASE_NAME,
+  tagLabel: FORK_TAG_LABEL,
+};
 
-  return {
-    isFork,
-    appBaseName: isFork ? FORK_APP_BASE_NAME : UPSTREAM_APP_BASE_NAME,
-    tagLabel: isFork ? FORK_TAG_LABEL : null,
-  };
+export function resolveForkBuildIdentity(): ForkBuildIdentity {
+  return FORK_BUILD_IDENTITY;
 }
