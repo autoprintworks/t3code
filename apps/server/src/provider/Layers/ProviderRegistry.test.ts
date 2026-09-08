@@ -1,12 +1,12 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -69,14 +69,27 @@ process.env.T3CODE_CURSOR_ENABLED = "1";
 // ── Test helpers ────────────────────────────────────────────────────
 
 const encoder = new TextEncoder();
-const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
-// Provider probes and status-cache writes complete on the host clock, not on TestClock, and Windows
-// settles both a real timer tick later than POSIX does. Poll loops driven by TestClock yield to the
-// host clock as well, or they spin out before the work they are waiting for lands.
-const yieldToHostClock = Effect.promise(
-  () => new Promise<void>((resolve) => setTimeout(resolve, 20)),
-);
+/**
+ * Arms a receipt for the next registry snapshot the predicate accepts, then returns the effect
+ * that waits on it. `upsertProviders` persists every changed snapshot before it publishes, so the
+ * emission proves the status cache file is already on disk.
+ *
+ * Call this before publishing. `Stream.fromPubSub` subscribes at stream start, so the yield lets
+ * the forked fibre attach first.
+ */
+const armRegistryChangeReceipt = Effect.fn("armRegistryChangeReceipt")(function* (
+  registry: { readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>> },
+  matches: (providers: ReadonlyArray<ServerProvider>) => boolean,
+) {
+  const seen = yield* Deferred.make<void>();
+  yield* Stream.runForEach(registry.streamChanges, (providers) =>
+    matches(providers) ? Deferred.succeed(seen, undefined) : Effect.void,
+  ).pipe(Effect.forkScoped);
+  yield* Effect.yieldNow;
+  return Deferred.await(seen);
+});
+const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -1097,21 +1110,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
               ...initialProvider.models,
             ]);
-            // Stream.fromPubSub drops anything published before the registry's subscriber attaches,
-            // and that subscription fiber starts on the host clock.
-            yield* yieldToHostClock;
+            const refreshPersisted = yield* armRegistryChangeReceipt(registry, (providers) =>
+              providers.some((provider) => provider.checkedAt === refreshedProvider.checkedAt),
+            );
             yield* PubSub.publish(changes, refreshedProvider);
-
-            let cachedProvider = yield* readProviderStatusCache(filePath);
-            for (
-              let attempt = 0;
-              attempt < 50 && cachedProvider?.checkedAt !== refreshedProvider.checkedAt;
-              attempt += 1
-            ) {
-              yield* TestClock.adjust("10 millis");
-              yield* Effect.yieldNow;
-              cachedProvider = yield* readProviderStatusCache(filePath);
-            }
+            yield* refreshPersisted;
+            const cachedProvider = yield* readProviderStatusCache(filePath);
 
             assert.deepStrictEqual(cachedProvider, {
               ...refreshedProvider,
@@ -1225,38 +1229,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 instanceId: openCodeInstanceId,
               });
 
-              // Stream.fromPubSub drops anything published before the registry's subscriber
-              // attaches, and that subscription fiber starts on the host clock.
-              yield* yieldToHostClock;
+              const authoritativePersisted = yield* armRegistryChangeReceipt(
+                registry,
+                (providers) =>
+                  providers.some(
+                    (provider) => provider.checkedAt === authoritativeProvider.checkedAt,
+                  ),
+              );
               yield* PubSub.publish(changes, authoritativeProvider);
+              yield* authoritativePersisted;
 
-              let cachedProvider = yield* readProviderStatusCache(filePath);
-              for (
-                let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== authoritativeProvider.checkedAt;
-                attempt += 1
-              ) {
-                yield* TestClock.adjust("10 millis");
-                yield* yieldToHostClock;
-                yield* Effect.yieldNow;
-                cachedProvider = yield* readProviderStatusCache(filePath);
-              }
+              assert.deepStrictEqual((yield* readProviderStatusCache(filePath))?.models, [
+                authoritativeProvider.models[0]!,
+              ]);
 
-              assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
-
+              // The failed refresh must not change the cache, so there is no new snapshot to
+              // wait on. Publish it and let the registry settle before reading again.
               yield* PubSub.publish(changes, failedProvider);
-              for (
-                let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== failedProvider.checkedAt;
-                attempt += 1
-              ) {
-                yield* TestClock.adjust("10 millis");
-                yield* yieldToHostClock;
-                yield* Effect.yieldNow;
-                cachedProvider = yield* readProviderStatusCache(filePath);
-              }
+              yield* Effect.yieldNow;
 
-              assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
+              assert.deepStrictEqual((yield* readProviderStatusCache(filePath))?.models, [
+                authoritativeProvider.models[0]!,
+              ]);
               assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
                 authoritativeProvider.models[0]!,
               ]);
@@ -1598,6 +1592,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const firstMissing = `t3code_codex_first_`;
           const secondMissing = `t3code_codex_second_`;
           const spawnedCommands: Array<string> = [];
+          // Completed by the spawner interceptor below. The re-probe spawning the new binary is
+          // the receipt this test waits on, so it never has to poll for it.
+          const reprobeSpawned = yield* Deferred.make<void>();
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
@@ -1633,8 +1630,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
-                spawnedCommands.push((command as { readonly command: string }).command);
-                return spawner.spawn(command);
+                const executable = (command as { readonly command: string }).command;
+                spawnedCommands.push(executable);
+                return executable === secondMissing
+                  ? Deferred.succeed(reprobeSpawned, undefined).pipe(
+                      Effect.andThen(spawner.spawn(command)),
+                    )
+                  : spawner.spawn(command);
               }),
             ),
             Layer.provideMerge(NodeServices.layer),
@@ -1682,26 +1684,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               },
             });
 
-            // Poll until the injected process boundary observes the new
-            // executable. This verifies the public settings-to-probe behavior
-            // without depending on timestamps assigned by TestClock.
-            const refreshed = yield* Effect.gen(function* () {
-              for (let attempts = 0; attempts < 60; attempts += 1) {
-                const providers = yield* registry.getProviders;
-                const codex = providers.find((provider) => provider.instanceId === "codex");
-                if (
-                  codex !== undefined &&
-                  codex.status === "error" &&
-                  spawnedCommands.includes(secondMissing)
-                ) {
-                  return providers;
-                }
-                yield* TestClock.adjust("50 millis");
-                yield* yieldToHostClock;
-                yield* Effect.yieldNow;
-              }
-              return yield* registry.getProviders;
-            });
+            // Wait for the injected process boundary to observe the new executable. This
+            // verifies the public settings-to-probe behavior without depending on timestamps
+            // assigned by TestClock.
+            yield* Deferred.await(reprobeSpawned);
+            const refreshed = yield* registry.getProviders;
 
             const reprobedCodex = refreshed.find((provider) => provider.instanceId === "codex");
             assert.deepStrictEqual(spawnedCommands, [firstMissing, secondMissing]);
@@ -2223,8 +2210,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       );
 
       it.effect("runs Claude status probes with the configured CLAUDE_CONFIG_DIR", () => {
-        // The provider resolves homePath to a host-native absolute path before it spawns.
-        const claudeConfigDir = NodePath.resolve("/tmp/t3code-claude-home");
+        const claudeConfigDir = "/tmp/t3code-claude-home";
         const recorded = recordingMockSpawnerLayer((args) => {
           const joined = args.join(" ");
           if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
@@ -2238,6 +2224,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         });
 
         return Effect.gen(function* () {
+          const path = yield* Path.Path;
           const status = yield* checkClaudeProviderStatus(
             {
               ...defaultClaudeSettings,
@@ -2248,7 +2235,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.status, "ready");
           assert.deepStrictEqual(
             recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
-            [claudeConfigDir],
+            // makeClaudeEnvironment resolves the configured home path, so build the expectation
+            // the same way rather than assuming the host reads a POSIX path unchanged.
+            [path.resolve(claudeConfigDir)],
           );
         }).pipe(Effect.provide(recorded.layer));
       });
