@@ -85,6 +85,101 @@ and this fork has none of those secrets. Running the installer trips Windows Sma
 the same warning; there is nothing to fix here short of standing up a signing story, which is a
 separate decision this ticket does not make.
 
+## The update pipeline
+
+`.github/workflows/fork-update.yml` does the build above on a runner, then publishes it as a fork
+release. The installed fork points its update button at `autoprintworks/t3code`, so a published
+release is how a fix reaches the desktop without anyone running a build by hand.
+
+### What runs when
+
+The workflow runs on a schedule at 06:00 UTC, and on `workflow_dispatch`. Dispatch takes two inputs:
+
+- `upstream_ref`. The ref to merge. Empty means the newest upstream nightly tag, found with
+  `git ls-remote --tags --refs https://github.com/pingdotgg/t3code 'v*-nightly.*' | sort -V | tail -n 1`.
+- `dry_run`. Default `true` on dispatch, `false` on the schedule. A dry run stops before publish and
+  before push, and uploads the installer as a workflow artifact instead.
+
+A real run only starts from `main`. A dispatch from any other branch must be a dry run.
+
+There are two jobs.
+
+1. `gate`, on `ubuntu-latest`. It merges upstream, then runs `pnpm typecheck`, `pnpm lint`,
+   `pnpm test` and `node scripts/check-fork-features.ts`.
+2. `release`, on `windows-latest`. It repeats the merge at the commit the gate passed, bumps the
+   version, runs `pnpm dist:desktop:win`, then `pnpm release:smoke`, then publishes and pushes.
+
+The gate runs on Linux, not Windows. That is a deliberate split. The server and shared suites still
+fail on Windows ([#80](https://github.com/autoprintworks/t3code/issues/80)), so a Windows gate is red
+before it starts and no release could ever pass it. Everything that has to be Windows, the installer
+and the release smoke check, stays on `windows-latest`. Move the gate to Windows once #80 lands.
+
+The merge is always `git merge --no-ff`. Never a rebase
+([#60](https://github.com/autoprintworks/t3code/issues/60)). A rebase would rewrite the fork's own
+commits on top of upstream and lose the record of what this fork changed.
+
+### The version scheme
+
+Take the upstream tag's base version, bump the patch, add `-ap.<n>`.
+
+`v0.0.41-nightly.20260908.1414` gives base `0.0.41`, then `0.0.42-ap.1`.
+
+`<n>` is one above the highest `-ap` suffix already used for that version, counting both the current
+`apps/desktop/package.json` version and any existing `v<version>-ap.*` tag. So a second run against
+the same upstream tag produces `0.0.42-ap.2`.
+
+This sorts above three things at once: the installed fork build (`0.0.32-ap.7`), the upstream nightly
+the build took, and upstream's eventual stable `0.0.41`. semver ranks `0.0.42-ap.1` below a future
+`0.0.42`, so upstream can still overtake the fork on the next patch.
+
+`0.0.42-ap.1` does not match `/-nightly\.\d{8}\.\d+$/`, so `resolveDesktopUpdateChannel` returns
+`latest` and the build writes `latest.yml`. The release carries the installer, the `.exe.blockmap`
+and `latest.yml`. It is published as a normal release, not a prerelease and not a draft, because the
+`latest` channel resolves the tag through GitHub's `/releases/latest`, which skips both.
+
+The build gets `T3CODE_DESKTOP_UPDATE_REPOSITORY=autoprintworks/t3code`. That is the only thing that
+sets the update feed; see the "No silent re-overwrite" note above.
+
+### The fork feature manifest
+
+`fork-features.json` at the repository root lists every feature this fork carries over upstream: the
+files it lives in, the test that proves it, and whether it patches a file upstream also owns.
+`scripts/check-fork-features.ts` fails when a listed file or test file is gone, then runs the listed
+tests. It runs in the gate and in `ci.yml`, so an upstream merge that deletes a fork seam stops
+before it can publish.
+
+Two entries need a word. `terminal-subprocess-poll`
+([#83](https://github.com/autoprintworks/t3code/issues/83)) is not on `main` yet; the entry reserves
+the files and the test so an upstream merge cannot quietly remove them. #80 has no landed code of its
+own, so its landed sibling [#75](https://github.com/autoprintworks/t3code/issues/75), the Windows
+fix in `scripts/release-smoke.ts`, sits inside `fork-desktop-build`.
+
+Add an entry whenever you add a fork feature. The manifest is the list of things an upstream merge
+must not break.
+
+### When a merge conflicts
+
+The gate aborts the merge, opens an issue titled `Upstream <tag> conflicts with fork` listing the
+conflicting files, publishes nothing, pushes nothing, and exits non-zero. A second conflict on the
+same tag comments on that issue rather than opening another.
+
+A red gate after a clean merge opens `Upstream <tag> breaks the fork gate` with the failing step, and
+also publishes nothing and pushes nothing.
+
+A worker resolves a conflict by hand, in a normal pull request against `main`: merge the upstream tag
+locally, fix the conflicting files, open the pull request. Do not rebase. Once that pull request is
+on `main`, dispatch the workflow again against the same tag.
+
+### The manual build as fallback
+
+The runner build is the same `dist:desktop:win` command described at the top of this document. When
+the pipeline is down, or a release has to go out before a conflict is resolved, build locally with
+[Reproducing this cold](#reproducing-this-cold) below and install the `.exe` by hand. A hand-built
+installer has no update feed unless you set `T3CODE_DESKTOP_UPDATE_REPOSITORY` yourself.
+
+Signing stays out of scope for the pipeline for the same reason it is out of scope locally: this fork
+has no signing secrets. See [Unsigned installer cost](#unsigned-installer-cost) above.
+
 ## Reproducing this cold
 
 1. `vp i` (first checkout only).

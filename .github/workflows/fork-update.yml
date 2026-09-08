@@ -1,0 +1,435 @@
+# Takes an upstream release into this fork, keeps every fork change, gates it, then
+# publishes a fork release the desktop app's update button can install.
+#
+# Two jobs on purpose. The gate runs on ubuntu-latest because the server and shared
+# test suites cannot pass on Windows yet (#80), so a Windows gate is red before it
+# starts. Everything that has to be Windows - the unsigned installer and the release
+# smoke check - runs on windows-latest. See docs/operations/fork-windows-build.md.
+name: Fork Update
+
+on:
+  schedule:
+    # Upstream cuts nightlies through the day. Take the newest one each morning.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "Ref to merge. Empty means the newest upstream nightly tag."
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Stop before publish and before push. Upload the installer as an artifact instead."
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: fork-update
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  UPSTREAM_REMOTE: https://github.com/pingdotgg/t3code
+  FORK_DEFAULT_BRANCH: main
+
+jobs:
+  gate:
+    name: Merge upstream and gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      upstream_ref: ${{ steps.resolve.outputs.upstream_ref }}
+      base_sha: ${{ steps.resolve.outputs.base_sha }}
+      dry_run: ${{ steps.resolve.outputs.dry_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the upstream ref and the run mode
+        id: resolve
+        shell: bash
+        env:
+          INPUT_UPSTREAM_REF: ${{ inputs.upstream_ref }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM_REMOTE"
+          git fetch --tags --force upstream
+
+          # A scheduled run is the real pipeline. A dispatch rehearses unless told otherwise.
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            dry_run=false
+          else
+            dry_run="${INPUT_DRY_RUN:-true}"
+          fi
+
+          # A real run publishes and pushes, so it may only run from the default branch.
+          if [ "$dry_run" != "true" ] && [ "$REF_NAME" != "$FORK_DEFAULT_BRANCH" ]; then
+            echo "A real run must be dispatched from $FORK_DEFAULT_BRANCH, not $REF_NAME." >&2
+            exit 1
+          fi
+
+          ref="${INPUT_UPSTREAM_REF:-}"
+          if [ -z "$ref" ]; then
+            ref=$(git ls-remote --tags --refs "$UPSTREAM_REMOTE" 'v*-nightly.*' \
+              | awk '{ print $2 }' | sed 's#^refs/tags/##' | sort -V | tail -n 1)
+          fi
+          if [ -z "$ref" ]; then
+            echo "Found no upstream nightly tag to merge." >&2
+            exit 1
+          fi
+          git rev-parse --verify "${ref}^{commit}" > /dev/null
+
+          {
+            echo "upstream_ref=$ref"
+            echo "base_sha=$(git rev-parse HEAD)"
+            echo "dry_run=$dry_run"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Merging $ref into $REF_NAME at $(git rev-parse --short HEAD). dry_run=$dry_run."
+
+      - name: Merge upstream into the fork
+        id: merge
+        shell: bash
+        env:
+          UPSTREAM_REF: ${{ steps.resolve.outputs.upstream_ref }}
+        run: |
+          set -uo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Merge, never rebase (#60). A rebase would rewrite the fork's own history.
+          if git merge --no-ff --no-edit -m "chore: merge upstream $UPSTREAM_REF" "$UPSTREAM_REF"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt"
+          git merge --abort
+          echo "conflict=true" >> "$GITHUB_OUTPUT"
+          echo "The merge stopped on these files:"
+          cat "$RUNNER_TEMP/conflicts.txt"
+
+      - name: Write the conflict report
+        id: conflict_report
+        if: steps.merge.outputs.conflict == 'true'
+        shell: bash
+        env:
+          UPSTREAM_REF: ${{ steps.resolve.outputs.upstream_ref }}
+        run: |
+          set -euo pipefail
+          {
+            echo "\`$UPSTREAM_REF\` does not merge into \`$FORK_DEFAULT_BRANCH\` cleanly."
+            echo "The fork update workflow aborted the merge. It published nothing and pushed nothing."
+            echo ""
+            echo "Conflicting files:"
+            echo ""
+            sed -e 's|^|- `|' -e 's|$|`|' "$RUNNER_TEMP/conflicts.txt"
+            echo ""
+            echo "A worker resolves this by hand in a normal pull request. Merge, never rebase (#60)."
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$RUNNER_TEMP/conflict-issue.md"
+          {
+            echo "body<<FORK_UPDATE_EOF"
+            cat "$RUNNER_TEMP/conflict-issue.md"
+            echo "FORK_UPDATE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report the conflict
+        if: steps.merge.outputs.conflict == 'true'
+        uses: ./.github/actions/report-fork-update-issue
+        with:
+          title: Upstream ${{ steps.resolve.outputs.upstream_ref }} conflicts with fork
+          body: ${{ steps.conflict_report.outputs.body }}
+          token: ${{ github.token }}
+
+      - name: Stop on the conflict
+        if: steps.merge.outputs.conflict == 'true'
+        shell: bash
+        run: exit 1
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable pnpm
+          pnpm install --frozen-lockfile
+
+      - name: Gate
+        id: gate
+        shell: bash
+        run: |
+          set -uo pipefail
+          run_gate_step() {
+            name="$1"
+            shift
+            echo "::group::$name"
+            if ! "$@"; then
+              echo "::endgroup::"
+              echo "failed_step=$name" >> "$GITHUB_OUTPUT"
+              echo "The gate failed on: $name" >&2
+              exit 1
+            fi
+            echo "::endgroup::"
+          }
+
+          run_gate_step "pnpm typecheck" pnpm typecheck
+          run_gate_step "pnpm lint" pnpm lint
+          run_gate_step "pnpm test" pnpm test
+          run_gate_step "node scripts/check-fork-features.ts" node scripts/check-fork-features.ts
+
+      - name: Write the gate report
+        id: gate_report
+        if: failure() && steps.gate.outcome == 'failure'
+        shell: bash
+        env:
+          UPSTREAM_REF: ${{ steps.resolve.outputs.upstream_ref }}
+          FAILED_STEP: ${{ steps.gate.outputs.failed_step }}
+        run: |
+          set -euo pipefail
+          {
+            echo "\`$UPSTREAM_REF\` merges into \`$FORK_DEFAULT_BRANCH\` cleanly, then fails the fork gate."
+            echo "The fork update workflow published nothing and pushed nothing."
+            echo ""
+            echo "Failing step: \`${FAILED_STEP:-unknown}\`"
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$RUNNER_TEMP/gate-issue.md"
+          {
+            echo "body<<FORK_UPDATE_EOF"
+            cat "$RUNNER_TEMP/gate-issue.md"
+            echo "FORK_UPDATE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report the gate failure
+        if: failure() && steps.gate.outcome == 'failure'
+        uses: ./.github/actions/report-fork-update-issue
+        with:
+          title: Upstream ${{ steps.resolve.outputs.upstream_ref }} breaks the fork gate
+          body: ${{ steps.gate_report.outputs.body }}
+          token: ${{ github.token }}
+
+  release:
+    name: Build, smoke and publish
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM_REF: ${{ needs.gate.outputs.upstream_ref }}
+      DRY_RUN: ${{ needs.gate.outputs.dry_run }}
+    steps:
+      - name: Checkout the commit the gate passed
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.gate.outputs.base_sha }}
+          fetch-depth: 0
+
+      - name: Merge upstream into the fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM_REMOTE"
+          git fetch --tags --force upstream
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The gate proved this merge is clean at this commit, so a conflict here is a bug.
+          git merge --no-ff --no-edit -m "chore: merge upstream $UPSTREAM_REF" "$UPSTREAM_REF"
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable pnpm
+          pnpm install --frozen-lockfile
+
+      - name: Resolve the fork version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Version scheme: take the upstream tag's base version, bump the patch, add -ap.<n>.
+          # v0.0.41-nightly.20260908.1414 becomes 0.0.42-ap.1. That sorts above the nightly it
+          # took, above upstream's eventual 0.0.41, and above the installed fork build.
+          base="${UPSTREAM_REF#v}"
+          base="${base%%-*}"
+          if ! printf '%s' "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Ref '$UPSTREAM_REF' carries no x.y.z version to bump." >&2
+            exit 1
+          fi
+          major="${base%%.*}"
+          rest="${base#*.}"
+          minor="${rest%%.*}"
+          patch="${rest#*.}"
+          next="$major.$minor.$((patch + 1))"
+
+          # <n> is one above the highest -ap suffix already used for this version, so a second
+          # run on the same upstream tag still sorts above the first.
+          highest=0
+          current=$(node -p "require('./apps/desktop/package.json').version")
+          case "$current" in
+            "$next-ap."*)
+              suffix="${current##*-ap.}"
+              case "$suffix" in
+                ''|*[!0-9]*) ;;
+                *) highest="$suffix" ;;
+              esac
+              ;;
+          esac
+          for tag in $(git tag --list "v$next-ap.*"); do
+            suffix="${tag##*-ap.}"
+            case "$suffix" in
+              ''|*[!0-9]*) continue ;;
+            esac
+            if [ "$suffix" -gt "$highest" ]; then highest="$suffix"; fi
+          done
+
+          version="$next-ap.$((highest + 1))"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Fork version: $version. Upstream: $UPSTREAM_REF. Installed: $current."
+
+      - name: Bump the fork version
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/update-release-package-versions.ts "$VERSION"
+          git add -A
+          git commit -m "chore(release): prepare $VERSION"
+
+      - name: Build the unsigned Windows installer
+        shell: bash
+        env:
+          # The build reads its update source here. This is what points the installed fork at
+          # the fork's own releases instead of upstream's. See scripts/build-desktop-artifact.ts.
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: autoprintworks/t3code
+        run: pnpm dist:desktop:win
+
+      - name: Release smoke
+        shell: bash
+        run: pnpm release:smoke
+
+      - name: Collect the release files
+        id: assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release-publish
+          for file in release/*.exe release/*.exe.blockmap release/*.yml; do
+            cp "$file" release-publish/
+          done
+
+          installers=(release-publish/*.exe)
+          blockmaps=(release-publish/*.exe.blockmap)
+          manifests=(release-publish/*.yml)
+          if [ "${#installers[@]}" -ne 1 ] || [ "${#blockmaps[@]}" -ne 1 ] || [ "${#manifests[@]}" -ne 1 ]; then
+            echo "Expected one installer, one blockmap and one channel file. Found:" >&2
+            ls -l release-publish >&2
+            exit 1
+          fi
+
+          # The channel file is what the desktop updater reads. resolveDesktopUpdateChannel
+          # returns "latest" for an -ap version, so this is latest.yml.
+          echo "manifest=$(basename "${manifests[0]}")" >> "$GITHUB_OUTPUT"
+          ls -l release-publish
+
+      - name: Upload the installer
+        if: env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-installer-${{ steps.version.outputs.version }}
+          path: release-publish/*
+          if-no-files-found: error
+
+      - name: Stop before publish and before push
+        if: env.DRY_RUN == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MANIFEST: ${{ steps.assets.outputs.manifest }}
+        run: echo "Dry run. Built $VERSION with $MANIFEST. Published nothing. Pushed nothing."
+
+      - name: Publish the fork release
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Not a prerelease and not a draft. The desktop app's "latest" channel resolves the
+          # tag through /releases/latest, which skips both.
+          gh release create "v$VERSION" release-publish/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "T3 Code Fork $VERSION" \
+            --latest \
+            --notes "Fork build of upstream \`$UPSTREAM_REF\` with every fork change kept. The Windows installer is unsigned, so SmartScreen warns on first run."
+
+      - name: Push the merge and the version bump
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Last, so the branch and the published release never disagree. A rejected push means
+          # the default branch moved after the gate ran. Run the workflow again.
+          git push origin "HEAD:refs/heads/$FORK_DEFAULT_BRANCH"
+
+      - name: Write the build failure report
+        id: build_report
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "\`$UPSTREAM_REF\` passed the fork gate, then failed the Windows build or the release smoke check."
+            echo "The fork update workflow published nothing and pushed nothing."
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$RUNNER_TEMP/build-issue.md"
+          {
+            echo "body<<FORK_UPDATE_EOF"
+            cat "$RUNNER_TEMP/build-issue.md"
+            echo "FORK_UPDATE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report the build failure
+        if: failure()
+        uses: ./.github/actions/report-fork-update-issue
+        with:
+          title: Upstream ${{ needs.gate.outputs.upstream_ref }} breaks the fork gate
+          body: ${{ steps.build_report.outputs.body }}
+          token: ${{ github.token }}
