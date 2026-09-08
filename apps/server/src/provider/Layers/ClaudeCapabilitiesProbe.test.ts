@@ -105,7 +105,10 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "    },",
           '  }) + "\\n");',
           "});",
-          "setInterval(() => {}, 1_000);",
+          // The SDK's abort does not reap this stub, so it retires itself. The probe answers in well
+          // under a second; a stub that outlives the test holds its working directory open, and
+          // Windows refuses to remove a directory that is a live process's working directory.
+          "setTimeout(() => process.exit(0), 3_000);",
           "",
         ].join("\n"),
       );
@@ -122,17 +125,20 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       );
 
       assert.deepEqual(capabilities, {
-        email: "dev@example.com",
-        subscriptionType: "pro",
-        tokenSource: "oauth",
-        apiProvider: undefined,
-        slashCommands: [
-          {
-            name: "review",
-            description: "Review changes",
-            input: { hint: "[path]" },
-          },
-        ],
+        _tag: "Succeeded",
+        probe: {
+          email: "dev@example.com",
+          subscriptionType: "pro",
+          tokenSource: "oauth",
+          apiProvider: undefined,
+          slashCommands: [
+            {
+              name: "review",
+              description: "Review changes",
+              input: { hint: "[path]" },
+            },
+          ],
+        },
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -149,6 +155,22 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       assert.equal(invocation.mcpConfig, undefined);
 
       assert.equal(invocation.args.includes("--setting-sources=user,project,local"), true);
+
+      // The probe aborts its child but nothing reaps it, and Windows refuses to remove a directory
+      // that is a live process's working directory. Take the workspace down here, once the stub has
+      // retired itself, so scoped cleanup of the parent temp directory cannot race that exit.
+      // it.effect runs on the test clock, so the wait between attempts uses a real timer.
+      const waitForStubExit = Effect.promise(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 250)),
+      );
+      let workspaceRemoved = false;
+      for (let attempt = 0; attempt < 40 && !workspaceRemoved; attempt += 1) {
+        workspaceRemoved = yield* fs.remove(workspaceCwd, { recursive: true }).pipe(
+          Effect.as(true),
+          Effect.catch(() => waitForStubExit.pipe(Effect.as(false))),
+        );
+      }
+      assert.equal(workspaceRemoved, true);
     }).pipe(Effect.scoped),
   );
 });
