@@ -204,11 +204,14 @@ const multiTerminalHistoryLogPath = (
 interface CreateManagerOptions {
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
-  subprocessInspector?: (terminalPid: number) => Effect.Effect<{
-    readonly hasRunningSubprocess: boolean;
-    readonly childCommand: string | null;
-    readonly processIds: ReadonlyArray<number>;
-  }>;
+  subprocessRound?: () => Effect.Effect<
+    (terminalPid: number) => Effect.Effect<{
+      readonly hasRunningSubprocess: boolean;
+      readonly childCommand: string | null;
+      readonly processIds: ReadonlyArray<number>;
+    }>,
+    TerminalManager.TerminalSubprocessCheckError
+  >;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
@@ -244,8 +247,8 @@ const createManager = (
         ptyAdapter,
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
-        ...(options.subprocessInspector !== undefined
-          ? { subprocessInspector: options.subprocessInspector }
+        ...(options.subprocessRound !== undefined
+          ? { subprocessRound: options.subprocessRound }
           : {}),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
@@ -271,6 +274,21 @@ const createManager = (
       };
     }),
   );
+
+/**
+ * Shuts a manager's own scope down under a `TestClock`. Terminal teardown
+ * sleeps (the kill grace, the history persist debounce), and nothing advances a
+ * `TestClock` from inside a finalizer, so the close is forked and the clock is
+ * driven from the test fiber.
+ */
+const closeManagerScope = (scope: Scope.Closeable) =>
+  Effect.gen(function* () {
+    const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void), {
+      startImmediately: true,
+    });
+    yield* TestClock.adjust("100 millis");
+    yield* Fiber.join(closing);
+  });
 
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
@@ -891,66 +909,70 @@ it.layer(
         readonly childCommand: string | null;
         readonly processIds: ReadonlyArray<number>;
       } = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+      const scope = yield* Scope.make("sequential");
       const { manager, getEvents } = yield* createManager(5, {
-        subprocessInspector: () => Effect.succeed(inspect),
+        subprocessRound: () => Effect.succeed(() => Effect.succeed(inspect)),
         subprocessPollIntervalMs: 20,
-      });
+      }).pipe(Effect.provideService(Scope.Scope, scope));
 
       yield* manager.open(openInput());
       expect((yield* getEvents).some((event) => event.type === "activity")).toBe(false);
 
+      // Longer than the backed-off ceiling of the 20 ms period, so at least one
+      // whole round runs whatever the back-off is doing.
       inspect = { hasRunningSubprocess: true, childCommand: "vim", processIds: [100, 101] };
-      yield* waitFor(
-        Effect.map(getEvents, (events) =>
-          events.some(
-            (event) =>
-              event.type === "activity" &&
-              event.hasRunningSubprocess === true &&
-              event.label === "vim",
-          ),
+      yield* TestClock.adjust("400 millis");
+      expect(
+        (yield* getEvents).some(
+          (event) =>
+            event.type === "activity" &&
+            event.hasRunningSubprocess === true &&
+            event.label === "vim",
         ),
-        "1200 millis",
-      );
+      ).toBe(true);
 
       inspect = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
-      yield* waitFor(
-        Effect.map(getEvents, (events) =>
-          events.some(
-            (event) =>
-              event.type === "activity" &&
-              event.hasRunningSubprocess === false &&
-              event.label === "Terminal 1",
-          ),
+      yield* TestClock.adjust("400 millis");
+      expect(
+        (yield* getEvents).some(
+          (event) =>
+            event.type === "activity" &&
+            event.hasRunningSubprocess === false &&
+            event.label === "Terminal 1",
         ),
-        "1200 millis",
-      );
-    }),
+      ).toBe(true);
+
+      yield* closeManagerScope(scope);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("does not invoke subprocess polling until a terminal session is running", () =>
     Effect.gen(function* () {
-      let checks = 0;
+      let rounds = 0;
+      const scope = yield* Scope.make("sequential");
       const { manager } = yield* createManager(5, {
-        subprocessInspector: () => {
-          checks += 1;
-          return Effect.succeed({
-            hasRunningSubprocess: false,
-            childCommand: null,
-            processIds: [],
-          });
+        subprocessRound: () => {
+          rounds += 1;
+          return Effect.succeed(() =>
+            Effect.succeed({
+              hasRunningSubprocess: false,
+              childCommand: null,
+              processIds: [],
+            }),
+          );
         },
         subprocessPollIntervalMs: 20,
-      });
+      }).pipe(Effect.provideService(Scope.Scope, scope));
 
-      yield* Effect.sleep("80 millis");
-      assert.equal(checks, 0);
+      yield* TestClock.adjust("400 millis");
+      assert.equal(rounds, 0);
 
       yield* manager.open(openInput());
-      yield* waitFor(
-        Effect.sync(() => checks > 0),
-        "1200 millis",
-      );
-    }),
+      yield* TestClock.adjust("400 millis");
+      expect(rounds).toBeGreaterThan(0);
+
+      yield* closeManagerScope(scope);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("caps persisted history to configured line limit", () =>
@@ -1764,3 +1786,239 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
+
+const windowsProcessTable = (rows: ReadonlyArray<readonly [number, number, string]>): string =>
+  rows.map(([pid, parentPid, name]) => `${pid}|${parentPid}|${name}`).join("\r\n");
+
+const succeedingRunOutput = (stdout: string): ProcessRunner.ProcessRunOutput => ({
+  stdout,
+  stderr: "",
+  code: 0 as ProcessRunner.ProcessRunOutput["code"],
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+});
+
+it.layer(NodeServices.layer, { excludeTestServices: true })(
+  "TerminalManager subprocess poll rounds",
+  (it) => {
+    it.effect("issues one process-table snapshot per round, whatever the session count", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
+        const ptyAdapter = new FakePtyAdapter();
+        const runs: ProcessRunner.ProcessRunInput[] = [];
+        const stdout = windowsProcessTable([
+          [9000, 1, "pwsh.exe"],
+          [9001, 1, "pwsh.exe"],
+          [9002, 1, "pwsh.exe"],
+          [9500, 9000, "vim.exe"],
+          [9501, 9001, "vim.exe"],
+          [9502, 9002, "vim.exe"],
+        ]);
+
+        const scope = yield* Scope.make("sequential");
+        const manager = yield* TerminalManager.makeWithOptions({
+          logsDir: join(baseDir, "logs"),
+          ptyAdapter,
+          subprocessPollIntervalMs: 20,
+          processKillGraceMs: 1,
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.sync(() => {
+                runs.push(input);
+                return succeedingRunOutput(stdout);
+              }),
+          }),
+          Effect.provideService(Scope.Scope, scope),
+        );
+
+        const events: TerminalEvent[] = [];
+        const unsubscribe = yield* manager.subscribe((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        yield* manager.open(openInput({ terminalId: "one" }));
+        yield* manager.open(openInput({ terminalId: "two" }));
+        yield* manager.open(openInput({ terminalId: "three" }));
+
+        // Step one base period at a time. No step may start more than one
+        // snapshot: the old shape spawned one probe per running session, so with
+        // three sessions a step showed three.
+        const perStep: number[] = [];
+        for (let step = 0; step < 6; step += 1) {
+          const before = runs.length;
+          yield* TestClock.adjust("20 millis");
+          perStep.push(runs.length - before);
+        }
+        assert.equal(Math.max(...perStep), 1);
+        expect(runs.length).toBeGreaterThan(0);
+        assert.equal(runs[0]?.command, "powershell.exe");
+        expect(runs[0]?.args).toContain("-NonInteractive");
+
+        // All three sessions are answered, and answered from that one snapshot.
+        const answered = new Set(
+          events
+            .filter((event) => event.type === "activity" && event.hasRunningSubprocess)
+            .map((event) => event.terminalId),
+        );
+        assert.equal(answered.size, 3);
+        expect(
+          events
+            .filter((event) => event.type === "activity")
+            .every((event) => event.label === "vim"),
+        ).toBe(true);
+
+        yield* closeManagerScope(scope);
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.effect("clears the subprocess label once the probe has failed its tolerance", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
+        const ptyAdapter = new FakePtyAdapter();
+        let failing = false;
+        let failures = 0;
+
+        const scope = yield* Scope.make("sequential");
+        const manager = yield* TerminalManager.makeWithOptions({
+          logsDir: join(baseDir, "logs"),
+          ptyAdapter,
+          subprocessPollIntervalMs: 20,
+          processKillGraceMs: 1,
+          subprocessRound: () => {
+            if (!failing) {
+              return Effect.succeed(() =>
+                Effect.succeed({
+                  hasRunningSubprocess: true,
+                  childCommand: "vim",
+                  processIds: [9000, 9500],
+                }),
+              );
+            }
+            failures += 1;
+            return Effect.fail(
+              new TerminalManager.TerminalSubprocessCheckError({ command: "powershell" }),
+            );
+          },
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () => Effect.succeed(succeedingRunOutput("")),
+          }),
+          Effect.provideService(Scope.Scope, scope),
+        );
+
+        const events: TerminalEvent[] = [];
+        const unsubscribe = yield* manager.subscribe((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        // One step never starts more than one round, so the failure count can be
+        // driven to an exact value.
+        const advanceUntilFailures = (target: number) =>
+          Effect.gen(function* () {
+            for (let step = 0; step < 40; step += 1) {
+              if (failures >= target) break;
+              yield* TestClock.adjust("20 millis");
+            }
+            assert.equal(failures, target);
+          });
+        const cleared = () =>
+          events.some((event) => event.type === "activity" && !event.hasRunningSubprocess);
+
+        const running = () =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess);
+
+        yield* manager.open(openInput());
+        for (let step = 0; step < 40; step += 1) {
+          if (running()) break;
+          yield* TestClock.adjust("20 millis");
+        }
+        expect(running()).toBe(true);
+
+        // Two failed rounds leave the last good answer alone: one bad probe is
+        // far more likely than a subprocess that really went away.
+        failing = true;
+        yield* advanceUntilFailures(2);
+        expect(cleared()).toBe(false);
+
+        // The third says the host is not answering, and a stale "running" label
+        // is worse than no label.
+        yield* advanceUntilFailures(3);
+        expect(cleared()).toBe(true);
+
+        yield* closeManagerScope(scope);
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.effect("keeps polling after a round dies", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
+        const ptyAdapter = new FakePtyAdapter();
+        let rounds = 0;
+
+        const scope = yield* Scope.make("sequential");
+        const manager = yield* TerminalManager.makeWithOptions({
+          logsDir: join(baseDir, "logs"),
+          ptyAdapter,
+          subprocessPollIntervalMs: 20,
+          processKillGraceMs: 1,
+          subprocessRound: () => {
+            rounds += 1;
+            // Not a typed failure: a defect, the shape an unexpected throw takes.
+            if (rounds === 1) return Effect.die(new Error("probe threw"));
+            return Effect.succeed(() =>
+              Effect.succeed({
+                hasRunningSubprocess: true,
+                childCommand: "vim",
+                processIds: [9000],
+              }),
+            );
+          },
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () => Effect.succeed(succeedingRunOutput("")),
+          }),
+          Effect.provideService(Scope.Scope, scope),
+        );
+
+        const events: TerminalEvent[] = [];
+        const unsubscribe = yield* manager.subscribe((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        yield* manager.open(openInput());
+        const labelled = () =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess);
+        for (let step = 0; step < 40; step += 1) {
+          if (labelled()) break;
+          yield* TestClock.adjust("20 millis");
+        }
+
+        // The first round died. Later rounds still ran, and still answered.
+        expect(rounds).toBeGreaterThan(1);
+        expect(labelled()).toBe(true);
+
+        yield* closeManagerScope(scope);
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+  },
+);

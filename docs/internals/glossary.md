@@ -12,6 +12,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
 - [Connections](#connections)
+- [Host polls](#host-polls)
 
 ## Concepts
 
@@ -205,6 +206,16 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 
 One client websocket, end to end, as a trace span. The environment opens `server.connection.clientSocket` when a client connects and ends it when the socket dies, carrying the close code, who sent the close frame, and the keepalive gaps, so a drop is explained rather than inferred. The client opens its own `clientRuntime.connection.rpcSession.socket` in [session.ts][39] and puts that span's `traceparent` on the connect URL, so the environment parents its span on the client's and both ends of one drop share a trace id and a `connection.id`. The client half only reaches the trace file where a client exports it, which every surface does through the shared exporter in [clientTracing.ts][41]; see [observability.md][40].
 
+### Host polls
+
+#### Round
+
+One pass of a timed host check. The terminal subprocess poll in [Manager.ts][47] and the preview port scanner in [PortScanner.ts][48] each run rounds. A round takes one host probe - one `powershell`/`ps` snapshot, or one `netstat`/`lsof` - and answers every session or listener from it, so its cost does not grow with the number of terminals open. Work a round cannot finish inside its period, such as naming more listener pids than its per-round cap allows, is left for the next round rather than stretching this one. See [architecture overview][24].
+
+#### Back-off poll
+
+The cadence policy both rounds run on, in [pollLoop.ts][49]. The first round runs at the base period; each round that reports no change multiplies the next period by a factor, up to a cap. A wake - the signal that the host is not idle - puts the next round back on the base period, but never cuts a base period short, so nothing can drive a poll faster than its configured rate. See [architecture overview][24].
+
 ## Practical Shortcuts
 
 - If you see `requested`, think "intent recorded".
@@ -267,3 +278,6 @@ One client websocket, end to end, as a trace span. The environment opens `server
 [44]: ../../apps/server/src/orchestration/http.ts
 [45]: ../../apps/server/src/ws.ts
 [46]: ../../apps/server/src/orchestration/Normalizer.ts
+[47]: ../../apps/server/src/terminal/Manager.ts
+[48]: ../../apps/server/src/preview/PortScanner.ts
+[49]: ../../apps/server/src/pollLoop.ts
