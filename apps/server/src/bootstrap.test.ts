@@ -208,42 +208,42 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
   // Needs mkfifo and a POSIX shell to hold the write end open; Windows named pipes are a
   // different API and cannot stand in for a FIFO opened by path.
-  it.effect.skipIf(skipPosixFifo)(
-    "returns none when the bootstrap read times out before any value arrives",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
-        const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
+  const posixOnly = it.effect.skipIf(skipPosixFifo);
 
-        yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
+  posixOnly("returns none when the bootstrap read times out before any value arrives", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
+      const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
 
-        const _writer = yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; sleep 60', "sh", fifoPath], {
-              stdio: ["ignore", "ignore", "ignore"],
-            }),
-          ),
-          (writer) =>
-            Effect.sync(() => {
-              writer.kill("SIGKILL");
-            }),
-        );
+      yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
 
-        const fd = yield* Effect.acquireRelease(
-          Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
-          (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
-        );
+      const _writer = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; sleep 60', "sh", fifoPath], {
+            stdio: ["ignore", "ignore", "ignore"],
+          }),
+        ),
+        (writer) =>
+          Effect.sync(() => {
+            writer.kill("SIGKILL");
+          }),
+      );
 
-        const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
-          timeoutMs: 100,
-        }).pipe(Effect.forkScoped);
+      const fd = yield* Effect.acquireRelease(
+        Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
+      );
 
-        yield* Effect.yieldNow;
-        yield* TestClock.adjust(Duration.millis(100));
+      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
+        timeoutMs: 100,
+      }).pipe(Effect.forkScoped);
 
-        const payload = yield* Fiber.join(fiber);
-        assertNone(payload);
-      }).pipe(Effect.provide(TestClock.layer())),
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.millis(100));
+
+      const payload = yield* Fiber.join(fiber);
+      assertNone(payload);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });
