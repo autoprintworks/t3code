@@ -91,8 +91,13 @@ const SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER = 8;
 // Sessions answered in parallel from one round's snapshot. The lookup is pure,
 // so this only bounds the event fan-out a round can start at once.
 const SUBPROCESS_ROUND_CONCURRENCY = 4;
+// Ceilings on one host probe. The period is an option, so the ceiling is also
+// held under a fraction of whatever period is in force: a probe that outlasts
+// its own period would make the poll's cadence a fiction. At the shipped 2000 ms
+// period the Windows fraction works out at the same 1500 ms it always was.
 const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_500;
 const POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_000;
+const PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION = 0.75;
 // A probe can fail transiently: the host is thrashing, PowerShell is slow to
 // start, `ps` is briefly unavailable. One failure leaves every session's last
 // known state alone rather than reporting "no subprocess" for all of them. A
@@ -757,19 +762,22 @@ export function inspectProcessSnapshot(
 const WINDOWS_PROCESS_SNAPSHOT_COMMAND =
   'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
 
-const processSnapshotProbe = (platform: NodeJS.Platform) =>
+const snapshotTimeoutMs = (ceilingMs: number, periodMs: number): number =>
+  Math.max(1, Math.min(ceilingMs, Math.floor(periodMs * PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION)));
+
+const processSnapshotProbe = (platform: NodeJS.Platform, periodMs: number) =>
   platform === "win32"
     ? ({
         command: "powershell.exe",
         args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_SNAPSHOT_COMMAND],
-        timeoutMs: WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS,
+        timeoutMs: snapshotTimeoutMs(WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS, periodMs),
         source: "powershell",
         parse: parseWindowsProcessSnapshot,
       } as const)
     : ({
         command: "ps",
         args: ["-eo", "pid=,ppid=,comm="],
-        timeoutMs: POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS,
+        timeoutMs: snapshotTimeoutMs(POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS, periodMs),
         source: "ps",
         parse: parsePosixProcessSnapshot,
       } as const);
@@ -781,13 +789,14 @@ const processSnapshotProbe = (platform: NodeJS.Platform) =>
  */
 const hostProcessSnapshot = Effect.fn("terminal.hostProcessSnapshot")(function* (
   platform: NodeJS.Platform,
+  periodMs: number,
 ): Effect.fn.Return<
   HostProcessSnapshot,
   TerminalSubprocessCheckError,
   ProcessRunner.ProcessRunner
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const probe = processSnapshotProbe(platform);
+  const probe = processSnapshotProbe(platform, periodMs);
   const result = yield* processRunner
     .run({
       command: probe.command,
@@ -818,9 +827,10 @@ const defaultSubprocessRound =
   (
     platform: NodeJS.Platform,
     processRunner: ProcessRunner.ProcessRunner["Service"],
+    periodMs: number,
   ): TerminalSubprocessRound =>
   () =>
-    hostProcessSnapshot(platform).pipe(
+    hostProcessSnapshot(platform, periodMs).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       Effect.map(
         (snapshot): TerminalSubprocessInspector =>
@@ -1204,10 +1214,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const subprocessRound: TerminalSubprocessRound =
-    options.subprocessRound ?? defaultSubprocessRound(platform, processRunner);
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
+  const subprocessRound: TerminalSubprocessRound =
+    options.subprocessRound ??
+    defaultSubprocessRound(platform, processRunner, subprocessPollIntervalMs);
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
