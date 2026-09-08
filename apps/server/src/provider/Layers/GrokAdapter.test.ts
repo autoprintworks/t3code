@@ -26,10 +26,9 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { skipBatchStubChildExit } from "../../testUtils/hostPlatform.ts";
+import { isWindowsHost, skipBatchStubChildExit } from "../../testUtils/hostPlatform.ts";
 import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
-const itChildExit = it.effect.skipIf(skipBatchStubChildExit);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -40,7 +39,7 @@ const mockAgentCommand = process.execPath;
 async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
   const entries = Object.entries(extraEnv ?? {});
-  if (process.platform === "win32") {
+  if (isWindowsHost) {
     // A Windows path can hold a backslash but never a quote, so plain quoting is enough and
     // JSON.stringify would double every separator.
     const quote = (value: string) => `"${value}"`;
@@ -142,6 +141,8 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+  const itChildExit = it.effect.skipIf(skipBatchStubChildExit);
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");

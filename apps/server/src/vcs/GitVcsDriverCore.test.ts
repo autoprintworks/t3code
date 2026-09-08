@@ -18,6 +18,7 @@ import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/cont
 import { ServerConfig } from "../config.ts";
 import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { skipNewlineInPath } from "../testUtils/hostPlatform.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
@@ -1310,7 +1311,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
   describe("worktree operations", () => {
     // Needs a directory whose name contains a newline; Windows forbids that character in a path.
-    it.effect.skipIf(process.platform === "win32")(
+    it.effect.skipIf(skipNewlineInPath)(
       "preserves newline characters in worktree paths when listing refs",
       () =>
         Effect.gen(function* () {

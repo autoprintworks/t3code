@@ -10,11 +10,12 @@ import * as FileSystem from "effect/FileSystem";
 
 import { ServerConfig } from "../config.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
+import { skipPosixExecuteBit } from "../testUtils/hostPlatform.ts";
 
 describe("ResourceMonitorBinary", () => {
   // These two simulate a POSIX host against the real filesystem, and Windows cannot set the execute
   // bit the resolver looks for there.
-  const skipNoExecuteBit = process.platform === "win32";
+  const skipNoExecuteBit = skipPosixExecuteBit;
 
   it.effect.skipIf(skipNoExecuteBit)("resolves an executable override", () =>
     Effect.gen(function* () {

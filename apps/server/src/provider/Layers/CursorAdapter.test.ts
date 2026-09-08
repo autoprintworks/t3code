@@ -27,11 +27,10 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { skipBatchStubChildExit } from "../../testUtils/hostPlatform.ts";
+import { isWindowsHost, skipBatchStubChildExit } from "../../testUtils/hostPlatform.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
-const itChildExit = it.effect.skipIf(skipBatchStubChildExit);
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
 class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()(
@@ -45,8 +44,7 @@ const mockAgentArgs = [mockAgentPath] as const;
 
 // The adapter spawns these wrappers through the configured binaryPath, so a wrapper has to be
 // something the host can execute: a shell script on POSIX, a batch file on Windows.
-const isWindows = process.platform === "win32";
-const wrapperFileName = isWindows ? "fake-agent.cmd" : "fake-agent.sh";
+const wrapperFileName = isWindowsHost ? "fake-agent.cmd" : "fake-agent.sh";
 
 // A Windows path can hold a backslash but never a quote, so plain quoting is enough and
 // JSON.stringify would double every separator.
@@ -66,7 +64,7 @@ async function makeMockAgentWrapper(
   options?: { initialDelaySeconds?: number },
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-mock-"));
-  if (isWindows) {
+  if (isWindowsHost) {
     // timeout.exe refuses to run with stdin redirected, so node holds the startup delay instead.
     const delaySeconds = options?.initialDelaySeconds;
     return writeBatchWrapper(dir, [
@@ -97,7 +95,7 @@ async function makeProbeWrapper(
   extraEnv?: Record<string, string>,
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-probe-"));
-  if (isWindows) {
+  if (isWindowsHost) {
     return writeBatchWrapper(dir, [
       // resolveSpawnCommand routes a .cmd through a shell, so %* still carries the quotes it
       // added. %%~A strips them, and the tab keeps the log in the format readArgvLog expects.
@@ -212,6 +210,8 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+  const itChildExit = it.effect.skipIf(skipBatchStubChildExit);
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

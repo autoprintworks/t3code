@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as NodeSqliteClient from "../src/persistence/NodeSqliteClient.ts";
 import { runSqliteState } from "./t3-sqlite-state.ts";
@@ -88,7 +89,7 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
       assert.equal(mutation.operation, "exec");
       if (mutation.operation === "exec") {
         // Windows has no POSIX permission bits, so a 0o600 backup reads back as 0o666.
-        if (process.platform === "win32") {
+        if ((yield* HostProcessPlatform) === "win32") {
           assert.equal(yield* fs.exists(mutation.backup), true);
         } else {
           assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);

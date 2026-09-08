@@ -71,9 +71,9 @@ process.env.T3CODE_CURSOR_ENABLED = "1";
 const encoder = new TextEncoder();
 
 /**
- * Arms a receipt for the next registry snapshot the predicate accepts, then returns the effect
- * that waits on it. `upsertProviders` persists every changed snapshot before it publishes, so the
- * emission proves the status cache file is already on disk.
+ * Arms a receipt for the next registry snapshot the predicate accepts, and returns the Deferred
+ * that completes when it arrives. `upsertProviders` persists every changed snapshot before it
+ * publishes, so the emission proves the status cache file is already on disk.
  *
  * Call this before publishing. `Stream.fromPubSub` subscribes at stream start, so the yield lets
  * the forked fibre attach first.
@@ -87,7 +87,7 @@ const armRegistryChangeReceipt = Effect.fn("armRegistryChangeReceipt")(function*
     matches(providers) ? Deferred.succeed(seen, undefined) : Effect.void,
   ).pipe(Effect.forkScoped);
   yield* Effect.yieldNow;
-  return Deferred.await(seen);
+  return seen;
 });
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -1114,7 +1114,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               providers.some((provider) => provider.checkedAt === refreshedProvider.checkedAt),
             );
             yield* PubSub.publish(changes, refreshedProvider);
-            yield* refreshPersisted;
+            yield* Deferred.await(refreshPersisted);
             const cachedProvider = yield* readProviderStatusCache(filePath);
 
             assert.deepStrictEqual(cachedProvider, {
@@ -1237,7 +1237,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   ),
               );
               yield* PubSub.publish(changes, authoritativeProvider);
-              yield* authoritativePersisted;
+              yield* Deferred.await(authoritativePersisted);
 
               assert.deepStrictEqual((yield* readProviderStatusCache(filePath))?.models, [
                 authoritativeProvider.models[0]!,

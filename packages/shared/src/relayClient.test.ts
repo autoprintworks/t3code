@@ -20,12 +20,12 @@ import {
   makeCloudflaredRelayClient,
 } from "./relayClient.ts";
 
-// These tests exercise the resolver against the real filesystem, so the simulated host has to be
-// the real one: a Windows filesystem carries no POSIX execute bit, and pinning the platform to
-// "linux" would make every executable look unusable there.
-const hostPlatform = process.platform;
-const hostArch = process.arch;
-const hostExecutableName = hostPlatform === "win32" ? "cloudflared.exe" : "cloudflared";
+// `isExecutableFile` reads the POSIX execute bit off a real file, and Windows has no such bit, so
+// every test that writes an executable and then resolves it has to simulate the host it really
+// runs on. The checksum case never gets that far, so it keeps the fixed linux/x64 host below.
+// oxlint-disable-next-line t3code/no-global-process-runtime -- names a real host trait for a plain module-level fixture, outside any Effect
+const { platform: realPlatform, arch: realArch } = process;
+const realExecutableName = realPlatform === "win32" ? "cloudflared.exe" : "cloudflared";
 
 // Pinned so an unlisted host (for example win32-arm64) still resolves as "missing" rather than
 // "unsupported"; the archive shape is irrelevant to the tests that pass it.
@@ -37,8 +37,15 @@ const pinnedReleaseAsset = {
 
 const hostRuntimeLayer = (env: Record<string, string> = {}) =>
   Layer.mergeAll(
-    Layer.succeed(HostProcessPlatform, hostPlatform),
-    Layer.succeed(HostProcessArchitecture, hostArch),
+    Layer.succeed(HostProcessPlatform, "linux"),
+    Layer.succeed(HostProcessArchitecture, "x64"),
+    ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
+  );
+
+const realHostRuntimeLayer = (env: Record<string, string> = {}) =>
+  Layer.mergeAll(
+    Layer.succeed(HostProcessPlatform, realPlatform),
+    Layer.succeed(HostProcessArchitecture, realArch),
     ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
   );
 
@@ -116,7 +123,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new Uint8Array()),
           makeSpawnerLayer([]),
-          hostRuntimeLayer(),
+          realHostRuntimeLayer(),
         ),
       ),
     ),
@@ -151,8 +158,8 @@ describe("RelayClient", () => {
         "tools",
         "cloudflared",
         CLOUDFLARED_VERSION,
-        `${hostPlatform}-${hostArch}`,
-        hostExecutableName,
+        `${realPlatform}-${realArch}`,
+        realExecutableName,
       );
       expect(installed).toEqual({
         status: "available",
@@ -180,7 +187,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new TextEncoder().encode("test-cloudflared-binary")),
           makeSpawnerLayer([]),
-          hostRuntimeLayer(),
+          realHostRuntimeLayer(),
         ),
       ),
     ),
@@ -246,7 +253,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(bytes),
           makeSpawnerLayer(commands),
-          hostRuntimeLayer(),
+          realHostRuntimeLayer(),
         ),
       ),
     );
@@ -260,7 +267,7 @@ describe("RelayClient", () => {
         prefix: "t3-cloudflared-test-",
       });
       const binDir = NodePath.join(baseDir, "bin");
-      const executablePath = NodePath.join(binDir, hostExecutableName);
+      const executablePath = NodePath.join(binDir, realExecutableName);
       const manager = yield* makeCloudflaredRelayClient({
         baseDir,
         releaseAsset: pinnedReleaseAsset,
@@ -289,7 +296,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new Uint8Array()),
           makeSpawnerLayer([]),
-          hostRuntimeLayer(env),
+          realHostRuntimeLayer(env),
         ),
       ),
     );

@@ -19,6 +19,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
+import { releaseBootstrapFd } from "../testUtils/bootstrapFd.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -53,14 +54,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpServiceName: "t3-server",
     devAllowedOrigins: [],
   } as const;
-
-  // readBootstrapEnvelope reads through a duplicate of this descriptor on POSIX and leaves closing
-  // to us. Windows has no /proc equivalent to duplicate through, so it reads ours directly and
-  // closes it as the stream tears down; closing again from here would race that close.
-  const releaseBootstrapFd = (fd: number) => {
-    if (process.platform === "win32") return;
-    NodeFS.closeSync(fd);
-  };
 
   const openBootstrapFd = Effect.fn(function* (payload: DesktopBackendBootstrapValue) {
     const fs = yield* FileSystem.FileSystem;

@@ -20,6 +20,8 @@ import {
   readBootstrapEnvelope,
 } from "./bootstrap.ts";
 import { assertNone, assertSome } from "@effect/vitest/utils";
+import { releaseBootstrapFd } from "./testUtils/bootstrapFd.ts";
+import { isWindowsHost, skipPosixFifo } from "./testUtils/hostPlatform.ts";
 
 const openSyncInterceptor = vi.hoisted(() => ({
   failPath: null as string | null,
@@ -56,15 +58,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 // Windows has no /dev/null; its null device is reachable only through the device namespace.
-const nullDevicePath = process.platform === "win32" ? "//./NUL" : "/dev/null";
-
-// readBootstrapEnvelope reads through a duplicate of this descriptor on POSIX and leaves closing
-// to us. Windows has no /proc equivalent to duplicate through, so it reads ours directly and
-// closes it as the stream tears down; closing again from here would race that close.
-const releaseBootstrapFd = (fd: number) => {
-  if (process.platform === "win32") return;
-  NodeFS.closeSync(fd);
-};
+const nullDevicePath = isWindowsHost ? "//./NUL" : "/dev/null";
 
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
@@ -214,7 +208,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
   // Needs mkfifo and a POSIX shell to hold the write end open; Windows named pipes are a
   // different API and cannot stand in for a FIFO opened by path.
-  it.effect.skipIf(process.platform === "win32")(
+  it.effect.skipIf(skipPosixFifo)(
     "returns none when the bootstrap read times out before any value arrives",
     () =>
       Effect.gen(function* () {

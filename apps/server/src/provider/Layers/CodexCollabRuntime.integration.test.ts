@@ -22,6 +22,7 @@ import { assert, describe } from "vite-plus/test";
 
 import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
 import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
+import { isWindowsHost } from "../../testUtils/hostPlatform.ts";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
@@ -76,7 +77,7 @@ const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-s
 // execute: a bash script on POSIX, a batch file on Windows.
 const peerPath = NodePath.join(
   import.meta.dirname,
-  process.platform === "win32"
+  isWindowsHost
     ? "../testFixtures/codexCollabMockPeer.cmd"
     : "../testFixtures/codexCollabMockPeer.sh",
 );
