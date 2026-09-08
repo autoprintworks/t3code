@@ -356,6 +356,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               summary: "provider started",
               payload: { stage: "start" },
               turnId: asTurnId("turn-1"),
+              // The insert above leaves the sequence column out, and fork migration 002 gives it
+              // a NOT NULL default of 0.
+              sequence: 0,
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
@@ -441,6 +444,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedAt: null,
           pinnedAt: null,
           titleRegeneration: null,
+          readOnly: false,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -1099,7 +1103,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'runtime.note',
             'unsequenced first',
             '{"source":"unsequenced"}',
-            NULL,
+            0,
             '2026-04-01T00:00:06.000Z'
           ),
           (
@@ -1142,6 +1146,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           summary: "unsequenced first",
           payload: { source: "unsequenced" },
           turnId: null,
+          // Fork migration 002 closed this column off as NOT NULL and backfills rows that predate
+          // it with 0, so 0 is what "unsequenced" now looks like. It still sorts ahead of 1 and 2.
+          sequence: 0,
           createdAt: "2026-04-01T00:00:06.000Z",
         },
         {
