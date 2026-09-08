@@ -152,13 +152,30 @@ export function requireThreadNotArchived(input: {
 }
 
 /**
- * A thread a human may drive.
+ * Whether the fleet asked for this, rather than a user.
  *
- * `readOnly` is a property of the thread, not of the screen: a worker thread
+ * Only `thread.turn.start` can carry the stamp, and only a dispatch entry
+ * point can put it there, so a checkpoint revert on a read-only thread stays
+ * refused however it arrived. Exported for the tests that pin that down.
+ */
+export function issuedByFleet(command: OrchestrationCommand): boolean {
+  return command.type === "thread.turn.start" && command.issuer === "fleet";
+}
+
+/**
+ * A thread this caller may drive.
+ *
+ * `readOnly` is a property of the thread, not of the screen: the thread
  * mirrors a conversation owned by another agent, and the only way to reach
  * that agent is through the agent itself. Refusing here rather than in the
  * client is what makes that true for an old build, a script, and a bare
  * `POST /api/orchestration/dispatch` alike.
+ *
+ * The fleet on its own thread is the one exception, and it takes both halves
+ * to be it: the command carries the fleet stamp, and the thread was created
+ * by the fleet. A thread that mirrors an ACP worker is read-only and not
+ * fleet-owned, so the fleet is refused there like everyone else, which is the
+ * point - the only way to reach that worker is through its own agent.
  */
 export function requireThreadPromptable(input: {
   readonly readModel: OrchestrationReadModel;
@@ -167,7 +184,7 @@ export function requireThreadPromptable(input: {
 }): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
   return requireThreadNotArchived(input).pipe(
     Effect.flatMap((thread) =>
-      thread.readOnly !== true
+      thread.readOnly !== true || (thread.fleetOwned === true && issuedByFleet(input.command))
         ? Effect.succeed(thread)
         : Effect.fail(
             invariantError(

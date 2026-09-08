@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
-import { normalizeDispatchCommand } from "./Normalizer.ts";
+import { commandIssuerForSubject, normalizeDispatchCommand } from "./Normalizer.ts";
 import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
@@ -92,10 +92,11 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         "dispatch",
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
-            Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
-          );
+          const session = yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const normalizedCommand = yield* normalizeDispatchCommand(
+            args.payload,
+            commandIssuerForSubject(session.subject),
+          ).pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")));
           return yield* orchestrationEngine
             .dispatch(normalizedCommand)
             .pipe(

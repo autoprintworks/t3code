@@ -28,6 +28,36 @@ managed relay connectivity:
 The desktop bootstrap credential and command-line administrative bootstrap
 credentials additionally grant `access:read access:write relay:write`.
 
+### Subject
+
+Scopes say what a session may do. Its `subject` says who it is, and a handful of
+rules key on that instead. Two subjects are named in code:
+
+| Subject         | Who                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `cloud-connect` | A session the managed relay minted, rather than a person on this machine.                    |
+| `firstmate`     | The First Mate daemon's own bearer, minted with `t3 auth session issue --subject firstmate`. |
+
+`firstmate` is `AuthFleetSubject` in the contracts. A session carrying it is the
+fleet's, so the daemon may create a read-only thread and then prompt that
+thread, which the user it is read-only for may not.
+
+Its scopes are `AuthFleetScopes`, `orchestration:read orchestration:operate`
+and nothing else. The daemon reads snapshots and dispatches orchestration
+commands; it runs no terminals, composes no review feedback, manages no pairing
+links and touches no relay, so it gets neither the rest of the standard client
+scopes nor any administrative one. `t3 auth session issue` pins that set to
+this subject rather than trusting `--scopes`, and refuses a wider set under it
+rather than quietly narrowing one. That matters more here than for an ordinary
+bearer: this is the one subject the server lets create a thread the user cannot
+prompt, so the blast radius of the token is worth keeping small. Mint one with:
+
+```
+t3 auth session issue --label "First Mate" --subject firstmate --ttl 1h --json
+```
+
+See [worker threads](./acp-worker-threads.md).
+
 ## Authentication Flows
 
 ### Browser Session

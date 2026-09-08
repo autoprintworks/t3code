@@ -56,6 +56,10 @@ The domain object a command or event belongs to. In [the contracts][1], that is 
 A typed request to change domain state. In [the contracts][1], commands are validated in [commandInvariants.ts][9] and turned into events by [decider.ts][8].
 Examples include `thread.create`, `thread.turn.start`, and `thread.checkpoint.revert`.
 
+#### Dispatch entry point
+
+One of the two places a client command enters the server: the HTTP route `POST /api/orchestration/dispatch` in [http.ts][44], and the WebSocket RPC `orchestration.dispatchCommand` in [ws.ts][45]. Both decode a `WireOrchestrationCommand`, then hand it plus the authenticated session's issuer to `normalizeDispatchCommand` in [Normalizer.ts][46], which is where a payload stops being trusted: fields only the [fleet](#fleet-subject) may set are refused here rather than in the schema. The two are not interchangeable, since only the WebSocket entry point runs `bootstrap.createThread`, but every authorization fact on a command is decided at whichever one it arrived at. Not to be confused with an [external ACP agent](#external-acp-agent), whose transport is sometimes called a door.
+
 #### Domain Event
 
 A persisted fact that something already happened. In [the contracts][1], events are the source of truth, and [projector.ts][4] shows how they are applied.
@@ -115,7 +119,15 @@ A read-only thread mirroring one peer session on a configured ACP agent's connec
 
 #### Read-only thread
 
-A thread whose transcript is a window onto work driven elsewhere. `readOnly` is set once at creation, never cleared, and enforced in [the decider][8] by `requireThreadPromptable` in [commandInvariants.ts][9], which refuses `thread.turn.start` and `thread.checkpoint.revert`. The clients hide the composer; that is presentation, not the rule. It reaches the read model through fork migration 5 as an integer column, because SQLite has no boolean. See [worker threads][31].
+A thread whose transcript is a window onto work driven elsewhere. `readOnly` is set once at creation, never cleared, and enforced in [the decider][8] by `requireThreadPromptable` in [commandInvariants.ts][9], which refuses `thread.turn.start` and `thread.checkpoint.revert`. The one exception is the [fleet](#fleet-subject) on a [fleet-owned thread](#fleet-owned-thread), and it takes both halves. The clients hide the composer; that is presentation, not the rule. It reaches the read model through fork migration 5 as an integer column, because SQLite has no boolean. See [worker threads][31].
+
+#### Fleet-owned thread
+
+A read-only thread the First Mate daemon created for itself: the user watches it and only the daemon prompts it. `fleetOwned` is set once at creation from the `issuer` a [dispatch entry point](#dispatch-entry-point) stamped, never cleared, and reaches the read model through fork migration 7 as an integer column. It is the second half of the turn rule in `requireThreadPromptable`: the fleet may prompt a read-only thread only when the command carries the fleet stamp **and** the thread is fleet-owned. A [worker thread](#worker-thread) is read-only and not fleet-owned, so the fleet is refused there like everyone else, because the only way to that peer session is through its own agent.
+
+#### Fleet subject
+
+The session `subject` string the First Mate daemon mints its own bearer under, `"firstmate"`, exported as `AuthFleetSubject` from [the auth contracts][42]. It says who is asking, not what they may do. What it may do is `AuthFleetScopes`, `orchestration:read orchestration:operate` and nothing else, which `t3 auth session issue` pins to this subject rather than letting a caller ask for more. A [dispatch entry point](#dispatch-entry-point) reads the subject once and hands `commandIssuerForSubject`'s answer to `normalizeDispatchCommand`, which is what allows a fleet `thread.create` to carry `readOnly`, records it as [fleet ownership](#fleet-owned-thread), and stamps a fleet `thread.turn.start`. It is never read off a payload, because a payload is what an ordinary client controls. See [environment auth][43].
 
 #### Skill
 
@@ -246,3 +258,8 @@ One client websocket, end to end, as a trace span. The environment opens `server
 [39]: ../../packages/client-runtime/src/rpc/session.ts
 [40]: ../operations/observability.md
 [41]: ../../packages/client-runtime/src/observability/clientTracing.ts
+[42]: ../../packages/contracts/src/auth.ts
+[43]: ./environment-auth.md
+[44]: ../../apps/server/src/orchestration/http.ts
+[45]: ../../apps/server/src/ws.ts
+[46]: ../../apps/server/src/orchestration/Normalizer.ts

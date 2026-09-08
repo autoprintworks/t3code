@@ -70,7 +70,7 @@ import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
-import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import { commandIssuerForSubject, normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -354,6 +354,8 @@ const makeWsRpcLayer = (
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      // Fixed for the life of the socket, because the session is.
+      const currentIssuer = commandIssuerForSubject(currentSession.subject);
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
@@ -903,6 +905,12 @@ const makeWsRpcLayer = (
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                // Both already vetted by `normalizeDispatchCommand`: a
+                // non-fleet issuer that spelled `readOnly` was refused before
+                // the turn got this far, so the pair can only be a fleet
+                // create-and-start.
+                readOnly: bootstrap.createThread.readOnly,
+                ...(command.issuer === "fleet" ? { issuer: command.issuer } : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
@@ -1035,7 +1043,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
-              const normalizedCommand = yield* normalizeDispatchCommand(command);
+              const normalizedCommand = yield* normalizeDispatchCommand(command, currentIssuer);
               const shouldStopSessionAfterArchive =
                 normalizedCommand.type === "thread.archive"
                   ? yield* projectionSnapshotQuery
@@ -1055,14 +1063,19 @@ const makeWsRpcLayer = (
               if (normalizedCommand.type === "thread.archive") {
                 if (shouldStopSessionAfterArchive) {
                   yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-archive:${normalizedCommand.commandId}`,
-                      ),
-                      threadId: normalizedCommand.threadId,
-                      createdAt: yield* nowIso,
-                    });
+                    // Server-authored, so it needs no issuer: `thread.session.stop`
+                    // has no field for one and reads the same whoever asked.
+                    const stopCommand = yield* normalizeDispatchCommand(
+                      {
+                        type: "thread.session.stop",
+                        commandId: CommandId.make(
+                          `session-stop-for-archive:${normalizedCommand.commandId}`,
+                        ),
+                        threadId: normalizedCommand.threadId,
+                        createdAt: yield* nowIso,
+                      },
+                      "client",
+                    );
 
                     yield* dispatchNormalizedCommand(stopCommand);
                   }).pipe(

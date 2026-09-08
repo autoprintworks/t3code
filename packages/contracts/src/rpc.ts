@@ -53,7 +53,7 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
-  ClientOrchestrationCommand,
+  WireOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
@@ -705,7 +705,12 @@ export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
-    payload: ClientOrchestrationCommand,
+    // The wire union, as the HTTP entry point takes. Both entry points read
+    // the same schema and hand the issuer to the same normaliser, so which
+    // one the fleet uses is not a rule of its own. This path is the only one
+    // that runs `bootstrap.createThread`, so it is the only way to create a
+    // fleet thread and start its first turn in one command.
+    payload: WireOrchestrationCommand,
     success: OrchestrationRpcSchemas.dispatchCommand.output,
     error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
   },

@@ -386,6 +386,12 @@ export const OrchestrationThread = Schema.Struct({
   // to type. Set once at creation and never cleared: a thread does not become
   // promptable later. Optional so old servers/clients interop; absent = false.
   readOnly: Schema.optional(Schema.Boolean),
+  // The fleet created this thread, so the fleet may still prompt it even
+  // while `readOnly` refuses everyone else. Set once at creation from the
+  // authenticated session and never cleared. A read-only thread that is not
+  // fleet-owned - an ACP worker mirror, say - stays refused to the fleet too.
+  // Optional so old servers/clients interop; absent = false.
+  fleetOwned: Schema.optional(Schema.Boolean),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -668,19 +674,27 @@ const ThreadCreateCommandFields = {
 
 const ThreadCreateCommand = Schema.Struct({
   ...ThreadCreateCommandFields,
-  // A window onto work owned elsewhere. Server-issued only: this field is
-  // absent from the client command, so a payload arriving over the websocket
-  // or the dispatch endpoint cannot set it however it is spelled. The decider
-  // is what enforces what it means; see `requireThreadPromptable`.
+  // A window onto work owned elsewhere. Two callers may set it: the server
+  // itself, and the fleet over a dispatch entry point. It is absent from
+  // `ClientThreadCreateCommand`, and an entry point refuses it outright from
+  // anything an ordinary client sent, so a user's client cannot mint a thread
+  // it is then refused permission to use. The decider is what enforces what
+  // it means; see `requireThreadPromptable`.
   readOnly: Schema.optional(Schema.Boolean),
+  // Who asked for this thread. Stamped by a dispatch entry point from the
+  // authenticated session and absent from the client command, so a payload
+  // cannot claim it however it is spelled. It is what puts `fleetOwned` on
+  // the thread, which is half of what lets the fleet prompt one.
+  issuer: Schema.optional(Schema.Literal("fleet")),
 });
 
 /**
  * What a client may say when it creates a thread.
  *
- * Identical to the server-side command minus `readOnly`, so a client cannot
- * mint a read-only thread and, more importantly, cannot mint one it is then
- * refused permission to use.
+ * Identical to the server-side command minus `readOnly` and `issuer`, so a
+ * client cannot mint a read-only thread and, more importantly, cannot mint
+ * one it is then refused permission to use. A fleet create is read as the
+ * server-side command instead; see `WireOrchestrationCommand`.
  */
 const ClientThreadCreateCommand = Schema.Struct(ThreadCreateCommandFields);
 
@@ -793,6 +807,12 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // Same rule and same field as `ThreadCreateCommand.readOnly`, so the fleet
+  // can mint a thread and start its first turn in one command rather than
+  // two. Spellable here because this struct is shared with the client turn
+  // start; a dispatch entry point refuses it from a non-fleet issuer exactly
+  // as it refuses the standalone create.
+  readOnly: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 
@@ -829,6 +849,12 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // Who asked for this turn. Stamped by a dispatch entry point from the
+  // authenticated session and absent from the client command, so a payload
+  // cannot claim it however it is spelled. Together with the target thread's
+  // `fleetOwned` it is what lets the fleet drive a thread it made read-only
+  // for the user; see `requireThreadPromptable`.
+  issuer: Schema.optional(Schema.Literal("fleet")),
   createdAt: IsoDateTime,
 });
 
@@ -892,11 +918,18 @@ const ThreadSessionStopCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-const DispatchableClientOrchestrationCommand = Schema.Union([
+/**
+ * The twenty commands that read the same whoever sent them.
+ *
+ * `thread.create` and `thread.turn.start` are the two that do not: each has a
+ * narrow client shape and a wide server shape, and the three unions below
+ * differ only in which of the two they pick. Written once here so the twenty
+ * cannot drift between them.
+ */
+const SharedOrchestrationCommands = [
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
-  ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -909,41 +942,59 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
-  ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+] as const;
+
+/** Both wide arms: what the engine accepts once an entry point has vetted it. */
+const DispatchableClientOrchestrationCommand = Schema.Union([
+  ThreadCreateCommand,
+  ThreadTurnStartCommand,
+  ...SharedOrchestrationCommands,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
 
+/** Both narrow arms: everything a client is able to say, and nothing more. */
 export const ClientOrchestrationCommand = Schema.Union([
-  ProjectCreateCommand,
-  ProjectMetaUpdateCommand,
-  ProjectDeleteCommand,
   ClientThreadCreateCommand,
-  ThreadDeleteCommand,
-  ThreadArchiveCommand,
-  ThreadUnarchiveCommand,
-  ThreadSettleCommand,
-  ThreadUnsettleCommand,
-  ThreadSnoozeCommand,
-  ThreadUnsnoozeCommand,
-  ThreadPinCommand,
-  ThreadUnpinCommand,
-  ThreadMetaUpdateCommand,
-  ThreadRuntimeModeSetCommand,
-  ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
-  ThreadTurnInterruptCommand,
-  ThreadApprovalRespondCommand,
-  ThreadUserInputRespondCommand,
-  ThreadCheckpointRevertCommand,
-  ThreadSessionStopCommand,
+  ...SharedOrchestrationCommands,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
+
+/**
+ * Who sent a command to a dispatch entry point.
+ *
+ * `fleet` is a session minted under `AuthFleetSubject`, which on this machine
+ * is the First Mate daemon and nothing else; every other session is
+ * `client`. An entry point reads this off the authenticated session and never
+ * off the payload, so a client cannot claim it however it spells what it
+ * sends.
+ */
+export const OrchestrationCommandIssuer = Schema.Literals(["client", "fleet"]);
+export type OrchestrationCommandIssuer = typeof OrchestrationCommandIssuer.Type;
+
+/**
+ * The schema on the wire: what a dispatch entry point decodes a payload as,
+ * before it knows who sent it.
+ *
+ * The client union with the wider `thread.create`, so a fleet create can
+ * carry `readOnly` at all. Decoding once and then vetting the result is
+ * deliberate: there is one schema on the wire and one place that decides what
+ * survives it. That place is `normalizeDispatchCommand`, which refuses a
+ * `readOnly` an ordinary client sent rather than quietly dropping it, and
+ * stamps `issuer` on what the fleet sent.
+ */
+export const WireOrchestrationCommand = Schema.Union([
+  ThreadCreateCommand,
+  ClientThreadTurnStartCommand,
+  ...SharedOrchestrationCommands,
+]);
+export type WireOrchestrationCommand = typeof WireOrchestrationCommand.Type;
 
 const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
@@ -1128,6 +1179,9 @@ export const ThreadCreatedPayload = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   readOnly: Schema.optional(Schema.Boolean),
+  // See `OrchestrationThread.fleetOwned`. Optional so events written before
+  // the fleet existed still decode; absent = false.
+  fleetOwned: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1658,7 +1712,7 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass
 
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
-    input: ClientOrchestrationCommand,
+    input: WireOrchestrationCommand,
     output: DispatchResult,
   },
   getWorkflowScript: {

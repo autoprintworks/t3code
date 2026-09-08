@@ -638,6 +638,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             // SQLite has no boolean, and the column is NOT NULL, so absent
             // means 0.
             readOnly: event.payload.readOnly ? 1 : 0,
+            fleetOwned: event.payload.fleetOwned ? 1 : 0,
             deletedAt: null,
           });
           return;

@@ -73,6 +73,18 @@ export const ServerAuthSessionMethod = Schema.Literals([
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
+/**
+ * The session subject the First Mate daemon mints its own bearer under.
+ *
+ * A session carrying it is the fleet's, not a user's, and that is the whole
+ * difference between a fleet create and an ordinary client create. The daemon
+ * asks for it with `t3 auth session issue --subject firstmate`; nothing else
+ * on this machine does. It is a subject and not a scope on purpose: it says
+ * who is asking, not what they are allowed. What it is allowed is
+ * `AuthFleetScopes`, which the CLI pins to this subject.
+ */
+export const AuthFleetSubject = "firstmate" as const;
+
 export const AuthOrchestrationReadScope = "orchestration:read" as const;
 export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
 export const AuthTerminalOperateScope = "terminal:operate" as const;
@@ -108,6 +120,20 @@ export const AuthAdministrativeScopes = [
   AuthAccessWriteScope,
   AuthRelayWriteScope,
 ] as const;
+
+/**
+ * What a session under `AuthFleetSubject` is allowed.
+ *
+ * The First Mate daemon reads snapshots and dispatches orchestration
+ * commands. It runs no terminals, composes no review feedback, manages no
+ * pairing links and touches no relay, so it gets neither the rest of
+ * `AuthStandardClientScopes` nor any of the administrative ones. That matters
+ * more here than for an ordinary bearer: this is the one subject the server
+ * lets create a thread the user cannot prompt, so the blast radius of the
+ * token is worth keeping small. `t3 auth session issue` pins these to the
+ * subject rather than trusting the caller to ask for them.
+ */
+export const AuthFleetScopes = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const;
 
 export const AuthTokenExchangeGrantType =
   "urn:ietf:params:oauth:grant-type:token-exchange" as const;

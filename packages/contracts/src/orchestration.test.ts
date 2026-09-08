@@ -6,6 +6,7 @@ import {
   ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  WireOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
@@ -53,6 +54,7 @@ function getOptionValue(
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
+const decodeWireOrchestrationCommand = Schema.decodeUnknownEffect(WireOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
@@ -938,5 +940,61 @@ it.effect("drops readOnly from a thread.create a client sent", () =>
 
     assert.strictEqual(decoded.type, "thread.create");
     assert.isFalse("readOnly" in decoded);
+  }),
+);
+
+it.effect("keeps readOnly on the thread.create an entry point decodes", () =>
+  Effect.gen(function* () {
+    // The wider schema is what makes a fleet create representable at all. It
+    // is not the authority: a dispatch entry point refuses `readOnly` again
+    // unless the session that sent it is the fleet's. See
+    // `normalizeDispatchCommand`.
+    const decoded = yield* decodeWireOrchestrationCommand({
+      type: "thread.create",
+      commandId: "cmd-fleet-create",
+      threadId: "thread-fleet",
+      projectId: "project-1",
+      title: "[crewmate] fm/test-gate",
+      modelSelection: { instanceId: "claude", model: "claude-opus-5" },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      branch: null,
+      worktreePath: null,
+      readOnly: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    // Narrowed rather than asserted, so `readOnly` is read off the create arm
+    // and the assertion is a type error the day the field leaves the schema.
+    if (decoded.type !== "thread.create") {
+      throw new Error(`expected thread.create, decoded ${decoded.type}`);
+    }
+    assert.strictEqual(decoded.readOnly, true);
+  }),
+);
+
+it.effect("drops issuer from a thread.turn.start that arrived over the wire", () =>
+  Effect.gen(function* () {
+    // `issuer` says who a dispatch entry point authenticated, so only that
+    // entry point may ever stamp it. A payload that spells it is spelling the
+    // one thing that would let it drive a thread it is not allowed to drive.
+    const decoded = yield* decodeWireOrchestrationCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-forged-issuer",
+      threadId: "thread-fleet",
+      message: {
+        messageId: "message-1",
+        role: "user",
+        text: "Continue",
+        attachments: [],
+      },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      issuer: "fleet",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(decoded.type, "thread.turn.start");
+    assert.isFalse("issuer" in decoded);
   }),
 );

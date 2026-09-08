@@ -13,10 +13,12 @@ import * as Effect from "effect/Effect";
 
 import {
   findThreadById,
+  issuedByFleet,
   listThreadsByProjectId,
   requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
+  requireThreadPromptable,
 } from "./commandInvariants.ts";
 
 const now = "2026-01-01T00:00:00.000Z";
@@ -120,6 +122,114 @@ const messageSendCommand: OrchestrationCommand = {
   runtimeMode: "approval-required",
   createdAt: now,
 };
+
+/**
+ * `thread-1`, made read-only, and either the fleet's or nobody's.
+ *
+ * Two threads read as read-only and they are not the same thing. One is a
+ * thread the First Mate daemon created for itself, which the user watches and
+ * the daemon still drives. The other mirrors an ACP worker's session, which
+ * nothing on this server may drive. `fleetOwned` is the only field that tells
+ * them apart.
+ */
+function readOnlyReadModel(fleetOwned: boolean): OrchestrationReadModel {
+  return {
+    ...readModel,
+    threads: readModel.threads.map((thread) =>
+      thread.id === ThreadId.make("thread-1") ? { ...thread, readOnly: true, fleetOwned } : thread,
+    ),
+  };
+}
+
+const fleetTurnStartCommand: OrchestrationCommand = {
+  ...messageSendCommand,
+  commandId: CommandId.make("cmd-fleet-1"),
+  issuer: "fleet",
+};
+
+const revertCommand: OrchestrationCommand = {
+  type: "thread.checkpoint.revert",
+  commandId: CommandId.make("cmd-revert-1"),
+  threadId: ThreadId.make("thread-1"),
+  turnCount: 1,
+  createdAt: now,
+};
+
+describe("issuedByFleet", () => {
+  it("reads the stamp a dispatch entry point put on a turn start", () => {
+    expect(issuedByFleet(fleetTurnStartCommand)).toBe(true);
+    expect(issuedByFleet(messageSendCommand)).toBe(false);
+  });
+
+  it("is false for every command that has no stamp to carry", () => {
+    // Only `thread.turn.start` has the field. A checkpoint revert drives the
+    // provider just as a turn does, so the absence of the field here is what
+    // keeps the fleet exception from spreading to it.
+    expect(issuedByFleet(revertCommand)).toBe(false);
+  });
+});
+
+describe("requireThreadPromptable", () => {
+  it("lets the fleet prompt a read-only thread the fleet owns", async () => {
+    const thread = await Effect.runPromise(
+      requireThreadPromptable({
+        readModel: readOnlyReadModel(true),
+        command: fleetTurnStartCommand,
+        threadId: ThreadId.make("thread-1"),
+      }),
+    );
+    expect(thread.id).toBe(ThreadId.make("thread-1"));
+  });
+
+  it("refuses a user on that same thread", async () => {
+    await expect(
+      Effect.runPromise(
+        requireThreadPromptable({
+          readModel: readOnlyReadModel(true),
+          command: messageSendCommand,
+          threadId: ThreadId.make("thread-1"),
+        }),
+      ),
+    ).rejects.toThrow("is read-only");
+  });
+
+  it("refuses the fleet on a read-only thread the fleet does not own", async () => {
+    // The ACP worker mirror. The stamp is genuine and buys nothing, because
+    // ownership is the other half of the rule.
+    await expect(
+      Effect.runPromise(
+        requireThreadPromptable({
+          readModel: readOnlyReadModel(false),
+          command: fleetTurnStartCommand,
+          threadId: ThreadId.make("thread-1"),
+        }),
+      ),
+    ).rejects.toThrow("is read-only");
+  });
+
+  it("refuses a checkpoint revert even on the fleet's own thread", async () => {
+    await expect(
+      Effect.runPromise(
+        requireThreadPromptable({
+          readModel: readOnlyReadModel(true),
+          command: revertCommand,
+          threadId: ThreadId.make("thread-1"),
+        }),
+      ),
+    ).rejects.toThrow("is read-only");
+  });
+
+  it("lets anyone prompt an ordinary thread", async () => {
+    const thread = await Effect.runPromise(
+      requireThreadPromptable({
+        readModel,
+        command: messageSendCommand,
+        threadId: ThreadId.make("thread-1"),
+      }),
+    );
+    expect(thread.readOnly).toBeUndefined();
+  });
+});
 
 describe("commandInvariants", () => {
   it("finds threads by id and project", () => {
