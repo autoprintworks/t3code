@@ -58,10 +58,12 @@ export interface BackoffPoll {
 }
 
 /**
- * Floor on the gap between two round starts. Every caller sizes its probe
- * timeouts strictly under its base period, so a round should never reach this;
- * it is here so that a round which somehow does overrun cannot turn the loop
- * into a spin.
+ * Floor on the gap between two round starts, for a round that overran its
+ * period. Every caller sizes its probe timeouts strictly under its base period,
+ * so a round should never reach this; it is here so that a round which somehow
+ * does overrun cannot turn the loop into a spin. It never raises the gap above
+ * the configured base period, so a caller that asks for a short period (a test,
+ * usually) still gets the cadence it asked for.
  */
 const MIN_ROUND_GAP_MS = 50;
 
@@ -90,7 +92,10 @@ export const makeBackoffPoll = Effect.fn("pollLoop.makeBackoffPoll")(function* (
         yield* round;
         const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
 
-        const baseWaitMs = Math.max(basePeriodMs - elapsedMs, MIN_ROUND_GAP_MS);
+        const baseWaitMs = Math.max(
+          basePeriodMs - elapsedMs,
+          Math.min(MIN_ROUND_GAP_MS, basePeriodMs),
+        );
         yield* Effect.sleep(Duration.millis(baseWaitMs));
         const remainderMs = periodMs - basePeriodMs;
         if (remainderMs > 0) {

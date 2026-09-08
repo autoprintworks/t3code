@@ -35,8 +35,9 @@ import {
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Equal from "effect/Equal";
@@ -45,7 +46,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Latch from "effect/Latch";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
@@ -59,6 +59,7 @@ import {
   terminalRestartsTotal,
   terminalSessionsTotal,
 } from "../observability/Metrics.ts";
+import * as PollLoop from "../pollLoop.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
@@ -81,15 +82,21 @@ const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 // Subprocess detection takes one host process-table snapshot per round and
 // derives every session's answer from it, so a round costs one probe however
 // many terminals are running. The probe timeout stays below the base period so
-// a round cannot spill into the next one, and rounds that change nothing back
-// the period off geometrically to BACKOFF_MAX_MULTIPLIER times the base. Any
-// terminal event (output, open, exit, activity) drops it straight back.
+// a round cannot spill into the next one; the back-off policy itself lives in
+// `pollLoop.ts`, shared with the preview port scanner.
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 2_000;
 const SUBPROCESS_POLL_BACKOFF_FACTOR = 2;
 const SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER = 8;
 const SUBPROCESS_ROUND_CONCURRENCY = 4;
 const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_500;
 const POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_000;
+// A probe can fail transiently: the host is thrashing, PowerShell is slow to
+// start, `ps` is briefly unavailable. One failure leaves every session's last
+// known state alone rather than reporting "no subprocess" for all of them. A
+// run this long, though, means we no longer know, and a terminal stuck showing
+// a subprocess that exited is worse than one showing none, so the round after
+// the tolerance clears every session to "no subprocess".
+const SUBPROCESS_FAILURE_TOLERANCE = 3;
 // A busy Windows host has well over a thousand processes; the old 32 KiB cap
 // silently truncated the table and hid subprocesses behind it.
 const PROCESS_SNAPSHOT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -101,7 +108,7 @@ const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECT
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
 
-class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
+export class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
   "TerminalSubprocessCheckError",
   {
     cause: Schema.optional(Schema.Defect()),
@@ -1146,7 +1153,6 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
-  subprocessInspector?: TerminalSubprocessInspector;
   subprocessRound?: TerminalSubprocessRound;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -1192,12 +1198,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const injectedSubprocessInspector = options.subprocessInspector;
   const subprocessRound: TerminalSubprocessRound =
-    options.subprocessRound ??
-    (injectedSubprocessInspector
-      ? () => Effect.succeed(injectedSubprocessInspector)
-      : defaultSubprocessRound(platform, processRunner));
+    options.subprocessRound ?? defaultSubprocessRound(platform, processRunner);
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
@@ -1208,10 +1210,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
-  // Opened by every published terminal event; the poll loop closes it at the
-  // start of each round and reads it at the end to decide whether to back off.
-  const subprocessPollWake = yield* Latch.make(false);
-  const subprocessRoundInFlight = yield* Ref.make(false);
+  // Woken by every published terminal event, which is the evidence that this
+  // host is not idle. See `pollLoop.ts` for the policy.
+  const subprocessPoll = yield* PollLoop.makeBackoffPoll({
+    label: "terminal.subprocessPoll",
+    basePeriod: Duration.millis(subprocessPollIntervalMs),
+    factor: SUBPROCESS_POLL_BACKOFF_FACTOR,
+    maxMultiplier: SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER,
+  });
+  const subprocessFailureStreakRef = yield* Ref.make(0);
 
   const managerStateRef = yield* SynchronizedRef.make<TerminalManagerState>({
     sessions: new Map(),
@@ -1226,8 +1233,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     Effect.gen(function* () {
       // Any terminal event is evidence that this host is not idle, so it drops
       // the subprocess poll back to its base period and wakes a backed-off
-      // sleep. `openUnsafe` keeps the hot output path allocation-free.
-      Latch.openUnsafe(subprocessPollWake);
+      // sleep. `wakeUnsafe` keeps the hot output path allocation-free.
+      subprocessPoll.wakeUnsafe();
       for (const listener of terminalEventListeners) {
         yield* listener(event).pipe(Effect.ignoreCause({ log: true }));
       }
@@ -2029,10 +2036,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const runSubprocessRound = Effect.fn("terminal.subprocessRound")(function* (
     runningSessions: ReadonlyArray<TerminalSessionState & { pid: number }>,
+    inspectSubprocess: TerminalSubprocessInspector,
   ) {
-    // One host probe opens the round; every session below is answered from it.
-    const inspectSubprocess = yield* subprocessRound();
-
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       session: TerminalSessionState & { pid: number },
     ) {
@@ -2102,6 +2107,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
   });
 
+  /**
+   * Answers every session "no subprocess". Used once the probe has failed
+   * `SUBPROCESS_FAILURE_TOLERANCE` times running, so a terminal cannot keep a
+   * stale "running" label for as long as the host stays unhealthy.
+   */
+  const clearingInspector: TerminalSubprocessInspector = () => Effect.succeed(EMPTY_INSPECT_RESULT);
+
   const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
     const state = yield* readManagerState;
     const runningSessions = [...state.sessions.values()].filter(
@@ -2113,24 +2125,31 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return;
     }
 
-    // One round at a time. A round that outlives its period makes the next one
-    // skip rather than overlap it, which is what let the old poll pile up when
-    // the host probe ran long.
-    const started = yield* Ref.modify(subprocessRoundInFlight, (busy) => [!busy, true] as const);
-    if (!started) {
-      yield* Effect.logDebug("terminal subprocess poll round still running; skipping this tick");
+    // One host probe opens the round; every session is answered from it.
+    const inspector = yield* subprocessRound().pipe(
+      Effect.map(Option.some),
+      Effect.orElseSucceed(Option.none),
+    );
+
+    if (Option.isNone(inspector)) {
+      const streak = yield* Ref.updateAndGet(subprocessFailureStreakRef, (count) => count + 1);
+      if (streak < SUBPROCESS_FAILURE_TOLERANCE) {
+        yield* Effect.logWarning("failed to snapshot host processes for terminal subprocess poll", {
+          consecutiveFailures: streak,
+          sessions: runningSessions.length,
+        });
+        return;
+      }
+      yield* Effect.logWarning(
+        "host process snapshot has failed repeatedly; clearing terminal subprocess labels",
+        { consecutiveFailures: streak, sessions: runningSessions.length },
+      );
+      yield* runSubprocessRound(runningSessions, clearingInspector);
       return;
     }
 
-    yield* runSubprocessRound(runningSessions).pipe(
-      Effect.catch((reason) =>
-        Effect.logWarning("failed to snapshot host processes for terminal subprocess poll", {
-          reason,
-          sessions: runningSessions.length,
-        }),
-      ),
-      Effect.ensuring(Ref.set(subprocessRoundInFlight, false)),
-    );
+    yield* Ref.set(subprocessFailureStreakRef, 0);
+    yield* runSubprocessRound(runningSessions, inspector.value);
   });
 
   const hasRunningSessions = readManagerState.pipe(
@@ -2139,35 +2158,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     ),
   );
 
-  const maxSubprocessPollIntervalMs =
-    subprocessPollIntervalMs * SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER;
-  let subprocessPollDelayMs = subprocessPollIntervalMs;
-
-  yield* Effect.forever(
-    Effect.gen(function* () {
-      yield* Latch.close(subprocessPollWake);
-      if (yield* hasRunningSessions) {
-        yield* pollSubprocessActivity();
-      }
-
-      // A round that changed something publishes an event, and so does any
-      // terminal output; either reopens the latch and holds the base period.
-      subprocessPollDelayMs = Latch.isOpen(subprocessPollWake)
-        ? subprocessPollIntervalMs
-        : Math.min(
-            subprocessPollDelayMs * SUBPROCESS_POLL_BACKOFF_FACTOR,
-            maxSubprocessPollIntervalMs,
-          );
-
-      // The base period is never cut short, so events can never drive the poll
-      // faster than its configured rate; only the backed-off remainder is.
-      yield* Effect.sleep(subprocessPollIntervalMs);
-      const backoffRemainderMs = subprocessPollDelayMs - subprocessPollIntervalMs;
-      if (backoffRemainderMs > 0) {
-        yield* Effect.raceFirst(Effect.sleep(backoffRemainderMs), Latch.await(subprocessPollWake));
-      }
-    }),
-  ).pipe(Effect.forkIn(workerScope));
+  // The round is awaited inline, so it cannot overlap the next one; the loop
+  // only needs the back-off policy, which lives in `pollLoop.ts`.
+  yield* subprocessPoll
+    .run(
+      Effect.gen(function* () {
+        if (yield* hasRunningSessions) {
+          yield* pollSubprocessActivity();
+        }
+      }),
+    )
+    .pipe(Effect.forkIn(workerScope));
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
