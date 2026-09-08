@@ -87,7 +87,12 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
       });
       assert.equal(mutation.operation, "exec");
       if (mutation.operation === "exec") {
-        assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);
+        // Windows has no POSIX permission bits, so a 0o600 backup reads back as 0o666.
+        if (process.platform === "win32") {
+          assert.equal(yield* fs.exists(mutation.backup), true);
+        } else {
+          assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);
+        }
       }
 
       const error = yield* runSqliteState(
