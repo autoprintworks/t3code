@@ -46,6 +46,7 @@ import {
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 
 function mockProcess(exitCode: number) {
   return ChildProcessSpawner.makeHandle({
@@ -90,28 +91,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
-  it("switches desktop packaging product names to nightly for nightly builds", () => {
+  it("names the packaged product after the fork on every channel", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code Fork (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code Fork (Nightly)");
   });
 
-  it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
-    assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
-      macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
-    });
-
-    assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17-nightly.20260413.42"), {
-      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
-    });
+  it("keeps the desktop manifest product name equal to the identity seam", () => {
+    // electron and electron-builder read this manifest, not code, so it repeats
+    // the name. The seam owns it; this pins the copy to the seam (#59).
+    assert.equal(desktopPackageJson.productName, resolveDesktopProductName("0.0.17"));
   });
 
-  it("switches the bundled splash and favicon branding for nightly versions", () => {
-    assert.equal(resolveDesktopWebAssetBrand("0.0.17"), "production");
-    assert.equal(resolveDesktopWebAssetBrand("0.0.17-nightly.20260413.42"), "nightly");
+  it("packages the fork artwork, and the fork favicons with it, on every channel", () => {
+    assert.deepStrictEqual(resolveDesktopBuildIconAssets(), {
+      macIconPng: BRAND_ASSET_PATHS.forkMacIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.forkLinuxIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.forkWindowsIconIco,
+    });
+    assert.equal(resolveDesktopWebAssetBrand(), "fork");
   });
 
   it.effect("resolves GitHub desktop publish config from Effect config", () =>

@@ -182,6 +182,29 @@ describe("DesktopAppIdentity", () => {
     );
   });
 
+  it.effect.each([
+    { expected: "T3 Code Fork (Alpha)", version: "1.2.3" },
+    { expected: "T3 Code Fork (Nightly)", version: "1.2.3-nightly.20260908.7" },
+  ])("names the app $expected on version $version", ({ expected, version }) => {
+    // The version string carries no fork marker, and the nightly channel strips
+    // any prerelease tag it might carry. Fork naming must survive both (#59).
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.deepEqual(calls.setName, [expected]);
+      }),
+      { calls, environment: { appVersion: version } },
+    );
+  });
+
   it.effect("configures app identity from the environment commit override", () => {
     const calls: ElectronAppCalls = {
       setAboutPanelOptions: [],

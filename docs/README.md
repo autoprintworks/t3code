@@ -3,6 +3,7 @@
 ## Using T3 Code
 
 - [Install and first run](./user/install.md)
+- [Telling this fork apart from official T3 Code](./user/fork-build.md)
 - [Permission modes](./user/permission-modes.md)
 - [Skills](./user/skills.md)
 - [Keyboard shortcuts](./user/keybindings.md)

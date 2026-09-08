@@ -2,6 +2,7 @@ import { SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
+import { APP_FORK_TAG_LABEL } from "../../branding";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import {
@@ -87,6 +88,15 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
         )}
       >
         Code
+      </span>
+      <span
+        className={cn(
+          "shrink-0 rounded-[3px] border px-1 py-px text-[9px] leading-[1.4] font-semibold tracking-[0.08em]",
+          onBackdrop ? "border-white/40 text-white/80" : "border-border text-muted-foreground",
+        )}
+        data-fork-tag=""
+      >
+        {APP_FORK_TAG_LABEL}
       </span>
     </Link>
   );

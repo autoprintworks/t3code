@@ -3,7 +3,8 @@ import type {
   NativeStackHeaderItem,
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { Platform, View } from "react-native";
+import { Platform, View, type ColorValue } from "react-native";
+import { resolveForkBuildIdentity } from "@t3tools/shared/forkBuild";
 
 import { AppText as Text } from "./AppText";
 import { T3Wordmark } from "./T3Wordmark";
@@ -15,6 +16,9 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../native/native-glass";
 // Native leading items inherit different UIKit margins than title views.
 const IOS_NATIVE_LEADING_TITLE_OFFSET = -6;
 const IPAD_NATIVE_LEADING_TITLE_OFFSET = 7;
+
+// Every build from this repository is the fork (#59), so the tag is not conditional.
+const FORK_TAG_LABEL = resolveForkBuildIdentity().tagLabel;
 
 /**
  * Compact brand lockup sized for native navigation bars.
@@ -42,7 +46,7 @@ export function CompactBrandTitle(
   return (
     <View
       aria-level={1}
-      accessibilityLabel="T3 Code, Threads"
+      accessibilityLabel={`T3 Code ${FORK_TAG_LABEL}, Threads`}
       accessible
       role="heading"
       style={{
@@ -63,26 +67,37 @@ export function CompactBrandTitle(
       >
         Code
       </Text>
-      <View
+      <BrandPill backgroundColor={subtleColor} color={mutedColor} label={FORK_TAG_LABEL} />
+      <BrandPill backgroundColor={subtleColor} color={mutedColor} label={stageLabel} />
+    </View>
+  );
+}
+
+function BrandPill(props: {
+  readonly backgroundColor: ColorValue;
+  readonly color: ColorValue;
+  readonly label: string;
+}) {
+  return (
+    <View
+      style={{
+        backgroundColor: props.backgroundColor,
+        borderRadius: 999,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+      }}
+    >
+      <Text
         style={{
-          backgroundColor: subtleColor,
-          borderRadius: 999,
-          paddingHorizontal: 6,
-          paddingVertical: 2,
+          color: props.color,
+          fontFamily: "DMSans-Bold",
+          fontSize: 9,
+          letterSpacing: 0.9,
+          textTransform: "uppercase",
         }}
       >
-        <Text
-          style={{
-            color: mutedColor,
-            fontFamily: "DMSans-Bold",
-            fontSize: 9,
-            letterSpacing: 0.9,
-            textTransform: "uppercase",
-          }}
-        >
-          {stageLabel}
-        </Text>
-      </View>
+        {props.label}
+      </Text>
     </View>
   );
 }

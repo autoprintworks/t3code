@@ -51,6 +51,10 @@ convenience of a shared thread list on day one. So the fork now gets its own ide
   (`t3code-fork://` / `t3code-fork-dev://`, see `apps/desktop/src/electron/ElectronProtocol.ts`) are all
   distinct from the official build's. Two different OS-level protocol handlers can't fight over the same
   scheme.
+- **Visibly different once open.** The app icon is upstream's plate tinted orange with an "AP" corner
+  badge, the window title reads `T3 Code Fork (Alpha)`, and the sidebar wordmark carries a small `FORK`
+  tag, so the taskbar, Alt-Tab and the open window all say which build you are in
+  ([#59](https://github.com/autoprintworks/t3code/issues/59)).
 - **Different database, by default.** T3 Code's state directory (threads, projects, settings — the
   "T3 home") is chosen by `DesktopEnvironment.ts`. This fork defaults to `~/.t3-fork` instead of `~/.t3`,
   so running it cannot read or write the official release's real `state.sqlite`. Set `T3CODE_HOME` to
@@ -75,6 +79,49 @@ its `-wal`/`-shm` siblings — a plain file copy is only safe with the app close
 ```sh
 robocopy "%USERPROFILE%\.t3\userdata" "%USERPROFILE%\.t3\userdata-backup-YYYYMMDD" /E
 ```
+
+## Fork identity
+
+One function says what a build calls itself: `resolveForkBuildIdentity` in
+`packages/shared/src/forkBuild.ts`. Everything that shows fork identity goes through it, so an upstream
+merge has one place to conflict.
+
+The signal is the fork's own application id, `com.autoprintworks.t3code`, a build-time constant. This
+repository never produces an official build, so identity does not vary and nothing at runtime can lose
+it: the same constant is stamped by `scripts/build-desktop-artifact.ts` as the electron-builder `appId`,
+set by `DesktopEnvironment.ts` as the Windows AppUserModelID, and compiled into the desktop main bundle
+and the web bundle alike.
+
+It used to read the fork's `-ap.<n>` release tag off the package version. That was wrong on the nightly
+channel: `scripts/resolve-nightly-release.ts` rewrites the version to `<base>-nightly.<date>.<n>`, which
+strips any prerelease tag, so a nightly would have de-forked itself — the installer would still have
+said `T3 Code Fork (Nightly)` while the running app called itself `T3 Code`. An app id cannot be lost
+that way, because no channel rewrites it.
+
+`apps/desktop/package.json` still repeats the product name, because electron and electron-builder read
+that manifest rather than code, and `packages/shared` cannot import an app's manifest without inverting
+the dependency. The seam is the source; a test in `scripts/build-desktop-artifact.test.ts` pins the
+manifest string to `resolveDesktopProductName`, so the copy cannot drift.
+
+Icons are generated, not hand-drawn per size:
+
+```sh
+node scripts/generate-fork-icons.ts
+```
+
+That tints upstream's 1024px masters in `assets/prod/`, composites the badge, and writes every size the
+packagers need to `assets/fork/` and `apps/desktop/resources/`: the Windows `.ico`, the web favicons and
+apple touch icon, and — from upstream's macOS master, which keeps Apple's grid padding — `icon.icns` and
+the 512px dock icon. All outputs are committed. Re-run it after upstream changes its artwork.
+
+`scripts/generate-fork-icons.test.ts` re-runs the generator and compares it against the committed bytes,
+so an edited generator or a hand-edited asset fails the suite instead of shipping.
+
+Before and after, on the Windows taskbar:
+
+| Before                                                           | After                                                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| ![Upstream's black plate](./images/fork-icon-taskbar-before.png) | ![The fork's tinted, badged plate](./images/fork-icon-taskbar-after.png) |
 
 ## Unsigned installer cost
 
