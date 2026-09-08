@@ -110,6 +110,10 @@ jobs:
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
 
+      # Fails when a fork feature loses a file or a test. Also runs in the fork update gate.
+      - name: Check fork features
+        run: node scripts/check-fork-features.ts
+
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
     runs-on: blacksmith-6vcpu-macos-26

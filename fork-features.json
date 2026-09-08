@@ -1,0 +1,69 @@
+{
+  "comment": "Every feature this fork carries over pingdotgg/t3code. scripts/check-fork-features.ts fails when a listed file or test file is gone, then runs the listed tests. .github/workflows/fork-update.yml runs it in the gate, so an upstream merge that deletes a fork seam stops before it can publish. See docs/operations/fork-windows-build.md.",
+  "features": [
+    {
+      "name": "fork-app-identity",
+      "description": "The fork installs and runs beside official T3 Code: its own app id, product name, state directory (~/.t3-fork) and t3code-fork:// URL scheme. Issues #34 and #59.",
+      "files": [
+        "apps/desktop/src/app/DesktopEnvironment.ts",
+        "apps/desktop/src/app/DesktopLinuxUrlHandler.ts",
+        "apps/desktop/src/electron/ElectronProtocol.ts"
+      ],
+      "test": "apps/desktop/src/app/DesktopLinuxUrlHandler.test.ts",
+      "patchesUpstream": true
+    },
+    {
+      "name": "fork-desktop-build",
+      "description": "The desktop build stages the fork's app id, product name and installer file name, and reads its update source from T3CODE_DESKTOP_UPDATE_REPOSITORY. scripts/release-smoke.ts also carries the fork's fix for running the release-only shell steps under Git for Windows bash. Issues #59, #75 and #94.",
+      "files": ["scripts/build-desktop-artifact.ts", "scripts/release-smoke.ts"],
+      "test": "scripts/build-desktop-artifact.test.ts",
+      "patchesUpstream": true
+    },
+    {
+      "name": "windows-console-suppression",
+      "description": "Spawned server and provider processes no longer draw a console window on Windows. Issue #82.",
+      "files": [
+        "packages/shared/src/windowsConsole.ts",
+        "packages/shared/src/shell.ts",
+        "apps/desktop/src/main.ts",
+        "apps/server/src/bin.ts",
+        "apps/server/src/serviceLauncher.ts"
+      ],
+      "test": "packages/shared/src/windowsConsole.test.ts",
+      "patchesUpstream": true
+    },
+    {
+      "name": "terminal-subprocess-poll",
+      "description": "Bounded terminal and preview polling, so Windows stops spawning one PowerShell per terminal per second at unbounded concurrency. Issue #83. The fix is not on main yet; this entry reserves the seam so an upstream merge cannot quietly remove the files or the test it lands in.",
+      "files": ["apps/server/src/terminal/Manager.ts", "apps/server/src/preview/PortScanner.ts"],
+      "test": "apps/server/src/terminal/Manager.test.ts",
+      "patchesUpstream": true
+    },
+    {
+      "name": "fm-acp-provider",
+      "description": "First Mate is driven through its ACP door as a configurable ACP agent provider. Issues #78 and #79.",
+      "files": [
+        "apps/server/src/provider/acpAgent/AcpAgentProvider.ts",
+        "apps/server/src/provider/acpAgent/AcpAgentDriver.ts",
+        "apps/server/src/provider/acpAgent/AcpAgentAdapter.ts",
+        "apps/server/src/provider/acpAgent/AcpAgentIdentity.ts",
+        "apps/server/src/provider/acpAgent/AcpAgentSupport.ts"
+      ],
+      "test": "apps/server/src/provider/acpAgent/AcpAgentProvider.test.ts",
+      "patchesUpstream": false
+    },
+    {
+      "name": "fm-worker-threads",
+      "description": "First Mate workers show up as read-only threads, with the fork's own migration track behind them. Issue #81.",
+      "files": [
+        "apps/server/src/provider/acpAgent/AcpAgentWorkerThreadReactor.ts",
+        "apps/server/src/provider/acpAgent/AcpAgentWorkerSessions.ts",
+        "apps/server/src/provider/acp/AcpPeerSessions.ts",
+        "apps/server/src/persistence/ForkMigrations.ts",
+        "apps/server/src/orchestration/decider.ts"
+      ],
+      "test": "apps/server/src/orchestration/decider.readOnly.test.ts",
+      "patchesUpstream": true
+    }
+  ]
+}
