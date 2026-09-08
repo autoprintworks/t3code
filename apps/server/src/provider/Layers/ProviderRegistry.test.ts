@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -68,6 +70,13 @@ process.env.T3CODE_CURSOR_ENABLED = "1";
 
 const encoder = new TextEncoder();
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+
+// Provider probes and status-cache writes complete on the host clock, not on TestClock, and Windows
+// settles both a real timer tick later than POSIX does. Poll loops driven by TestClock yield to the
+// host clock as well, or they spin out before the work they are waiting for lands.
+const yieldToHostClock = Effect.promise(
+  () => new Promise<void>((resolve) => setTimeout(resolve, 20)),
+);
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -1088,6 +1097,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
               ...initialProvider.models,
             ]);
+            // Stream.fromPubSub drops anything published before the registry's subscriber attaches,
+            // and that subscription fiber starts on the host clock.
+            yield* yieldToHostClock;
             yield* PubSub.publish(changes, refreshedProvider);
 
             let cachedProvider = yield* readProviderStatusCache(filePath);
@@ -1213,6 +1225,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 instanceId: openCodeInstanceId,
               });
 
+              // Stream.fromPubSub drops anything published before the registry's subscriber
+              // attaches, and that subscription fiber starts on the host clock.
+              yield* yieldToHostClock;
               yield* PubSub.publish(changes, authoritativeProvider);
 
               let cachedProvider = yield* readProviderStatusCache(filePath);
@@ -1222,6 +1237,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 attempt += 1
               ) {
                 yield* TestClock.adjust("10 millis");
+                yield* yieldToHostClock;
                 yield* Effect.yieldNow;
                 cachedProvider = yield* readProviderStatusCache(filePath);
               }
@@ -1235,6 +1251,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 attempt += 1
               ) {
                 yield* TestClock.adjust("10 millis");
+                yield* yieldToHostClock;
                 yield* Effect.yieldNow;
                 cachedProvider = yield* readProviderStatusCache(filePath);
               }
@@ -1680,6 +1697,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   return providers;
                 }
                 yield* TestClock.adjust("50 millis");
+                yield* yieldToHostClock;
                 yield* Effect.yieldNow;
               }
               return yield* registry.getProviders;
@@ -2205,7 +2223,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       );
 
       it.effect("runs Claude status probes with the configured CLAUDE_CONFIG_DIR", () => {
-        const claudeConfigDir = "/tmp/t3code-claude-home";
+        // The provider resolves homePath to a host-native absolute path before it spawns.
+        const claudeConfigDir = NodePath.resolve("/tmp/t3code-claude-home");
         const recorded = recordingMockSpawnerLayer((args) => {
           const joined = args.join(" ");
           if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
