@@ -45,8 +45,10 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Latch from "effect/Latch";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -76,7 +78,21 @@ export {
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
-const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
+// Subprocess detection takes one host process-table snapshot per round and
+// derives every session's answer from it, so a round costs one probe however
+// many terminals are running. The probe timeout stays below the base period so
+// a round cannot spill into the next one, and rounds that change nothing back
+// the period off geometrically to BACKOFF_MAX_MULTIPLIER times the base. Any
+// terminal event (output, open, exit, activity) drops it straight back.
+const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 2_000;
+const SUBPROCESS_POLL_BACKOFF_FACTOR = 2;
+const SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER = 8;
+const SUBPROCESS_ROUND_CONCURRENCY = 4;
+const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_500;
+const POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_000;
+// A busy Windows host has well over a thousand processes; the old 32 KiB cap
+// silently truncated the table and hid subprocesses behind it.
+const PROCESS_SNAPSHOT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
@@ -89,12 +105,11 @@ class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubpr
   "TerminalSubprocessCheckError",
   {
     cause: Schema.optional(Schema.Defect()),
-    terminalPid: Schema.Number,
-    command: Schema.Literals(["powershell", "pgrep", "ps"]),
+    command: Schema.Literals(["powershell", "ps"]),
   },
 ) {
   override get message(): string {
-    return `Failed to inspect terminal subprocesses for PID ${this.terminalPid} with ${this.command}`;
+    return `Failed to snapshot the host process table with ${this.command}`;
   }
 }
 
@@ -198,6 +213,14 @@ interface TerminalSubprocessInspector {
   (
     terminalPid: number,
   ): Effect.Effect<TerminalSubprocessInspectResult, TerminalSubprocessCheckError>;
+}
+
+/**
+ * Opens one poll round. The returned inspector answers for every session in
+ * that round, so a round that needs a host probe pays for exactly one.
+ */
+interface TerminalSubprocessRound {
+  (): Effect.Effect<TerminalSubprocessInspector, TerminalSubprocessCheckError>;
 }
 
 const resizePtyProcess = (
@@ -620,237 +643,188 @@ function parseFirstChildPidFromPgrep(stdout: string): number | null {
   return null;
 }
 
-function windowsInspectSubprocess(
-  terminalPid: number,
-  platform: NodeJS.Platform,
-): Effect.Effect<
-  TerminalSubprocessInspectResult,
-  TerminalSubprocessCheckError,
-  ProcessRunner.ProcessRunner
-> {
-  const command =
-    'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
-  return Effect.gen(function* () {
-    const processRunner = yield* ProcessRunner.ProcessRunner;
-    return yield* processRunner.run({
-      // powershell.exe is a real executable — never spawn it through cmd.exe
-      // shell mode, which would re-tokenize the `-Command` payload (pipes,
-      // semicolons) before PowerShell ever sees it.
-      command: "powershell.exe",
-      args: ["-NoProfile", "-NonInteractive", "-Command", command],
-      timeout: "1500 millis",
-      maxOutputBytes: 32_768,
-      outputMode: "truncate",
-      timeoutBehavior: "timedOutResult",
-    });
-  }).pipe(
-    Effect.map((result) => {
-      if (result.code !== 0) {
-        return { hasRunningSubprocess: false, childCommand: null, processIds: [] } as const;
-      }
-      const processNameById = new Map<number, string>();
-      const childrenByParent = new Map<number, number[]>();
-      for (const line of result.stdout.split(/\r?\n/g)) {
-        const [pidRaw, parentPidRaw, nameRaw] = line.trim().split("|", 3);
-        const pid = Number(pidRaw);
-        const parentPid = Number(parentPidRaw);
-        if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) continue;
-        processNameById.set(pid, nameRaw?.trim() ?? "");
-        const children = childrenByParent.get(parentPid) ?? [];
-        children.push(pid);
-        childrenByParent.set(parentPid, children);
-      }
-      const directChildren = childrenByParent.get(terminalPid) ?? [];
-      const childPid = directChildren[0];
-      if (childPid === undefined) {
-        return { hasRunningSubprocess: false, childCommand: null, processIds: [] } as const;
-      }
-      const processIds = new Set<number>([terminalPid]);
-      const pending = [terminalPid];
-      while (pending.length > 0) {
-        const parentPid = pending.pop();
-        if (parentPid === undefined) continue;
-        for (const pid of childrenByParent.get(parentPid) ?? []) {
-          if (processIds.has(pid)) continue;
-          processIds.add(pid);
-          pending.push(pid);
-        }
-      }
-      const normalized = normalizeChildCommandName(processNameById.get(childPid) ?? "", platform);
-      return {
-        hasRunningSubprocess: true,
-        childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
-        processIds: [...processIds],
-      } as const;
-    }),
-    Effect.mapError(
-      (cause) =>
-        new TerminalSubprocessCheckError({
-          cause,
-          terminalPid,
-          command: "powershell",
-        }),
-    ),
-  );
+/**
+ * One host process-table snapshot, shared by every terminal session in a poll
+ * round. The subprocess check only needs two views of the table, so both are
+ * built once per round and read many times.
+ */
+interface HostProcessSnapshot {
+  readonly childrenByParent: ReadonlyMap<number, ReadonlyArray<number>>;
+  readonly commandByPid: ReadonlyMap<number, string>;
 }
 
-const posixInspectSubprocess = Effect.fn("terminal.posixInspectSubprocess")(function* (
+const EMPTY_INSPECT_RESULT: TerminalSubprocessInspectResult = {
+  hasRunningSubprocess: false,
+  childCommand: null,
+  processIds: [],
+};
+
+const addProcessSnapshotRow = (
+  childrenByParent: Map<number, number[]>,
+  commandByPid: Map<number, string>,
+  pid: number,
+  parentPid: number,
+  command: string,
+): void => {
+  if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) return;
+  commandByPid.set(pid, command.trim());
+  const children = childrenByParent.get(parentPid) ?? [];
+  children.push(pid);
+  childrenByParent.set(parentPid, children);
+};
+
+/**
+ * Parses the Windows probe's `pid|parentPid|imageName` rows into a snapshot.
+ * Rows that are not two numbers then a name are skipped, which also absorbs a
+ * truncated final row.
+ */
+export function parseWindowsProcessSnapshot(stdout: string): HostProcessSnapshot {
+  const childrenByParent = new Map<number, number[]>();
+  const commandByPid = new Map<number, string>();
+  for (const line of stdout.split(/\r?\n/g)) {
+    const [pidRaw, parentPidRaw, nameRaw] = line.trim().split("|", 3);
+    addProcessSnapshotRow(
+      childrenByParent,
+      commandByPid,
+      Number(pidRaw),
+      Number(parentPidRaw),
+      nameRaw ?? "",
+    );
+  }
+  return { childrenByParent, commandByPid };
+}
+
+/**
+ * Parses `ps -eo pid=,ppid=,comm=` rows into a snapshot. The command is the
+ * rest of the line, because a `comm` value can be a path containing spaces.
+ */
+export function parsePosixProcessSnapshot(stdout: string): HostProcessSnapshot {
+  const childrenByParent = new Map<number, number[]>();
+  const commandByPid = new Map<number, string>();
+  for (const line of stdout.split(/\r?\n/g)) {
+    const match = /^(\d+)\s+(\d+)\s*(.*)$/.exec(line.trim());
+    if (!match) continue;
+    addProcessSnapshotRow(
+      childrenByParent,
+      commandByPid,
+      Number(match[1]),
+      Number(match[2]),
+      match[3] ?? "",
+    );
+  }
+  return { childrenByParent, commandByPid };
+}
+
+/**
+ * Answers one terminal's subprocess question from a shared snapshot. Pure, so a
+ * round pays for the process table once however many terminals are running.
+ */
+export function inspectProcessSnapshot(
+  snapshot: HostProcessSnapshot,
   terminalPid: number,
   platform: NodeJS.Platform,
-): Effect.fn.Return<
-  TerminalSubprocessInspectResult,
-  TerminalSubprocessCheckError,
-  ProcessRunner.ProcessRunner
-> {
-  const processRunner = yield* ProcessRunner.ProcessRunner;
-  const runPgrep = processRunner
-    .run({
-      command: "pgrep",
-      args: ["-P", String(terminalPid)],
-      timeout: "1 second",
-      maxOutputBytes: 32_768,
-      outputMode: "truncate",
-      timeoutBehavior: "timedOutResult",
-    })
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new TerminalSubprocessCheckError({
-            cause,
-            terminalPid,
-            command: "pgrep",
-          }),
-      ),
-    );
+): TerminalSubprocessInspectResult {
+  if (!Number.isInteger(terminalPid) || terminalPid <= 0) return EMPTY_INSPECT_RESULT;
+  const childPid = snapshot.childrenByParent.get(terminalPid)?.[0];
+  if (childPid === undefined) return EMPTY_INSPECT_RESULT;
 
-  const runPs = processRunner
-    .run({
-      command: "ps",
-      args: ["-eo", "pid=,ppid="],
-      timeout: "1 second",
-      maxOutputBytes: 262_144,
-      outputMode: "truncate",
-      timeoutBehavior: "timedOutResult",
-    })
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new TerminalSubprocessCheckError({
-            cause,
-            terminalPid,
-            command: "ps",
-          }),
-      ),
-    );
-
-  let childPid: number | null = null;
-
-  const pgrepResult = yield* Effect.exit(runPgrep);
-  if (pgrepResult._tag === "Success") {
-    if (pgrepResult.value.code === 0) {
-      childPid = parseFirstChildPidFromPgrep(pgrepResult.value.stdout);
-    } else if (pgrepResult.value.code === 1) {
-      return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
-    }
-  }
-
-  if (childPid === null) {
-    const psResult = yield* Effect.exit(runPs);
-    if (psResult._tag === "Failure" || psResult.value.code !== 0) {
-      return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
-    }
-    for (const line of psResult.value.stdout.split(/\r?\n/g)) {
-      const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
-      const pid = Number(pidRaw);
-      const ppid = Number(ppidRaw);
-      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-      if (ppid === terminalPid) {
-        childPid = pid;
-        break;
-      }
-    }
-  }
-
-  if (childPid === null) {
-    return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
-  }
-
-  const runComm = processRunner.run({
-    command: "ps",
-    args: ["-p", String(childPid), "-o", "comm="],
-    timeout: "1 second",
-    maxOutputBytes: 8_192,
-    outputMode: "truncate",
-    timeoutBehavior: "timedOutResult",
-  });
-
-  const commResult = yield* Effect.exit(runComm);
-  let rawComm: string | null = null;
-  if (commResult._tag === "Success" && commResult.value && commResult.value.code === 0) {
-    rawComm = commResult.value.stdout.trim();
-  }
-
-  if (!rawComm || rawComm.length === 0) {
-    const runArgs = processRunner.run({
-      command: "ps",
-      args: ["-p", String(childPid), "-o", "args="],
-      timeout: "1 second",
-      maxOutputBytes: 16_384,
-      outputMode: "truncate",
-      timeoutBehavior: "timedOutResult",
-    });
-    const argsResult = yield* Effect.exit(runArgs);
-    if (argsResult._tag === "Success" && argsResult.value && argsResult.value.code === 0) {
-      const first = argsResult.value.stdout.trim().split(/\s+/)[0] ?? "";
-      rawComm = first.length > 0 ? first : null;
-    }
-  }
-
-  const normalized = rawComm ? normalizeChildCommandName(rawComm, platform) : null;
   const processIds = new Set<number>([terminalPid]);
-  const psResult = yield* Effect.exit(runPs);
-  if (psResult._tag === "Success" && psResult.value.code === 0) {
-    const childrenByParent = new Map<number, number[]>();
-    for (const line of psResult.value.stdout.split(/\r?\n/g)) {
-      const [pidRaw, ppidRaw] = line.trim().split(/\s+/g);
-      const pid = Number(pidRaw);
-      const ppid = Number(ppidRaw);
-      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-      const children = childrenByParent.get(ppid) ?? [];
-      children.push(pid);
-      childrenByParent.set(ppid, children);
+  const pending = [terminalPid];
+  while (pending.length > 0) {
+    const parentPid = pending.pop();
+    if (parentPid === undefined) continue;
+    for (const pid of snapshot.childrenByParent.get(parentPid) ?? []) {
+      if (processIds.has(pid)) continue;
+      processIds.add(pid);
+      pending.push(pid);
     }
-    const pending = [terminalPid];
-    while (pending.length > 0) {
-      const parentPid = pending.pop();
-      if (parentPid === undefined) continue;
-      for (const child of childrenByParent.get(parentPid) ?? []) {
-        if (processIds.has(child)) continue;
-        processIds.add(child);
-        pending.push(child);
-      }
-    }
-  } else {
-    processIds.add(childPid);
   }
+
+  const normalized = normalizeChildCommandName(snapshot.commandByPid.get(childPid) ?? "", platform);
   return {
     hasRunningSubprocess: true,
     childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
     processIds: [...processIds],
   };
+}
+
+// powershell.exe is a real executable - never spawn it through cmd.exe shell
+// mode, which would re-tokenize the `-Command` payload (pipes, semicolons)
+// before PowerShell ever sees it.
+const WINDOWS_PROCESS_SNAPSHOT_COMMAND =
+  'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+
+const processSnapshotProbe = (platform: NodeJS.Platform) =>
+  platform === "win32"
+    ? ({
+        command: "powershell.exe",
+        args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_SNAPSHOT_COMMAND],
+        timeoutMs: WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS,
+        source: "powershell",
+        parse: parseWindowsProcessSnapshot,
+      } as const)
+    : ({
+        command: "ps",
+        args: ["-eo", "pid=,ppid=,comm="],
+        timeoutMs: POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS,
+        source: "ps",
+        parse: parsePosixProcessSnapshot,
+      } as const);
+
+/**
+ * Takes the one process-table snapshot a poll round is allowed. A failed or
+ * timed-out probe fails the round, which leaves every session's last known
+ * state alone instead of reporting "no subprocess" for all of them.
+ */
+const hostProcessSnapshot = Effect.fn("terminal.hostProcessSnapshot")(function* (
+  platform: NodeJS.Platform,
+): Effect.fn.Return<
+  HostProcessSnapshot,
+  TerminalSubprocessCheckError,
+  ProcessRunner.ProcessRunner
+> {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const probe = processSnapshotProbe(platform);
+  const result = yield* processRunner
+    .run({
+      command: probe.command,
+      args: probe.args,
+      timeout: probe.timeoutMs,
+      maxOutputBytes: PROCESS_SNAPSHOT_MAX_OUTPUT_BYTES,
+      outputMode: "truncate",
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(
+      Effect.mapError(
+        (cause) => new TerminalSubprocessCheckError({ cause, command: probe.source }),
+      ),
+    );
+  if (result.timedOut || result.code !== 0) {
+    return yield* new TerminalSubprocessCheckError({
+      command: probe.source,
+      cause: result.timedOut
+        ? `${probe.command} timed out after ${probe.timeoutMs}ms`
+        : `${probe.command} exited with code ${String(result.code)}`,
+    });
+  }
+  return probe.parse(result.stdout);
 });
 
-function defaultSubprocessInspectorForPlatform(platform: NodeJS.Platform) {
-  return Effect.fn("terminal.defaultSubprocessInspector")(function* (terminalPid: number) {
-    if (!Number.isInteger(terminalPid) || terminalPid <= 0) {
-      return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
-    }
-    if (platform === "win32") {
-      return yield* windowsInspectSubprocess(terminalPid, platform);
-    }
-    return yield* posixInspectSubprocess(terminalPid, platform);
-  });
-}
+/** The shipped round: one snapshot, then a pure lookup per session. */
+const defaultSubprocessRound =
+  (
+    platform: NodeJS.Platform,
+    processRunner: ProcessRunner.ProcessRunner["Service"],
+  ): TerminalSubprocessRound =>
+  () =>
+    hostProcessSnapshot(platform).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+      Effect.map(
+        (snapshot): TerminalSubprocessInspector =>
+          (terminalPid) =>
+            Effect.succeed(inspectProcessSnapshot(snapshot, terminalPid, platform)),
+      ),
+    );
 
 function capHistory(history: string, maxLines: number): string {
   if (history.length === 0) return history;
@@ -1183,6 +1157,7 @@ interface TerminalManagerOptions {
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: TerminalSubprocessInspector;
+  subprocessRound?: TerminalSubprocessRound;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
@@ -1227,12 +1202,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const subprocessInspector =
-    options.subprocessInspector ??
-    ((terminalPid) =>
-      defaultSubprocessInspectorForPlatform(platform)(terminalPid).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-      ));
+  const injectedSubprocessInspector = options.subprocessInspector;
+  const subprocessRound: TerminalSubprocessRound =
+    options.subprocessRound ??
+    (injectedSubprocessInspector
+      ? () => Effect.succeed(injectedSubprocessInspector)
+      : defaultSubprocessRound(platform, processRunner));
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
@@ -1242,6 +1217,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const unregisterTerminal = options.unregisterTerminal ?? (() => Effect.void);
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
+
+  // Opened by every published terminal event; the poll loop closes it at the
+  // start of each round and reads it at the end to decide whether to back off.
+  const subprocessPollWake = yield* Latch.make(false);
+  const subprocessRoundInFlight = yield* Ref.make(false);
 
   const managerStateRef = yield* SynchronizedRef.make<TerminalManagerState>({
     sessions: new Map(),
@@ -1254,6 +1234,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const publishEvent = (event: TerminalEvent) =>
     Effect.gen(function* () {
+      // Any terminal event is evidence that this host is not idle, so it drops
+      // the subprocess poll back to its base period and wakes a backed-off
+      // sleep. `openUnsafe` keeps the hot output path allocation-free.
+      Latch.openUnsafe(subprocessPollWake);
       for (const listener of terminalEventListeners) {
         yield* listener(event).pipe(Effect.ignoreCause({ log: true }));
       }
@@ -2053,22 +2037,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
   });
 
-  const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
-    const state = yield* readManagerState;
-    const runningSessions = [...state.sessions.values()].filter(
-      (session): session is TerminalSessionState & { pid: number } =>
-        session.status === "running" && Number.isInteger(session.pid),
-    );
-
-    if (runningSessions.length === 0) {
-      return;
-    }
+  const runSubprocessRound = Effect.fn("terminal.subprocessRound")(function* (
+    runningSessions: ReadonlyArray<TerminalSessionState & { pid: number }>,
+  ) {
+    // One host probe opens the round; every session below is answered from it.
+    const inspectSubprocess = yield* subprocessRound();
 
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       session: TerminalSessionState & { pid: number },
     ) {
       const terminalPid = session.pid;
-      const inspectResult = yield* subprocessInspector(terminalPid).pipe(
+      const inspectResult = yield* inspectSubprocess(terminalPid).pipe(
         Effect.map(Option.some),
         Effect.catch((reason) =>
           Effect.logWarning("failed to check terminal subprocess activity", {
@@ -2128,9 +2107,40 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
     yield* Effect.forEach(runningSessions, checkSubprocessActivity, {
-      concurrency: "unbounded",
+      concurrency: SUBPROCESS_ROUND_CONCURRENCY,
       discard: true,
     });
+  });
+
+  const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
+    const state = yield* readManagerState;
+    const runningSessions = [...state.sessions.values()].filter(
+      (session): session is TerminalSessionState & { pid: number } =>
+        session.status === "running" && Number.isInteger(session.pid),
+    );
+
+    if (runningSessions.length === 0) {
+      return;
+    }
+
+    // One round at a time. A round that outlives its period makes the next one
+    // skip rather than overlap it, which is what let the old poll pile up when
+    // the host probe ran long.
+    const started = yield* Ref.modify(subprocessRoundInFlight, (busy) => [!busy, true] as const);
+    if (!started) {
+      yield* Effect.logDebug("terminal subprocess poll round still running; skipping this tick");
+      return;
+    }
+
+    yield* runSubprocessRound(runningSessions).pipe(
+      Effect.catch((reason) =>
+        Effect.logWarning("failed to snapshot host processes for terminal subprocess poll", {
+          reason,
+          sessions: runningSessions.length,
+        }),
+      ),
+      Effect.ensuring(Ref.set(subprocessRoundInFlight, false)),
+    );
   });
 
   const hasRunningSessions = readManagerState.pipe(
@@ -2139,16 +2149,34 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     ),
   );
 
+  const maxSubprocessPollIntervalMs =
+    subprocessPollIntervalMs * SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER;
+  let subprocessPollDelayMs = subprocessPollIntervalMs;
+
   yield* Effect.forever(
-    hasRunningSessions.pipe(
-      Effect.flatMap((active) =>
-        active
-          ? pollSubprocessActivity().pipe(
-              Effect.flatMap(() => Effect.sleep(subprocessPollIntervalMs)),
-            )
-          : Effect.sleep(subprocessPollIntervalMs),
-      ),
-    ),
+    Effect.gen(function* () {
+      yield* Latch.close(subprocessPollWake);
+      if (yield* hasRunningSessions) {
+        yield* pollSubprocessActivity();
+      }
+
+      // A round that changed something publishes an event, and so does any
+      // terminal output; either reopens the latch and holds the base period.
+      subprocessPollDelayMs = Latch.isOpen(subprocessPollWake)
+        ? subprocessPollIntervalMs
+        : Math.min(
+            subprocessPollDelayMs * SUBPROCESS_POLL_BACKOFF_FACTOR,
+            maxSubprocessPollIntervalMs,
+          );
+
+      // The base period is never cut short, so events can never drive the poll
+      // faster than its configured rate; only the backed-off remainder is.
+      yield* Effect.sleep(subprocessPollIntervalMs);
+      const backoffRemainderMs = subprocessPollDelayMs - subprocessPollIntervalMs;
+      if (backoffRemainderMs > 0) {
+        yield* Effect.raceFirst(Effect.sleep(backoffRemainderMs), Latch.await(subprocessPollWake));
+      }
+    }),
   ).pipe(Effect.forkIn(workerScope));
 
   yield* Effect.addFinalizer(() =>

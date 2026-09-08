@@ -19,9 +19,9 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -50,9 +50,18 @@ export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
   3000, 3001, 3333, 4173, 4200, 4321, 5000, 5173, 5174, 5175, 5500, 8000, 8080, 8081, 8888, 9000,
 ]);
 
+// Base period, and the geometric back-off a run of unchanged scans decays to.
+// Anything that changes - a different listener set, a new retainer, a terminal
+// process registration that actually moved - drops it back to the base.
 const POLL_INTERVAL = Duration.seconds(3);
-const LSOF_TIMEOUT_MS = 5_000;
-const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+const POLL_BACKOFF_FACTOR = 2;
+const POLL_BACKOFF_MAX_MULTIPLIER = 4;
+// Both listener probes stay under the base period, so a scan cannot spill into
+// the next one.
+const LSOF_TIMEOUT_MS = 2_500;
+const WINDOWS_LISTENER_TIMEOUT_MS = 2_000;
+const WINDOWS_PROCESS_NAME_TIMEOUT_MS = 2_000;
+const WINDOWS_PROCESS_NAME_CONCURRENCY = 4;
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
@@ -136,30 +145,74 @@ const parsePortFromLsofName = (name: string): number | null => {
   return port;
 };
 
-const parseWindowsListenerOutput = (
+const splitWindowsAddress = (value: string): { host: string; port: number } | null => {
+  const lastColon = value.lastIndexOf(":");
+  if (lastColon < 0) return null;
+  const rawHost = value.slice(0, lastColon);
+  const host = rawHost.startsWith("[") && rawHost.endsWith("]") ? rawHost.slice(1, -1) : rawHost;
+  const port = Number.parseInt(value.slice(lastColon + 1), 10);
+  if (!Number.isInteger(port) || port < 0 || port >= 65536) return null;
+  return { host, port };
+};
+
+/**
+ * Parses `netstat -ano -p TCP`. A listening row is recognised by its foreign
+ * address being the wildcard `0.0.0.0:0` / `[::]:0`, not by the state word,
+ * which netstat localises.
+ */
+export const parseWindowsListenerOutput = (
   raw: string,
   terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<number, DiscoveredLocalServer>();
   for (const line of raw.split(/\r?\n/g)) {
-    const [hostRaw, portRaw, pidRaw, processNameRaw] = line.trim().split("|", 4);
-    const host = hostRaw?.trim() ?? "";
-    if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") continue;
-    const port = Number(portRaw);
-    const pid = Number(pidRaw);
-    if (!Number.isInteger(port) || port <= 0 || port >= 65536) continue;
+    const [proto, localRaw, foreignRaw, ...rest] = line.trim().split(/\s+/g);
+    if (proto?.toUpperCase() !== "TCP" || localRaw === undefined || foreignRaw === undefined) {
+      continue;
+    }
+    const foreign = splitWindowsAddress(foreignRaw);
+    if (foreign === null || foreign.port !== 0) continue;
+    const local = splitWindowsAddress(localRaw);
+    if (local === null || local.port <= 0) continue;
+    if (!LSOF_LOCAL_HOST_TOKENS.has(local.host) && local.host !== "::") continue;
+    const pid = Number(rest.at(-1));
     const normalizedPid = Number.isInteger(pid) && pid > 0 ? pid : null;
-    if (seen.has(port)) continue;
-    seen.set(port, {
+    if (seen.has(local.port)) continue;
+    seen.set(local.port, {
       host: "localhost",
-      port,
-      url: `http://localhost:${port}`,
-      processName: processNameRaw?.trim() || null,
+      port: local.port,
+      url: `http://localhost:${local.port}`,
+      processName: null,
       pid: normalizedPid,
       terminal: normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null),
     });
   }
   return [...seen.values()].toSorted((left, right) => left.port - right.port);
+};
+
+/**
+ * Reads the image name out of a `tasklist /nh /fo csv` row, dropping the `.exe`
+ * so the wire value matches what `Get-Process` used to report.
+ */
+export const parseTasklistProcessName = (raw: string): string | null => {
+  for (const line of raw.split(/\r?\n/g)) {
+    const name = /^"([^"]*)"/.exec(line.trim())?.[1]?.trim();
+    if (!name) continue;
+    return name.toLowerCase().endsWith(".exe") ? name.slice(0, -4) : name;
+  }
+  return null;
+};
+
+const processIdSetsEqual = (
+  left: ReadonlySet<number> | undefined,
+  right: ReadonlySet<number>,
+): boolean => {
+  if (left === undefined) return right.size === 0;
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
 };
 
 const serversEqual = (
@@ -196,6 +249,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     terminalProcesses: new Map(),
     retainCount: 0,
   });
+  // Opened by anything that means "this host is not idle": a changed listener
+  // set, a new retainer, a terminal whose process set moved. The poll loop
+  // closes it at the start of each tick and reads it at the end.
+  const pollWake = yield* Latch.make(false);
+  const scanInFlightRef = yield* Ref.make(false);
 
   const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
     const results = yield* Effect.forEach(
@@ -229,6 +287,44 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         platform: hostPlatform,
       }).pipe(Effect.as(null));
 
+  // netstat reports a PID but no image name; tasklist answers for one PID in
+  // ~35 ms of CPU. Names are cached per PID and pruned to the listeners of the
+  // current scan, so a steady set of dev servers costs no extra spawns at all.
+  const processNameCacheRef = yield* Ref.make<ReadonlyMap<number, string>>(new Map());
+
+  const windowsProcessNames = Effect.fn("PortDiscovery.windowsProcessNames")(function* (
+    pids: ReadonlyArray<number>,
+  ) {
+    const wanted = [...new Set(pids)];
+    const cached = yield* Ref.get(processNameCacheRef);
+    const missing = wanted.filter((pid) => !cached.has(pid));
+    const resolved = yield* Effect.forEach(
+      missing,
+      (pid) =>
+        processRunner
+          .run({
+            command: "tasklist.exe",
+            args: ["/nh", "/fo", "csv", "/fi", `PID eq ${pid}`],
+            timeout: Duration.millis(WINDOWS_PROCESS_NAME_TIMEOUT_MS),
+            maxOutputBytes: 64 * 1024,
+            outputMode: "truncate",
+          })
+          .pipe(
+            Effect.map((result) => [pid, parseTasklistProcessName(result.stdout)] as const),
+            Effect.orElseSucceed(() => [pid, null] as const),
+          ),
+      { concurrency: WINDOWS_PROCESS_NAME_CONCURRENCY },
+    );
+    const resolvedByPid = new Map(resolved);
+    const next = new Map<number, string>();
+    for (const pid of wanted) {
+      const name = cached.get(pid) ?? resolvedByPid.get(pid) ?? null;
+      if (name !== null) next.set(pid, name);
+    }
+    yield* Ref.set(processNameCacheRef, next);
+    return next;
+  });
+
   const scanOnce = Effect.fn("PortDiscovery.scan")(function* () {
     const state = yield* Ref.get(stateRef);
     const terminalByProcessId = new Map<number, TerminalProcessOwner>();
@@ -239,18 +335,19 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
     if (hostPlatform === "win32") {
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
-      const command =
-        'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
-      const listeners = yield* processRunner
+      // netstat is a plain console executable: ~35 ms of CPU against the ~1.9 s
+      // that `Get-NetTCPConnection` cost, because it pays no PowerShell start-up
+      // and no CIM initialisation.
+      const raw = yield* processRunner
         .run({
-          command: "powershell.exe",
-          args: ["-NoProfile", "-NonInteractive", "-Command", command],
+          command: "netstat.exe",
+          args: ["-ano", "-p", "TCP"],
           timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
-          maxOutputBytes: 1024 * 1024,
+          maxOutputBytes: 4 * 1024 * 1024,
           outputMode: "truncate",
         })
         .pipe(
-          Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
+          Effect.map((result) => result.stdout),
           Effect.catchTags({
             ProcessSpawnError: recoverWindowsProbeFailure,
             ProcessStdinError: recoverWindowsProbeFailure,
@@ -259,8 +356,16 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             ProcessTimeoutError: recoverWindowsProbeFailure,
           }),
         );
-      if (listeners !== null) return listeners;
-      return yield* probeCommonPorts();
+      if (raw === null) return yield* probeCommonPorts();
+      const listeners = parseWindowsListenerOutput(raw, terminalByProcessId);
+      const processNameByPid = yield* windowsProcessNames(
+        listeners.map((server) => server.pid).filter((pid): pid is number => pid !== null),
+      );
+      return listeners.map((server) =>
+        server.pid === null
+          ? server
+          : { ...server, processName: processNameByPid.get(server.pid) ?? null },
+      );
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     const lsofResult = yield* processRunner
@@ -295,13 +400,25 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const pollTick = Effect.fn("PortDiscovery.pollTick")(
     function* () {
       if ((yield* Ref.get(stateRef)).retainCount <= 0) return;
-      const next = yield* scanOnce();
-      const changed = yield* Ref.modify(stateRef, (state) =>
-        serversEqual(state.lastSnapshot, next)
-          ? [false, state]
-          : [true, { ...state, lastSnapshot: next }],
-      );
-      if (changed) yield* broadcast(next);
+      // One scan at a time: a scan that outlives its period makes the next tick
+      // skip rather than overlap it.
+      const started = yield* Ref.modify(scanInFlightRef, (busy) => [!busy, true] as const);
+      if (!started) {
+        yield* Effect.logDebug("preview port scan still running; skipping this tick");
+        return;
+      }
+      yield* Effect.gen(function* () {
+        const next = yield* scanOnce();
+        const changed = yield* Ref.modify(stateRef, (state) =>
+          serversEqual(state.lastSnapshot, next)
+            ? [false, state]
+            : [true, { ...state, lastSnapshot: next }],
+        );
+        if (changed) {
+          Latch.openUnsafe(pollWake);
+          yield* broadcast(next);
+        }
+      }).pipe(Effect.ensuring(Ref.set(scanInFlightRef, false)));
     },
     Effect.catchCause((cause: Cause.Cause<never>) =>
       Effect.logWarning("preview port scan failed", Cause.pretty(cause)),
@@ -309,8 +426,32 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   );
 
   // Single layer-scoped polling fiber. Ticks are no-ops when no client is
-  // currently retained, so the cost is one Ref.get every POLL_INTERVAL.
-  yield* Effect.forkScoped(pollTick().pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
+  // currently retained, so the cost is one Ref.get every period. Periods that
+  // find nothing new back off geometrically; a changed listener set, a new
+  // retainer, or a terminal whose processes moved drops it back to the base.
+  const basePollIntervalMs = Duration.toMillis(POLL_INTERVAL);
+  const maxPollIntervalMs = basePollIntervalMs * POLL_BACKOFF_MAX_MULTIPLIER;
+  let pollIntervalMs = basePollIntervalMs;
+
+  yield* Effect.forkScoped(
+    Effect.forever(
+      Effect.gen(function* () {
+        yield* Latch.close(pollWake);
+        yield* pollTick();
+        pollIntervalMs = Latch.isOpen(pollWake)
+          ? basePollIntervalMs
+          : Math.min(pollIntervalMs * POLL_BACKOFF_FACTOR, maxPollIntervalMs);
+
+        // The base period is never cut short, so a wake can never drive the
+        // scanner faster than its configured rate; only the back-off is.
+        yield* Effect.sleep(basePollIntervalMs);
+        const backoffRemainderMs = pollIntervalMs - basePollIntervalMs;
+        if (backoffRemainderMs > 0) {
+          yield* Effect.raceFirst(Effect.sleep(backoffRemainderMs), Latch.await(pollWake));
+        }
+      }),
+    ),
+  );
 
   const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
     const wasIdle = yield* Ref.modify(stateRef, (state) => [
@@ -320,6 +461,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     if (wasIdle) {
       // Run an immediate scan + broadcast so the new retainer doesn't have
       // to wait up to POLL_INTERVAL for the first emission.
+      Latch.openUnsafe(pollWake);
       yield* pollTick();
     }
   });
@@ -356,26 +498,32 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const processIds = new Set(
         input.processIds.filter((processId) => Number.isInteger(processId) && processId > 0),
       );
-      yield* Ref.update(stateRef, (state) => {
+      const changed = yield* Ref.modify(stateRef, (state) => {
         const terminalProcesses = new Map(state.terminalProcesses);
         const key = terminalOwnerKey(owner);
+        const previous = terminalProcesses.get(key)?.processIds;
         if (processIds.size === 0) {
           terminalProcesses.delete(key);
         } else {
           terminalProcesses.set(key, { owner, processIds });
         }
-        return { ...state, terminalProcesses };
+        const moved = !processIdSetsEqual(previous, processIds);
+        return [moved, moved ? { ...state, terminalProcesses } : state] as const;
       });
+      // A terminal that just gained or lost processes is the strongest hint we
+      // get that a dev server is about to appear or disappear.
+      if (changed) Latch.openUnsafe(pollWake);
     });
 
   const unregisterTerminal: PortDiscovery["Service"]["unregisterTerminal"] = Effect.fn(
     "PortDiscovery.unregisterTerminal",
   )(function* (input) {
-    yield* Ref.update(stateRef, (state) => {
+    const changed = yield* Ref.modify(stateRef, (state) => {
       const terminalProcesses = new Map(state.terminalProcesses);
-      terminalProcesses.delete(terminalOwnerKey(input));
-      return { ...state, terminalProcesses };
+      const removed = terminalProcesses.delete(terminalOwnerKey(input));
+      return [removed, removed ? { ...state, terminalProcesses } : state] as const;
     });
+    if (changed) Latch.openUnsafe(pollWake);
   });
 
   return PortDiscovery.of({
