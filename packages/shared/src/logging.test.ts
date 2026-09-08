@@ -71,7 +71,9 @@ describe("RotatingFileSink", () => {
 
   it("only treats a missing log file as an empty current size", () => {
     const directory = makeTempDirectory();
-    const filePath = NodePath.join(directory, "a".repeat(300));
+    // Windows only reports ENAMETOOLONG past its 32767-character path limit; a name that merely
+    // exceeds the 255-character POSIX component limit comes back as ENOENT there.
+    const filePath = NodePath.join(directory, "a".repeat(40_000));
 
     const thrown = captureError(() => new RotatingFileSink({ filePath, maxBytes: 1, maxFiles: 1 }));
 
