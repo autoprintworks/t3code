@@ -86,7 +86,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         "to-tickets",
         ["---", "name: to-tickets", "disable-model-invocation: true", "---"].join("\n"),
       );
-      // firstmate convention: the user should not pick it.
+      // firstmate convention: the user should not pick it. `metadata.internal`
+      // rides along on real skills but decides nothing on its own.
       yield* writeSkill(
         skillsDir,
         "harness-adapters",
@@ -99,20 +100,11 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           "---",
         ].join("\n"),
       );
-      // Internal, but explicitly still pickable: the declared field wins over
-      // the metadata marker.
+      // Internal, and still pickable, which is the common firstmate shape.
       yield* writeSkill(
         skillsDir,
-        "ahoy",
-        ["---", "name: ahoy", "user-invocable: true", "metadata:", "  internal: true", "---"].join(
-          "\n",
-        ),
-      );
-      // Internal with no declared field: treated as agent-only.
-      yield* writeSkill(
-        skillsDir,
-        "quota-dispatch",
-        ["---", "name: quota-dispatch", "metadata:", "  internal: true", "---"].join("\n"),
+        "shelve",
+        ["---", "name: shelve", "metadata:", "  internal: true", "---"].join("\n"),
       );
       // Neither convention present: invocable both ways, and silent about it.
       yield* writeSkill(skillsDir, "deploy", ["---", "name: deploy", "---"].join("\n"));
@@ -124,8 +116,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.equal(byName.get("to-tickets")?.userInvocable, undefined);
       assert.equal(byName.get("harness-adapters")?.userInvocable, false);
       assert.equal(byName.get("harness-adapters")?.modelInvocable, undefined);
-      assert.equal(byName.get("ahoy")?.userInvocable, undefined);
-      assert.equal(byName.get("quota-dispatch")?.userInvocable, false);
+      assert.equal(byName.get("shelve")?.userInvocable, undefined);
+      assert.equal(byName.get("shelve")?.modelInvocable, undefined);
       assert.equal(byName.get("deploy")?.userInvocable, undefined);
       assert.equal(byName.get("deploy")?.modelInvocable, undefined);
     }),

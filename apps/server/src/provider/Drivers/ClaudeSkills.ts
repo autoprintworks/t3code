@@ -47,11 +47,6 @@ type SkillFrontmatter =
  *  - `user-invocable: false` (firstmate skills) means the reverse: the agent
  *    loads it at a precise trigger and a user should never pick it.
  *
- * `metadata.internal: true` marks agent-facing reference material and stands in
- * for `user-invocable: false` only when that field is absent, because skill sets
- * ship internal skills that are still meant to be picked (firstmate's `/ahoy`,
- * `/bearings` and `/stow` all carry both keys).
- *
  * Only the opt-outs are recorded; the permissive default stays absent so the
  * wire payload does not grow for the skills that behave normally.
  */
@@ -59,17 +54,8 @@ function readSkillInvocability(record: Record<string, unknown>): {
   readonly userInvocable?: boolean;
   readonly modelInvocable?: boolean;
 } {
-  const declaredUserInvocable = record["user-invocable"];
-  const metadata = record.metadata;
-  const markedInternal =
-    typeof metadata === "object" &&
-    metadata !== null &&
-    (metadata as Record<string, unknown>).internal === true;
-  const userInvocable =
-    typeof declaredUserInvocable === "boolean" ? declaredUserInvocable : !markedInternal;
-
   return {
-    ...(userInvocable ? {} : { userInvocable: false }),
+    ...(record["user-invocable"] === false ? { userInvocable: false } : {}),
     ...(record["disable-model-invocation"] === true ? { modelInvocable: false } : {}),
   };
 }

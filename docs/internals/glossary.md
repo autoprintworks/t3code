@@ -131,7 +131,11 @@ The session `subject` string the First Mate daemon mints its own bearer under, `
 
 #### Skill
 
-A named unit of provider behavior a user can invoke from the composer, discovered from the filesystem by the driver rather than configured in T3 Code. `ServerProviderSkill` in [the server contracts][36] carries the name, the file path it was found at, an optional scope, and whether the provider has it enabled. Only the Claude driver discovers them today; a driver that cannot scope discovery to a directory answers with its snapshot skills unchanged. See [ClaudeDriver.ts][37].
+A named unit of provider behavior a user can invoke from the composer, discovered from the filesystem by the driver rather than configured in T3 Code. `ServerProviderSkill` in [the server contracts][36] carries the name, the file path it was found at, an optional scope, whether the provider has it enabled, and its [invocability](#skill-invocability). Only the Claude driver discovers them today; a driver that cannot scope discovery to a directory answers with its snapshot skills unchanged. See [ClaudeDriver.ts][37].
+
+#### Skill invocability
+
+Who is allowed to start a skill. `ServerProviderSkill` carries two optional booleans, `userInvocable` and `modelInvocable`, and both are opt-outs: absent means the skill is invocable that way, so a provider that reports nothing keeps the permissive default and the wire payload stays small. Claude skill discovery reads them from two frontmatter conventions that point in opposite directions - `disable-model-invocation: true` sets `modelInvocable: false`, and `user-invocable: false` sets `userInvocable: false`. `isProviderSkillUserInvocable` and `isProviderSkillModelInvocable` in [the server contracts][36] are the only readers. A skill with `userInvocable: false` is left out of the composer's skill picker and out of the provider's `/` command list; a skill with `modelInvocable: false` keeps its row and carries a Manual badge, because a picker is its only entry point.
 
 #### Skill scope
 

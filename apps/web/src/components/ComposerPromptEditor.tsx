@@ -469,6 +469,10 @@ function skillSignature(skills: ReadonlyArray<ServerProviderSkill>): string {
         skill.path,
         skill.scope ?? "",
         skill.enabled ? "1" : "0",
+        // Invocability decides whether a row is listed at all and whether it
+        // carries the manual badge, so a change to either must re-render.
+        skill.userInvocable === false ? "0" : "1",
+        skill.modelInvocable === false ? "0" : "1",
       ].join("\u001f"),
     )
     .join("\u001e");

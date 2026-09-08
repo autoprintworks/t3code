@@ -65,9 +65,8 @@ describe("ComposerCommandMenu skills", () => {
       skill({ name: "to-tickets", description: "Split a spec.", modelInvocable: false }),
     ]);
 
-    const markers = markup.match(/data-composer-skill-invocation="true"/g) ?? [];
+    const markers = markup.match(/Manual/g) ?? [];
     expect(markers).toHaveLength(1);
-    expect(markup).toContain("Manual");
     expect(markup.indexOf("To Tickets")).toBeLessThan(markup.indexOf("Manual"));
   });
 });

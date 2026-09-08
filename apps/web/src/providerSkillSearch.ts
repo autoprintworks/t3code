@@ -1,11 +1,14 @@
-import { isProviderSkillUserInvocable, type ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderSkill } from "@t3tools/contracts";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 
-import { formatProviderSkillDisplayName } from "@t3tools/shared/providerSkillPresentation";
+import {
+  formatProviderSkillDisplayName,
+  pickableProviderSkills,
+} from "@t3tools/shared/providerSkillPresentation";
 
 function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
   const normalizedName = skill.name.toLowerCase();
@@ -71,15 +74,11 @@ export function searchProviderSkills(
   query: string,
   limit = Number.POSITIVE_INFINITY,
 ): ServerProviderSkill[] {
-  // Agent-only skills never reach the picker: they are reference material the
-  // model loads at a trigger, and offering them is pure noise.
-  const pickableSkills = skills.filter(
-    (skill) => skill.enabled && isProviderSkillUserInvocable(skill),
-  );
+  const pickableSkills = pickableProviderSkills(skills);
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\$+/ });
 
   if (!normalizedQuery) {
-    return pickableSkills;
+    return [...pickableSkills];
   }
 
   const ranked: Array<{

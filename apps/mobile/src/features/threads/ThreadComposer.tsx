@@ -68,10 +68,10 @@ import {
   providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
+import { pickableProviderSkills } from "@t3tools/shared/providerSkillPresentation";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { useComposerSkills } from "../../state/queries";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
-import { pickableComposerSkills } from "./composer-skill-presentation";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -431,7 +431,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const pickableSkills = pickableComposerSkills(composerSkills.skills);
+      const pickableSkills = pickableProviderSkills(composerSkills.skills);
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });

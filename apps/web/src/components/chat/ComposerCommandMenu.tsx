@@ -260,12 +260,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         </span>
       </span>
       {skillInvocationLabel ? (
-        <span
-          data-composer-skill-invocation="true"
-          className="shrink-0 pl-2 text-secondary-label text-xs"
-        >
-          {skillInvocationLabel}
-        </span>
+        <span className="shrink-0 pl-2 text-secondary-label text-xs">{skillInvocationLabel}</span>
       ) : null}
       {skillScopeLabel ? (
         <span className="shrink-0 pl-2 text-secondary-label text-xs">{skillScopeLabel}</span>

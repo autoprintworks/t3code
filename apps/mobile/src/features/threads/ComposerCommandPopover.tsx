@@ -1,14 +1,16 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
-import { formatProviderSkillScopeLabel } from "@t3tools/shared/providerSkillPresentation";
+import {
+  formatProviderSkillInvocationLabel,
+  formatProviderSkillScopeLabel,
+} from "@t3tools/shared/providerSkillPresentation";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
 import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
-import { composerSkillMarkerLabel } from "./composer-skill-presentation";
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -139,7 +141,7 @@ const CommandRow = memo(function CommandRow(props: {
   const skillScopeLabel =
     props.item.type === "skill" ? formatProviderSkillScopeLabel(props.item.skill) : null;
   const markerLabel =
-    props.item.type === "skill" ? composerSkillMarkerLabel(props.item.skill) : null;
+    props.item.type === "skill" ? formatProviderSkillInvocationLabel(props.item.skill) : null;
 
   return (
     <Pressable
