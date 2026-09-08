@@ -180,14 +180,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         yield* fs.makeDirectory(directory, { recursive: true });
         const tempPath = yield* fs.makeTempFileScoped({ directory, prefix: ".service-write-" });
         yield* fs.writeFileString(tempPath, contents, { mode: 0o600 });
-        // Opened read-write because Windows refuses fsync on a read-only handle.
-        yield* (yield* fs.open(tempPath, { flag: "r+" })).sync;
+        yield* (yield* fs.open(tempPath, { flag: "r" })).sync;
         yield* fs.rename(tempPath, filePath);
-        // Windows has no directory fsync: the handle opens but sync fails with EPERM. This checks
-        // the real host rather than the simulated one because the durability call is a real syscall.
-        if (process.platform !== "win32") {
-          yield* (yield* fs.open(directory, { flag: "r" })).sync;
-        }
+        yield* (yield* fs.open(directory, { flag: "r" })).sync;
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const plan: BootServicePlan = {

@@ -27,3 +27,9 @@ export const skipBatchStubChildExit = isWindows;
 
 /** Windows has no `mkfifo`; its named pipes are a different API and cannot be opened by path. */
 export const skipPosixFifo = isWindows;
+
+/**
+ * Windows has no directory fsync: the handle opens but `sync` on it fails with EPERM. A suite
+ * that simulates a Linux host while writing to the real filesystem still meets that limit.
+ */
+export const skipDirectoryFsync = isWindows;

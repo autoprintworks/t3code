@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { skipDirectoryFsync } from "../testUtils/hostPlatform.ts";
 import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
@@ -95,7 +96,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
-  it.effect("installs, reports current state, and uninstalls", () =>
+  // These simulate a Linux host so requireSystemdLinux lets writeDurably run, but the
+  // filesystem underneath is the real one, and writeDurably ends with a directory fsync.
+  const onDisk = it.effect.skipIf(skipDirectoryFsync);
+  onDisk("installs, reports current state, and uninstalls", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, commands } = yield* makeHarness();
       const plan = yield* service.install;
@@ -126,7 +130,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("copies the launcher from the prepared pinned runtime", () =>
+  onDisk("copies the launcher from the prepared pinned runtime", () =>
     Effect.gen(function* () {
       const { service, fs } = yield* makeHarness("linux", true);
       const plan = yield* service.install;
@@ -137,7 +141,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restarts an installed service when repair fails", () =>
+  onDisk("restarts an installed service when repair fails", () =>
     Effect.gen(function* () {
       const { service, commands, control } = yield* makeHarness();
       yield* service.install;
@@ -154,7 +158,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restarts without overwriting a pending remote update", () =>
+  onDisk("restarts without overwriting a pending remote update", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, commands } = yield* makeHarness();
       yield* service.install;

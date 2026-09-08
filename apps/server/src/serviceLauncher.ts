@@ -70,7 +70,11 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
-/** Opened read-write because Windows refuses `fsync` on a read-only handle. */
+/**
+ * Flushes a file this process just wrote. Opened read-write because Windows refuses `fsync`
+ * on a read-only handle. Both callers pass the destination of a `copyFile` they just made,
+ * and both are database files the server opens read-write, so the open never hits EACCES.
+ */
 async function syncFile(filePath: string): Promise<void> {
   const handle = await NodeFSP.open(filePath, "r+");
   try {
@@ -81,11 +85,12 @@ async function syncFile(filePath: string): Promise<void> {
 }
 
 /**
- * Flushes a renamed directory entry to disk. Windows has no directory fsync:
- * the handle opens but `sync()` on it fails with EPERM, so this is the one
- * place the durability step is allowed to be a no-op.
+ * Flushes a renamed directory entry to disk. Windows has no directory fsync: the handle
+ * opens but `sync()` on it fails with EPERM, so this is the one place the durability step
+ * is allowed to be a no-op.
  */
 async function syncDirectory(directory: string): Promise<void> {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- standalone bundle, no Effect runtime
   if (process.platform === "win32") return;
   const handle = await NodeFSP.open(directory, "r");
   try {
