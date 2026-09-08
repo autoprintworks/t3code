@@ -71,6 +71,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "#!/usr/bin/env node",
           'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
           'import { createInterface } from "node:readline";',
+          'import { tmpdir } from "node:os";',
           "const args = process.argv.slice(2);",
           'const mcpConfigIndex = args.indexOf("--mcp-config");',
           "const rawMcpConfig = mcpConfigIndex >= 0 ? args[mcpConfigIndex + 1] : undefined;",
@@ -85,6 +86,9 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "  connectorEnv: process.env.ENABLE_CLAUDEAI_MCP_SERVERS,",
           "  mcpConfig,",
           "}));",
+          // Windows refuses to remove a directory that is a live process's working directory,
+          // and the SDK does not reap this stub. The cwd is recorded above, so step out of it.
+          "process.chdir(tmpdir());",
           "const lines = createInterface({ input: process.stdin });",
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
@@ -105,10 +109,10 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "    },",
           '  }) + "\\n");',
           "});",
-          // The SDK's abort does not reap this stub, so it retires itself. The probe answers in well
-          // under a second; a stub that outlives the test holds its working directory open, and
-          // Windows refuses to remove a directory that is a live process's working directory.
-          "setTimeout(() => process.exit(0), 3_000);",
+          // The SDK aborts by closing this pipe. Exiting on that close keeps the stub from
+          // outliving the test and holding its working directory open, which Windows refuses
+          // to remove.
+          'lines.on("close", () => process.exit(0));',
           "",
         ].join("\n"),
       );
@@ -155,22 +159,6 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       assert.equal(invocation.mcpConfig, undefined);
 
       assert.equal(invocation.args.includes("--setting-sources=user,project,local"), true);
-
-      // The probe aborts its child but nothing reaps it, and Windows refuses to remove a directory
-      // that is a live process's working directory. Take the workspace down here, once the stub has
-      // retired itself, so scoped cleanup of the parent temp directory cannot race that exit.
-      // it.effect runs on the test clock, so the wait between attempts uses a real timer.
-      const waitForStubExit = Effect.promise(
-        () => new Promise<void>((resolve) => setTimeout(resolve, 250)),
-      );
-      let workspaceRemoved = false;
-      for (let attempt = 0; attempt < 40 && !workspaceRemoved; attempt += 1) {
-        workspaceRemoved = yield* fs.remove(workspaceCwd, { recursive: true }).pipe(
-          Effect.as(true),
-          Effect.catch(() => waitForStubExit.pipe(Effect.as(false))),
-        );
-      }
-      assert.equal(workspaceRemoved, true);
     }).pipe(Effect.scoped),
   );
 });
