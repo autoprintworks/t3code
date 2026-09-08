@@ -63,6 +63,22 @@ describe("branding", () => {
     expect(branding.APP_DISPLAY_NAME).toBe("T3 Code");
   });
 
+  it("tags the wordmark on builds carrying the fork release tag", async () => {
+    vi.stubEnv("APP_VERSION", "0.0.32-ap.4");
+
+    const branding = await import("./branding");
+
+    expect(branding.APP_FORK_TAG_LABEL).toBe("FORK");
+  });
+
+  it("leaves the wordmark untagged on upstream builds", async () => {
+    vi.stubEnv("APP_VERSION", "0.0.32");
+
+    const branding = await import("./branding");
+
+    expect(branding.APP_FORK_TAG_LABEL).toBeNull();
+  });
+
   it("ignores unknown hosted app channels", async () => {
     vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "preview");
 

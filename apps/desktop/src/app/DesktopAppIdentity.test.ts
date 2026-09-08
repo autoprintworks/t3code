@@ -19,7 +19,9 @@ const defaultEnvironmentInput = {
   homeDirectory: "/Users/alice",
   platform: "darwin",
   processArch: "arm64",
-  appVersion: "1.2.3",
+  // Carries the fork's `-ap.<n>` release tag, the signal `resolveForkBuildIdentity`
+  // reads to name this build "T3 Code Fork".
+  appVersion: "1.2.3-ap.4",
   appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
   isPackaged: true,
   resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
@@ -196,7 +198,7 @@ describe("DesktopAppIdentity", () => {
 
         assert.deepEqual(calls.setName, ["T3 Code Fork (Alpha)"]);
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code Fork (Alpha)");
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3-ap.4");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
         assert.deepEqual(calls.setDockIcon, ["/icon.png"]);
       }),

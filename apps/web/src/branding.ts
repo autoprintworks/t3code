@@ -1,4 +1,6 @@
 import type { DesktopAppBranding } from "@t3tools/contracts";
+import { resolveForkBuildIdentity } from "@t3tools/shared/forkBuild";
+
 import { formatAppDisplayName } from "./branding.logic";
 
 function readInjectedDesktopAppBranding(): DesktopAppBranding | null {
@@ -25,3 +27,10 @@ export const APP_DISPLAY_NAME =
   injectedDesktopAppBranding?.displayName ??
   formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
+
+/**
+ * `"FORK"` when this bundle was built from the fork, otherwise `null`. Read
+ * from the bundle's own version so it holds on every surface the web app runs
+ * on: desktop, a locally hosted `npx t3`, and a hosted deploy alike.
+ */
+export const APP_FORK_TAG_LABEL = resolveForkBuildIdentity(APP_VERSION).tagLabel;

@@ -51,6 +51,10 @@ convenience of a shared thread list on day one. So the fork now gets its own ide
   (`t3code-fork://` / `t3code-fork-dev://`, see `apps/desktop/src/electron/ElectronProtocol.ts`) are all
   distinct from the official build's. Two different OS-level protocol handlers can't fight over the same
   scheme.
+- **Visibly different once open.** The app icon is upstream's plate tinted orange with an "AP" corner
+  badge, the window title reads `T3 Code Fork (Alpha)`, and the sidebar wordmark carries a small `FORK`
+  tag, so the taskbar, Alt-Tab and the open window all say which build you are in
+  ([#59](https://github.com/autoprintworks/t3code/issues/59)).
 - **Different database, by default.** T3 Code's state directory (threads, projects, settings — the
   "T3 home") is chosen by `DesktopEnvironment.ts`. This fork defaults to `~/.t3-fork` instead of `~/.t3`,
   so running it cannot read or write the official release's real `state.sqlite`. Set `T3CODE_HOME` to
@@ -75,6 +79,25 @@ its `-wal`/`-shm` siblings — a plain file copy is only safe with the app close
 ```sh
 robocopy "%USERPROFILE%\.t3\userdata" "%USERPROFILE%\.t3\userdata-backup-YYYYMMDD" /E
 ```
+
+## Fork identity
+
+One function decides whether a build is the fork: `resolveForkBuildIdentity` in
+`packages/shared/src/forkBuild.ts`. It reads the fork's own `-ap.<n>` release tag off the package
+version, a marker upstream never publishes, so no build flag or env var is needed. The desktop reads
+that version from `Electron.app.getVersion()` and the web reads it from `import.meta.env.APP_VERSION`,
+which Vite bakes in from `apps/web/package.json`. Everything that shows fork identity goes through that
+one function, so an upstream merge has one place to conflict.
+
+Icons are generated, not hand-drawn per size:
+
+```sh
+node scripts/generate-fork-icons.ts
+```
+
+That tints upstream's 1024px masters in `assets/prod/`, composites the badge, and writes every size the
+packagers need to `assets/fork/` and `apps/desktop/resources/`. All outputs are committed. Re-run it
+after upstream changes its artwork.
 
 ## Unsigned installer cost
 

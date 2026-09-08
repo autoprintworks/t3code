@@ -2,6 +2,7 @@
 
 import * as NodeModule from "node:module";
 
+import { resolveForkBuildIdentity } from "@t3tools/shared/forkBuild";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
@@ -1486,6 +1487,16 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
+  // The fork's own artwork wins over the channel artwork: this build installs
+  // beside an official release, so the taskbar has to tell them apart (#59).
+  if (resolveForkBuildIdentity(version).isFork) {
+    return {
+      macIconPng: BRAND_ASSET_PATHS.forkMacIconPng,
+      linuxIconPng: BRAND_ASSET_PATHS.forkLinuxIconPng,
+      windowsIconIco: BRAND_ASSET_PATHS.forkWindowsIconIco,
+    };
+  }
+
   if (resolveDesktopUpdateChannel(version) === "nightly") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
