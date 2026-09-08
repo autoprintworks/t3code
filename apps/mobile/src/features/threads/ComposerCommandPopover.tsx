@@ -8,6 +8,7 @@ import { Pressable, ScrollView, useColorScheme, View, type ViewStyle } from "rea
 
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { composerSkillMarkerLabel } from "./composer-skill-presentation";
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -137,6 +138,8 @@ const CommandRow = memo(function CommandRow(props: {
   const iconColor = "#a1a1aa";
   const skillScopeLabel =
     props.item.type === "skill" ? formatProviderSkillScopeLabel(props.item.skill) : null;
+  const markerLabel =
+    props.item.type === "skill" ? composerSkillMarkerLabel(props.item.skill) : null;
 
   return (
     <Pressable
@@ -163,6 +166,11 @@ const CommandRow = memo(function CommandRow(props: {
       {props.item.description ? (
         <Text className="min-w-0 flex-1 text-xs text-zinc-400" numberOfLines={1}>
           {props.item.description}
+        </Text>
+      ) : null}
+      {markerLabel ? (
+        <Text className="shrink-0 text-xs text-zinc-400" numberOfLines={1}>
+          {markerLabel}
         </Text>
       ) : null}
       {skillScopeLabel ? (

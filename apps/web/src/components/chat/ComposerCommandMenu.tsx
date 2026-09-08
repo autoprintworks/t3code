@@ -8,7 +8,10 @@ import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
-import { formatProviderSkillScopeLabel } from "@t3tools/shared/providerSkillPresentation";
+import {
+  formatProviderSkillInvocationLabel,
+  formatProviderSkillScopeLabel,
+} from "@t3tools/shared/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import {
   Command,
@@ -208,6 +211,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const skillScopeLabel =
     props.item.type === "skill" ? formatProviderSkillScopeLabel(props.item.skill) : null;
+  // A skill the agent cannot start is reachable only from here, so say so.
+  const skillInvocationLabel =
+    props.item.type === "skill" ? formatProviderSkillInvocationLabel(props.item.skill) : null;
 
   return (
     <CommandItem
@@ -253,6 +259,14 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           {props.item.description}
         </span>
       </span>
+      {skillInvocationLabel ? (
+        <span
+          data-composer-skill-invocation="true"
+          className="shrink-0 pl-2 text-secondary-label text-xs"
+        >
+          {skillInvocationLabel}
+        </span>
+      ) : null}
       {skillScopeLabel ? (
         <span className="shrink-0 pl-2 text-secondary-label text-xs">{skillScopeLabel}</span>
       ) : null}

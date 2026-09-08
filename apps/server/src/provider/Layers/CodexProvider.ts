@@ -269,6 +269,11 @@ function parseCodexSkillsListResponse(
       name: skill.name,
       path: skill.path,
       enabled: skill.enabled,
+      // The Codex app-server reports no invocability metadata, so its skills
+      // take the documented defaults: a user may pick them, the agent may
+      // start them.
+      userInvocable: true,
+      modelInvocable: true,
     };
 
     if (skill.description) {

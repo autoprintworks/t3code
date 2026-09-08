@@ -72,6 +72,65 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("reads both invocability conventions and defaults to fully invocable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const skillsDir = path.join(configDir, "skills");
+
+      // Claude Code / marketplace convention: the model may not start it.
+      yield* writeSkill(
+        skillsDir,
+        "to-tickets",
+        ["---", "name: to-tickets", "disable-model-invocation: true", "---"].join("\n"),
+      );
+      // firstmate convention: the user should not pick it.
+      yield* writeSkill(
+        skillsDir,
+        "harness-adapters",
+        [
+          "---",
+          "name: harness-adapters",
+          "user-invocable: false",
+          "metadata:",
+          "  internal: true",
+          "---",
+        ].join("\n"),
+      );
+      // Internal, but explicitly still pickable: the declared field wins over
+      // the metadata marker.
+      yield* writeSkill(
+        skillsDir,
+        "ahoy",
+        ["---", "name: ahoy", "user-invocable: true", "metadata:", "  internal: true", "---"].join(
+          "\n",
+        ),
+      );
+      // Internal with no declared field: treated as agent-only.
+      yield* writeSkill(
+        skillsDir,
+        "quota-dispatch",
+        ["---", "name: quota-dispatch", "metadata:", "  internal: true", "---"].join("\n"),
+      );
+      // Neither convention present: invocable both ways, and silent about it.
+      yield* writeSkill(skillsDir, "deploy", ["---", "name: deploy", "---"].join("\n"));
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+      const byName = new Map(skills.map((skill) => [skill.name, skill]));
+
+      assert.equal(byName.get("to-tickets")?.modelInvocable, false);
+      assert.equal(byName.get("to-tickets")?.userInvocable, undefined);
+      assert.equal(byName.get("harness-adapters")?.userInvocable, false);
+      assert.equal(byName.get("harness-adapters")?.modelInvocable, undefined);
+      assert.equal(byName.get("ahoy")?.userInvocable, undefined);
+      assert.equal(byName.get("quota-dispatch")?.userInvocable, false);
+      assert.equal(byName.get("deploy")?.userInvocable, undefined);
+      assert.equal(byName.get("deploy")?.modelInvocable, undefined);
+    }),
+  );
+
   it.effect("prefers project skills over user skills on name collisions", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
