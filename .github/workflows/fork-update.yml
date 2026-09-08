@@ -8,6 +8,12 @@
 name: Fork Update
 
 on:
+  # TEMPORARY, removed before this branch merges. GitHub only accepts a workflow_dispatch for a
+  # workflow that already sits on the default branch, and #94 forbids pushing there. This trigger
+  # is how the clean run and the conflict run in the pull request body were produced.
+  push:
+    branches:
+      - fork/94-update-workflow
   schedule:
     # Upstream cuts nightlies through the day. Take the newest one each morning.
     - cron: "0 6 * * *"
@@ -33,6 +39,9 @@ permissions: {}
 env:
   UPSTREAM_REMOTE: https://github.com/pingdotgg/t3code
   FORK_DEFAULT_BRANCH: main
+  # TEMPORARY, removed with the push trigger above. Stands in for the upstream_ref input, which
+  # a push event cannot carry. Empty means the newest upstream nightly tag.
+  FORK_UPDATE_PROOF_REF: "origin/fork/94-clean-probe"
 
 jobs:
   gate:
@@ -65,8 +74,11 @@ jobs:
           set -euo pipefail
           git remote add upstream "$UPSTREAM_REMOTE"
           git fetch --tags --force upstream
+          # Fork branches too, so `upstream_ref` can name one. That is how the conflict path
+          # is exercised without pushing anything to upstream.
+          git fetch --force origin '+refs/heads/*:refs/remotes/origin/*'
 
-          # A scheduled run is the real pipeline. A dispatch rehearses unless told otherwise.
+          # A scheduled run is the real pipeline. Anything else rehearses unless told otherwise.
           if [ "$EVENT_NAME" = "schedule" ]; then
             dry_run=false
           else
@@ -79,7 +91,7 @@ jobs:
             exit 1
           fi
 
-          ref="${INPUT_UPSTREAM_REF:-}"
+          ref="${INPUT_UPSTREAM_REF:-${FORK_UPDATE_PROOF_REF:-}}"
           if [ -z "$ref" ]; then
             ref=$(git ls-remote --tags --refs "$UPSTREAM_REMOTE" 'v*-nightly.*' \
               | awk '{ print $2 }' | sed 's#^refs/tags/##' | sort -V | tail -n 1)
@@ -252,6 +264,7 @@ jobs:
           set -euo pipefail
           git remote add upstream "$UPSTREAM_REMOTE"
           git fetch --tags --force upstream
+          git fetch --force origin '+refs/heads/*:refs/remotes/origin/*'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # The gate proved this merge is clean at this commit, so a conflict here is a bug.
@@ -284,11 +297,15 @@ jobs:
           # Version scheme: take the upstream tag's base version, bump the patch, add -ap.<n>.
           # v0.0.41-nightly.20260908.1414 becomes 0.0.42-ap.1. That sorts above the nightly it
           # took, above upstream's eventual 0.0.41, and above the installed fork build.
+          current=$(node -p "require('./apps/desktop/package.json').version")
+
           base="${UPSTREAM_REF#v}"
           base="${base%%-*}"
           if ! printf '%s' "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Ref '$UPSTREAM_REF' carries no x.y.z version to bump." >&2
-            exit 1
+            # A branch ref carries no version. Bump the version the fork is on instead, which
+            # still sorts above the installed build.
+            base="${current%%-*}"
+            echo "Ref '$UPSTREAM_REF' carries no version. Bumping from $base."
           fi
           major="${base%%.*}"
           rest="${base#*.}"
@@ -299,7 +316,6 @@ jobs:
           # <n> is one above the highest -ap suffix already used for this version, so a second
           # run on the same upstream tag still sorts above the first.
           highest=0
-          current=$(node -p "require('./apps/desktop/package.json').version")
           case "$current" in
             "$next-ap."*)
               suffix="${current##*-ap.}"
