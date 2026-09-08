@@ -307,6 +307,7 @@ export function projectEvent(
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             readOnly: payload.readOnly,
+            fleetOwned: payload.fleetOwned,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,

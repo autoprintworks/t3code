@@ -437,6 +437,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           branch: command.branch,
           worktreePath: command.worktreePath,
           readOnly: command.readOnly,
+          // The dispatch entry point stamped `issuer` from the authenticated
+          // session, so this is the one moment the server learns a thread is
+          // the fleet's. It is recorded on the thread rather than re-derived
+          // later, because the session that created it is long gone by the
+          // time a turn arrives.
+          fleetOwned: command.issuer === "fleet" ? true : undefined,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -946,8 +952,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // message the provider reactor would later drop in silence.
       //
       // Read-only is refused for the stronger reason: nothing may start a
-      // turn on a thread that mirrors work another agent owns, whatever is
-      // asking.
+      // turn on a thread that mirrors work another agent owns. The single
+      // exception is the fleet on a thread the fleet created; see
+      // `requireThreadPromptable`.
       const targetThread = yield* requireThreadPromptable({
         readModel,
         command,

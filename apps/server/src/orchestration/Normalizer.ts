@@ -4,7 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
   AuthFleetSubject,
-  type DispatchOrchestrationCommand,
+  type WireOrchestrationCommand,
   type IsoDateTime,
   type OrchestrationCommand,
   type OrchestrationCommandIssuer,
@@ -18,19 +18,32 @@ import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 /**
- * Who a door may treat as the fleet.
+ * Who a dispatch entry point may treat as the fleet.
  *
- * The subject of the authenticated session and nothing else. A door never
- * reads this off a payload, because a payload is exactly what an ordinary
- * client controls.
+ * The subject of the authenticated session and nothing else. An entry point
+ * never reads this off a payload, because a payload is exactly what an
+ * ordinary client controls.
  */
 export const commandIssuerForSubject = (subject: string): OrchestrationCommandIssuer =>
   subject === AuthFleetSubject ? "fleet" : "client";
 
+/**
+ * Refuse what only the fleet may say.
+ *
+ * Loud rather than quiet on purpose. Silently dropping `readOnly` would hand
+ * a caller that believed it was the fleet an ordinary promptable thread and
+ * no way to tell, which is the failure mode hardest to notice: everything
+ * works, and the thread the user was never meant to steer is steerable.
+ */
+const refuseFleetOnlyField = (field: string) =>
+  new OrchestrationDispatchCommandError({
+    message: `'${field}' may only be set by the fleet; this session is not the fleet.`,
+  });
+
 export const canonicalizeClientCommandTimestamps = (
-  command: DispatchOrchestrationCommand,
+  command: WireOrchestrationCommand,
   receivedAt: IsoDateTime,
-): DispatchOrchestrationCommand => {
+): WireOrchestrationCommand => {
   const canonicalCommand =
     "createdAt" in command
       ? {
@@ -56,7 +69,7 @@ export const canonicalizeClientCommandTimestamps = (
 };
 
 export const normalizeDispatchCommand = (
-  command: DispatchOrchestrationCommand,
+  command: WireOrchestrationCommand,
   issuer: OrchestrationCommandIssuer,
 ) =>
   Effect.gen(function* () {
@@ -116,19 +129,26 @@ export const normalizeDispatchCommand = (
     }
 
     if (canonicalCommand.type === "thread.create") {
-      if (issuer === "fleet") {
+      if (issuer !== "fleet") {
+        if (canonicalCommand.readOnly !== undefined) {
+          return yield* refuseFleetOnlyField("readOnly");
+        }
         return canonicalCommand satisfies OrchestrationCommand;
       }
-      // A client that spelled `readOnly` anyway gets an ordinary promptable
-      // thread, not a thread it is then refused permission to use, and not a
-      // decode failure that would break an older build. This is what the
-      // narrower client schema used to do by leaving the field out.
-      const { readOnly: _readOnly, ...withoutReadOnly } = canonicalCommand;
-      return withoutReadOnly satisfies OrchestrationCommand;
+      // The stamp is what the decider turns into `fleetOwned` on the thread,
+      // and `fleetOwned` is what lets the fleet prompt this thread later and
+      // no other read-only one.
+      return { ...canonicalCommand, issuer } satisfies OrchestrationCommand;
     }
 
     if (canonicalCommand.type !== "thread.turn.start") {
       return canonicalCommand as OrchestrationCommand;
+    }
+
+    // Create-and-start carries a create inside a turn, so it carries the same
+    // fleet-only field and answers to the same rule.
+    if (issuer !== "fleet" && canonicalCommand.bootstrap?.createThread?.readOnly !== undefined) {
+      return yield* refuseFleetOnlyField("bootstrap.createThread.readOnly");
     }
 
     const normalizedAttachments = yield* Effect.forEach(
@@ -204,9 +224,8 @@ export const normalizeDispatchCommand = (
       },
     };
 
-    // Stamped here and nowhere else. The decider reads it to let the fleet
-    // drive a thread it made read-only for the person; see
-    // `requireThreadPromptable`.
+    // Stamped here and nowhere else. The decider reads it alongside the
+    // thread's `fleetOwned`; see `requireThreadPromptable`.
     return (
       issuer === "fleet" ? { ...turnStart, issuer } : turnStart
     ) satisfies OrchestrationCommand;

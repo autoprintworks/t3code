@@ -1,5 +1,8 @@
 import {
   AuthAdministrativeScopes,
+  type AuthEnvironmentScope,
+  AuthFleetScopes,
+  AuthFleetSubject,
   AuthSessionId,
   AuthStandardClientScopes,
 } from "@t3tools/contracts";
@@ -8,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
@@ -70,6 +74,58 @@ const subjectFlag = Flag.string("subject").pipe(
   Flag.withDescription("Optional session subject."),
   Flag.optional,
 );
+
+export class FleetSubjectScopeError extends Schema.TaggedErrorClass<FleetSubjectScopeError>()(
+  "FleetSubjectScopeError",
+  { requested: Schema.String },
+) {
+  override get message(): string {
+    return `Subject '${AuthFleetSubject}' is always issued the fleet scope set; --scopes ${this.requested} is not available for it.`;
+  }
+}
+
+const ISSUED_SCOPE_SETS = {
+  administrative: AuthAdministrativeScopes,
+  client: AuthStandardClientScopes,
+  fleet: AuthFleetScopes,
+} as const;
+
+const scopesFlag = Flag.choice("scopes", ["administrative", "client", "fleet"]).pipe(
+  Flag.withDescription(
+    "Scope set to grant: `administrative` (default), `client`, or `fleet` (orchestration only).",
+  ),
+  Flag.optional,
+);
+
+/**
+ * What a `session issue` actually grants.
+ *
+ * The default stays administrative, because that is what every existing
+ * caller of this command already gets and a headless admin client is what it
+ * was written for. `AuthFleetSubject` is the one exception, and it is pinned
+ * rather than defaulted: that subject is the only one the server lets create
+ * a thread the user cannot prompt, so it gets `AuthFleetScopes` and cannot be
+ * talked into more. Asking for more under that subject is refused rather than
+ * quietly narrowed, so a caller that wanted an admin token learns it did not
+ * get one.
+ *
+ * Exported for the tests that pin that down.
+ */
+export const resolveIssuedScopes = (
+  requested: Option.Option<keyof typeof ISSUED_SCOPE_SETS>,
+  subject: Option.Option<string>,
+): Effect.Effect<ReadonlyArray<AuthEnvironmentScope>, FleetSubjectScopeError> => {
+  const isFleet = Option.isSome(subject) && subject.value === AuthFleetSubject;
+  if (!isFleet) {
+    return Effect.succeed(
+      ISSUED_SCOPE_SETS[Option.getOrElse(requested, () => "administrative" as const)],
+    );
+  }
+  if (Option.isSome(requested) && requested.value !== "fleet") {
+    return Effect.fail(new FleetSubjectScopeError({ requested: requested.value }));
+  }
+  return Effect.succeed(AuthFleetScopes);
+};
 
 const baseUrlFlag = Flag.string("base-url").pipe(
   Flag.withDescription("Optional public base URL used to print a ready `/pair#token=...` link."),
@@ -164,6 +220,7 @@ const sessionIssueCommand = Command.make("issue", {
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,
+  scopes: scopesFlag,
   tokenOnly: tokenOnlyFlag,
   json: jsonFlag,
 }).pipe(
@@ -174,7 +231,7 @@ const sessionIssueCommand = Command.make("issue", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const issued = yield* environmentAuth.issueSession({
-            scopes: AuthAdministrativeScopes,
+            scopes: yield* resolveIssuedScopes(flags.scopes, flags.subject),
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),

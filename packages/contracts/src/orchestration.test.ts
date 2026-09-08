@@ -6,7 +6,7 @@ import {
   ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
-  DispatchOrchestrationCommand,
+  WireOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
@@ -54,7 +54,7 @@ function getOptionValue(
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
-const decodeDispatchOrchestrationCommand = Schema.decodeUnknownEffect(DispatchOrchestrationCommand);
+const decodeWireOrchestrationCommand = Schema.decodeUnknownEffect(WireOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
@@ -943,12 +943,13 @@ it.effect("drops readOnly from a thread.create a client sent", () =>
   }),
 );
 
-it.effect("keeps readOnly on the thread.create a door decodes", () =>
+it.effect("keeps readOnly on the thread.create an entry point decodes", () =>
   Effect.gen(function* () {
     // The wider schema is what makes a fleet create representable at all. It
-    // is not the authority: the door drops `readOnly` again unless the
-    // session that sent it is the fleet's. See `normalizeDispatchCommand`.
-    const decoded = yield* decodeDispatchOrchestrationCommand({
+    // is not the authority: a dispatch entry point refuses `readOnly` again
+    // unless the session that sent it is the fleet's. See
+    // `normalizeDispatchCommand`.
+    const decoded = yield* decodeWireOrchestrationCommand({
       type: "thread.create",
       commandId: "cmd-fleet-create",
       threadId: "thread-fleet",
@@ -972,12 +973,12 @@ it.effect("keeps readOnly on the thread.create a door decodes", () =>
   }),
 );
 
-it.effect("drops issuer from a thread.turn.start that arrived at a door", () =>
+it.effect("drops issuer from a thread.turn.start that arrived over the wire", () =>
   Effect.gen(function* () {
-    // `issuer` says who the door authenticated, so it may only ever be
-    // stamped by the door. A payload that spells it is spelling the one thing
-    // that would let it drive a thread it is not allowed to drive.
-    const decoded = yield* decodeDispatchOrchestrationCommand({
+    // `issuer` says who a dispatch entry point authenticated, so only that
+    // entry point may ever stamp it. A payload that spells it is spelling the
+    // one thing that would let it drive a thread it is not allowed to drive.
+    const decoded = yield* decodeWireOrchestrationCommand({
       type: "thread.turn.start",
       commandId: "cmd-forged-issuer",
       threadId: "thread-fleet",

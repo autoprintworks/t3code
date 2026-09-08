@@ -354,8 +354,7 @@ const makeWsRpcLayer = (
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
-      // Fixed for the life of the socket, because the session is. Read once
-      // here rather than per command so there is one answer per connection.
+      // Fixed for the life of the socket, because the session is.
       const currentIssuer = commandIssuerForSubject(currentSession.subject);
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -906,6 +905,12 @@ const makeWsRpcLayer = (
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                // Both already vetted by `normalizeDispatchCommand`: a
+                // non-fleet issuer that spelled `readOnly` was refused before
+                // the turn got this far, so the pair can only be a fleet
+                // create-and-start.
+                readOnly: bootstrap.createThread.readOnly,
+                ...(command.issuer === "fleet" ? { issuer: command.issuer } : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
@@ -1058,6 +1063,8 @@ const makeWsRpcLayer = (
               if (normalizedCommand.type === "thread.archive") {
                 if (shouldStopSessionAfterArchive) {
                   yield* Effect.gen(function* () {
+                    // Server-authored, so it needs no issuer: `thread.session.stop`
+                    // has no field for one and reads the same whoever asked.
                     const stopCommand = yield* normalizeDispatchCommand(
                       {
                         type: "thread.session.stop",
@@ -1067,7 +1074,7 @@ const makeWsRpcLayer = (
                         threadId: normalizedCommand.threadId,
                         createdAt: yield* nowIso,
                       },
-                      currentIssuer,
+                      "client",
                     );
 
                     yield* dispatchNormalizedCommand(stopCommand);

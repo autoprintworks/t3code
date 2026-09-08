@@ -103,6 +103,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         readOnly: 0,
+        fleetOwned: 0,
         deletedAt: null,
       });
 
@@ -167,6 +168,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         pendingUserInputCount: 0,
         hasActionableProposedPlan: 0,
         readOnly: 0,
+        fleetOwned: 0,
         deletedAt: null,
       });
 

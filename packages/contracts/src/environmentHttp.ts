@@ -27,7 +27,7 @@ import {
 import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
-  DispatchOrchestrationCommand,
+  WireOrchestrationCommand,
   DispatchResult,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
@@ -496,8 +496,9 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       headers: OptionalBearerHeaders,
       // Wide enough for a fleet create to carry `readOnly`. What an ordinary
       // client is allowed to have said is decided after the decode, by
-      // `normalizeDispatchCommand`, from the authenticated session.
-      payload: DispatchOrchestrationCommand,
+      // `normalizeDispatchCommand`, from the authenticated session, which
+      // refuses the field rather than dropping it.
+      payload: WireOrchestrationCommand,
       success: DispatchResult,
       error: EnvironmentOrchestrationDispatchErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

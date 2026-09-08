@@ -39,10 +39,24 @@ rules key on that instead. Two subjects are named in code:
 | `firstmate`     | The First Mate daemon's own bearer, minted with `t3 auth session issue --subject firstmate`. |
 
 `firstmate` is `AuthFleetSubject` in the contracts. A session carrying it is the
-fleet's, so the daemon may create a read-only thread and then prompt it, which
-the person the thread is read-only for may not. The scopes it comes with are the
-ordinary client ones; the subject is the whole difference. See
-[worker threads](./acp-worker-threads.md).
+fleet's, so the daemon may create a read-only thread and then prompt that
+thread, which the user it is read-only for may not.
+
+Its scopes are `AuthFleetScopes`, `orchestration:read orchestration:operate`
+and nothing else. The daemon reads snapshots and dispatches orchestration
+commands; it runs no terminals, composes no review feedback, manages no pairing
+links and touches no relay, so it gets neither the rest of the standard client
+scopes nor any administrative one. `t3 auth session issue` pins that set to
+this subject rather than trusting `--scopes`, and refuses a wider set under it
+rather than quietly narrowing one. That matters more here than for an ordinary
+bearer: this is the one subject the server lets create a thread the user cannot
+prompt, so the blast radius of the token is worth keeping small. Mint one with:
+
+```
+t3 auth session issue --label "First Mate" --subject firstmate --ttl 1h --json
+```
+
+See [worker threads](./acp-worker-threads.md).
 
 ## Authentication Flows
 

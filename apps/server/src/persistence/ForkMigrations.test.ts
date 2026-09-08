@@ -28,6 +28,7 @@ const EXPECTED_FORK_MIGRATIONS = [
   { migration_id: 3, name: "ProjectionProjectRepositoryIdentity" },
   { migration_id: 5, name: "ProjectionThreadsReadOnly" },
   { migration_id: 6, name: "DropTranscriptSequence" },
+  { migration_id: 7, name: "ProjectionThreadsFleetOwned" },
 ];
 
 /**

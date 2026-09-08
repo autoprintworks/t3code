@@ -119,17 +119,27 @@ an old client build, a script, and a bare `POST /api/orchestration/dispatch`
 alike.
 
 `readOnly` is absent from `ClientThreadCreateCommand`, so a client cannot mint a
-read-only thread. The wire schema a door decodes, `DispatchOrchestrationCommand`,
-is wider than that, because the First Mate daemon does start threads read-only
-for the person over the same door. Which of the two a payload is read as is not
-decided by the payload: `normalizeDispatchCommand` is handed the issuer, read
-from the authenticated session's subject, and drops `readOnly` from anything a
-client sent however it was spelled. The mirror of that is on the turn: a door
-stamps `issuer: "fleet"` on a `thread.turn.start` from that session, and
-`requireThreadPromptable` lets a stamped turn run on a read-only thread. The
-person's turn on the same thread is refused as before, and a
-`thread.checkpoint.revert` has no stamp at all, so it is refused whoever sent it.
-See [the fleet subject](./environment-auth.md#subject).
+read-only thread. The wire schema a dispatch entry point decodes,
+`WireOrchestrationCommand`, is wider than that, because the First Mate daemon
+does start threads read-only for the user over the same entry point. Which of
+the two a payload is read as is not decided by the payload:
+`normalizeDispatchCommand` is handed the issuer, read from the authenticated
+session's subject, and **refuses** a command from an ordinary client that
+spells `readOnly` at all. Refused rather than dropped, so a caller that thought
+it was the fleet learns it is not, instead of getting a promptable thread and
+no way to tell.
+
+A fleet create is also stamped `issuer: "fleet"`, which the decider records on
+the thread as `fleetOwned`. That is what makes the turn rule work later, when
+the session that created the thread is long gone: `requireThreadPromptable`
+lets a `thread.turn.start` run on a read-only thread only when the command
+carries the fleet stamp **and** the thread is `fleetOwned`. A worker thread is
+created in process and carries no issuer, so it is read-only without being
+fleet-owned, and the fleet is refused on it exactly as the user is: the only
+way to that peer session is through its own agent. The user's turn on a
+fleet-owned thread is refused as before, and a `thread.checkpoint.revert` has
+no stamp at all, so it is refused whoever sent it. See
+[the fleet subject](./environment-auth.md#subject).
 
 ## The measurements
 

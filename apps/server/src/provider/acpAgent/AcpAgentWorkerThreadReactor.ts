@@ -9,11 +9,14 @@
  * orchestration commands.
  *
  * **Threads are projected in process, not through `/api/orchestration/dispatch`.**
- * That endpoint only accepts `ClientOrchestrationCommand`, and the two commands
+ * That endpoint only accepts `WireOrchestrationCommand`, and the two commands
  * that carry a worker's text - `thread.message.assistant.delta` and `.complete`
  * - are deliberately internal. It also needs a bearer token and collapses every
  * failure into one opaque code, neither of which a server-side reactor should
- * be arranging for itself.
+ * be arranging for itself. Creating in process is also what keeps a worker
+ * thread out of the fleet's reach: it carries no `issuer`, so it is read-only
+ * without being `fleetOwned`, and `requireThreadPromptable` refuses the fleet
+ * on it exactly as it refuses the user.
  *
  * **Worker threads are read-only.** Nothing here ever starts a turn or a
  * provider session for one. `readOnly` on the thread is what tells a client to

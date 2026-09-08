@@ -50,6 +50,7 @@ export const ProjectionThread = Schema.Struct({
   hasActionableProposedPlan: NonNegativeInt,
   // SQLite has no boolean type, so this is 0 or 1 like the counters above.
   readOnly: NonNegativeInt,
+  fleetOwned: NonNegativeInt,
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;
