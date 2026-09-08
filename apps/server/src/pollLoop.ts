@@ -1,18 +1,22 @@
 /**
- * The one back-off poll engine on the server.
+ * The back-off poll engine behind the terminal subprocess check
+ * (`terminal/Manager.ts`) and the preview port scanner
+ * (`preview/PortScanner.ts`).
  *
- * Two subsystems watch the host on a timer: the terminal subprocess check
- * (`terminal/Manager.ts`) and the preview port scanner (`preview/PortScanner.ts`).
- * Both want the same policy, so the policy lives here once and each caller
- * passes a `BackoffPollConfig` rather than keeping its own constant triple.
+ * It is not the only timed loop on the server. `vcs/VcsStatusBroadcaster.ts`,
+ * `providers/ProviderSessionReaper.ts` and `analytics/AnalyticsService.ts` each
+ * hold their own, on their own policy. What is shared here is one policy for
+ * the two loops that shell out to the host on a timer, so the cost of watching
+ * an idle machine falls off instead of staying flat.
  *
  * The policy, in one place:
  *
  * - The period is the gap between round *starts*, not the gap after a round.
  *   A round that takes 500 ms out of a 2000 ms period is followed by a 1500 ms
  *   wait, so the configured period is the cadence you actually observe.
- * - A round that changes nothing backs the period off geometrically, by
- *   `factor` each time, capped at `maxMultiplier` times the base.
+ * - The first round runs at the base period. The back-off is applied at the end
+ *   of a round that reported no change, so with a base of 2 s and a factor of 2
+ *   the gaps are 2, 4, 8, 16 s, capped at `maxMultiplier` times the base.
  * - `wakeUnsafe()` says "something changed". The round that a wake triggers
  *   runs at the base period: the wake is read and consumed before the round is
  *   run, so it is the round's own cadence that resets, not merely the tail of
@@ -25,6 +29,11 @@
  * re-enter its round wants a `Semaphore`, and what it should do when it finds
  * one in flight (skip, coalesce, or queue) is a question about that caller, not
  * about back-off.
+ *
+ * Defect handling is deliberately not here either. `run` returns a loop that
+ * never ends on its own, so a round that dies would end the poll; every caller
+ * wraps its own round in `Effect.catchCause` and logs, which keeps the failure
+ * attributable to the subsystem that produced it.
  */
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -33,8 +42,6 @@ import * as Latch from "effect/Latch";
 import * as Ref from "effect/Ref";
 
 export interface BackoffPollConfig {
-  /** Names the loop in its debug logs. */
-  readonly label: string;
   /** The cadence when something is happening, and the floor a wake resets to. */
   readonly basePeriod: Duration.Duration;
   /** Multiplier applied to the period after each round that changed nothing. */
@@ -49,12 +56,8 @@ export interface BackoffPoll {
    * Allocation-free, so it is safe on a hot path such as terminal output.
    */
   readonly wakeUnsafe: () => void;
-  /** `wakeUnsafe` for call sites that are already in an Effect. */
-  readonly wake: Effect.Effect<void>;
   /** Runs `round` forever on the configured cadence. Fork it. */
   readonly run: (round: Effect.Effect<void>) => Effect.Effect<never>;
-  /** The period the next round will use. Exposed for tests. */
-  readonly currentPeriodMs: Effect.Effect<number>;
 }
 
 /**
@@ -73,6 +76,9 @@ export const makeBackoffPoll = Effect.fn("pollLoop.makeBackoffPoll")(function* (
   const wakeLatch = yield* Latch.make(false);
   const basePeriodMs = Duration.toMillis(config.basePeriod);
   const maxPeriodMs = basePeriodMs * config.maxMultiplier;
+  // The period this round will wait out. It starts at the base, so the first
+  // round runs at the base period and the back-off only begins once a round has
+  // reported no change.
   const periodRef = yield* Ref.make(basePeriodMs);
 
   const run = (round: Effect.Effect<void>): Effect.Effect<never> =>
@@ -82,15 +88,19 @@ export const makeBackoffPoll = Effect.fn("pollLoop.makeBackoffPoll")(function* (
         // makes the round that a wake triggers run at the base period. An event
         // that lands during the round reopens the latch and is picked up by the
         // next iteration, so nothing is dropped.
-        const woken = Latch.isOpen(wakeLatch);
-        if (woken) yield* Latch.close(wakeLatch);
-        const periodMs = yield* Ref.updateAndGet(periodRef, (current) =>
-          woken ? basePeriodMs : Math.min(current * config.factor, maxPeriodMs),
-        );
+        if (Latch.isOpen(wakeLatch)) {
+          yield* Latch.close(wakeLatch);
+          yield* Ref.set(periodRef, basePeriodMs);
+        }
+        const periodMs = yield* Ref.get(periodRef);
 
         const startedAt = yield* Clock.currentTimeMillis;
         yield* round;
         const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
+
+        // Back off for the next round. A wake that landed during this round is
+        // still open, so the top of the next iteration resets this to the base.
+        yield* Ref.set(periodRef, Math.min(periodMs * config.factor, maxPeriodMs));
 
         const baseWaitMs = Math.max(
           basePeriodMs - elapsedMs,
@@ -111,10 +121,6 @@ export const makeBackoffPoll = Effect.fn("pollLoop.makeBackoffPoll")(function* (
     wakeUnsafe: () => {
       Latch.openUnsafe(wakeLatch);
     },
-    wake: Effect.sync(() => {
-      Latch.openUnsafe(wakeLatch);
-    }),
     run,
-    currentPeriodMs: Ref.get(periodRef),
   } satisfies BackoffPoll;
 });

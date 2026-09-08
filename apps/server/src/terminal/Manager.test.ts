@@ -1962,5 +1962,63 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
         yield* closeManagerScope(scope);
       }).pipe(Effect.provide(TestClock.layer())),
     );
+
+    it.effect("keeps polling after a round dies", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
+        const ptyAdapter = new FakePtyAdapter();
+        let rounds = 0;
+
+        const scope = yield* Scope.make("sequential");
+        const manager = yield* TerminalManager.makeWithOptions({
+          logsDir: join(baseDir, "logs"),
+          ptyAdapter,
+          subprocessPollIntervalMs: 20,
+          processKillGraceMs: 1,
+          subprocessRound: () => {
+            rounds += 1;
+            // Not a typed failure: a defect, the shape an unexpected throw takes.
+            if (rounds === 1) return Effect.die(new Error("probe threw"));
+            return Effect.succeed(() =>
+              Effect.succeed({
+                hasRunningSubprocess: true,
+                childCommand: "vim",
+                processIds: [9000],
+              }),
+            );
+          },
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () => Effect.succeed(succeedingRunOutput("")),
+          }),
+          Effect.provideService(Scope.Scope, scope),
+        );
+
+        const events: TerminalEvent[] = [];
+        const unsubscribe = yield* manager.subscribe((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        yield* manager.open(openInput());
+        const labelled = () =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess);
+        for (let step = 0; step < 40; step += 1) {
+          if (labelled()) break;
+          yield* TestClock.adjust("20 millis");
+        }
+
+        // The first round died. Later rounds still ran, and still answered.
+        expect(rounds).toBeGreaterThan(1);
+        expect(labelled()).toBe(true);
+
+        yield* closeManagerScope(scope);
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
   },
 );

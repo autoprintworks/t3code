@@ -324,7 +324,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // set, a new retainer, a terminal whose process set moved. See `pollLoop.ts`
   // for what a wake does to the cadence.
   const poll = yield* PollLoop.makeBackoffPoll({
-    label: "preview.portScan",
     basePeriod: POLL_INTERVAL,
     factor: POLL_BACKOFF_FACTOR,
     maxMultiplier: POLL_BACKOFF_MAX_MULTIPLIER,

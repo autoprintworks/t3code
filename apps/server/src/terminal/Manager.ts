@@ -35,6 +35,7 @@ import {
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -47,8 +48,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -87,6 +88,8 @@ const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 2_000;
 const SUBPROCESS_POLL_BACKOFF_FACTOR = 2;
 const SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER = 8;
+// Sessions answered in parallel from one round's snapshot. The lookup is pure,
+// so this only bounds the event fan-out a round can start at once.
 const SUBPROCESS_ROUND_CONCURRENCY = 4;
 const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_500;
 const POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_000;
@@ -216,10 +219,13 @@ interface TerminalSubprocessInspectResult {
   readonly processIds: ReadonlyArray<number>;
 }
 
+/**
+ * Answers one session from a round that has already been opened. It cannot
+ * fail: the host probe is the part that can, and it happens once per round in
+ * `TerminalSubprocessRound` below.
+ */
 interface TerminalSubprocessInspector {
-  (
-    terminalPid: number,
-  ): Effect.Effect<TerminalSubprocessInspectResult, TerminalSubprocessCheckError>;
+  (terminalPid: number): Effect.Effect<TerminalSubprocessInspectResult>;
 }
 
 /**
@@ -1213,7 +1219,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // Woken by every published terminal event, which is the evidence that this
   // host is not idle. See `pollLoop.ts` for the policy.
   const subprocessPoll = yield* PollLoop.makeBackoffPoll({
-    label: "terminal.subprocessPoll",
     basePeriod: Duration.millis(subprocessPollIntervalMs),
     factor: SUBPROCESS_POLL_BACKOFF_FACTOR,
     maxMultiplier: SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER,
@@ -2042,23 +2047,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session: TerminalSessionState & { pid: number },
     ) {
       const terminalPid = session.pid;
-      const inspectResult = yield* inspectSubprocess(terminalPid).pipe(
-        Effect.map(Option.some),
-        Effect.catch((reason) =>
-          Effect.logWarning("failed to check terminal subprocess activity", {
-            threadId: session.threadId,
-            terminalId: session.terminalId,
-            terminalPid,
-            reason,
-          }).pipe(Effect.as(Option.none<TerminalSubprocessInspectResult>())),
-        ),
-      );
-
-      if (Option.isNone(inspectResult)) {
-        return;
-      }
-
-      const next = inspectResult.value;
+      const next = yield* inspectSubprocess(terminalPid);
       yield* registerTerminalProcesses({
         threadId: session.threadId,
         terminalId: session.terminalId,
@@ -2125,31 +2114,38 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return;
     }
 
-    // One host probe opens the round; every session is answered from it.
-    const inspector = yield* subprocessRound().pipe(
-      Effect.map(Option.some),
-      Effect.orElseSucceed(Option.none),
+    // One host probe opens the round; every session is answered from it. The
+    // failure is carried rather than dropped, so the warning can name it.
+    const outcome = yield* subprocessRound().pipe(
+      Effect.map((inspector) => ({ ok: true, inspector }) as const),
+      Effect.catch((error) => Effect.succeed({ ok: false, error } as const)),
     );
 
-    if (Option.isNone(inspector)) {
+    if (!outcome.ok) {
       const streak = yield* Ref.updateAndGet(subprocessFailureStreakRef, (count) => count + 1);
+      const failure = {
+        consecutiveFailures: streak,
+        sessions: runningSessions.length,
+        command: outcome.error.command,
+        cause: outcome.error.cause,
+      };
       if (streak < SUBPROCESS_FAILURE_TOLERANCE) {
-        yield* Effect.logWarning("failed to snapshot host processes for terminal subprocess poll", {
-          consecutiveFailures: streak,
-          sessions: runningSessions.length,
-        });
+        yield* Effect.logWarning(
+          "failed to snapshot host processes for terminal subprocess poll",
+          failure,
+        );
         return;
       }
       yield* Effect.logWarning(
         "host process snapshot has failed repeatedly; clearing terminal subprocess labels",
-        { consecutiveFailures: streak, sessions: runningSessions.length },
+        failure,
       );
       yield* runSubprocessRound(runningSessions, clearingInspector);
       return;
     }
 
     yield* Ref.set(subprocessFailureStreakRef, 0);
-    yield* runSubprocessRound(runningSessions, inspector.value);
+    yield* runSubprocessRound(runningSessions, outcome.inspector);
   });
 
   const hasRunningSessions = readManagerState.pipe(
@@ -2159,14 +2155,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   );
 
   // The round is awaited inline, so it cannot overlap the next one; the loop
-  // only needs the back-off policy, which lives in `pollLoop.ts`.
+  // only needs the back-off policy, which lives in `pollLoop.ts`. The round
+  // catches its own defects, because `pollLoop` deliberately does not: an
+  // unexpected throw in a probe must cost this round, not the whole poll.
   yield* subprocessPoll
     .run(
       Effect.gen(function* () {
         if (yield* hasRunningSessions) {
           yield* pollSubprocessActivity();
         }
-      }),
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("terminal subprocess poll round failed", Cause.pretty(cause)),
+        ),
+      ),
     )
     .pipe(Effect.forkIn(workerScope));
 
