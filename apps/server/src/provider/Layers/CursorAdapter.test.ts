@@ -27,9 +27,11 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { skipBatchStubChildExit } from "../../testUtils/hostPlatform.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
+const itChildExit = it.effect.skipIf(skipBatchStubChildExit);
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
 class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()(
@@ -41,12 +43,41 @@ const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.
 const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath] as const;
 
+// The adapter spawns these wrappers through the configured binaryPath, so a wrapper has to be
+// something the host can execute: a shell script on POSIX, a batch file on Windows.
+const isWindows = process.platform === "win32";
+const wrapperFileName = isWindows ? "fake-agent.cmd" : "fake-agent.sh";
+
+// A Windows path can hold a backslash but never a quote, so plain quoting is enough and
+// JSON.stringify would double every separator.
+const quoteForBatch = (value: string) => `"${value}"`;
+const batchEnvSets = (extraEnv?: Record<string, string>) =>
+  Object.entries(extraEnv ?? {}).map(([key, value]) => `set ${quoteForBatch(`${key}=${value}`)}`);
+const batchExec = `${quoteForBatch(mockAgentCommand)} ${mockAgentArgs.map(quoteForBatch).join(" ")} %*`;
+
+async function writeBatchWrapper(dir: string, lines: readonly string[]) {
+  const wrapperPath = NodePath.join(dir, wrapperFileName);
+  await NodeFSP.writeFile(wrapperPath, ["@echo off", ...lines, ""].join("\r\n"), "utf8");
+  return wrapperPath;
+}
+
 async function makeMockAgentWrapper(
   extraEnv?: Record<string, string>,
   options?: { initialDelaySeconds?: number },
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-mock-"));
-  const wrapperPath = NodePath.join(dir, "fake-agent.sh");
+  if (isWindows) {
+    // timeout.exe refuses to run with stdin redirected, so node holds the startup delay instead.
+    const delaySeconds = options?.initialDelaySeconds;
+    return writeBatchWrapper(dir, [
+      ...batchEnvSets(extraEnv),
+      ...(delaySeconds
+        ? [`node -e "setTimeout(() => {}, ${Math.round(delaySeconds * 1000)})"`]
+        : []),
+      batchExec,
+    ]);
+  }
+  const wrapperPath = NodePath.join(dir, wrapperFileName);
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
@@ -66,7 +97,20 @@ async function makeProbeWrapper(
   extraEnv?: Record<string, string>,
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-probe-"));
-  const wrapperPath = NodePath.join(dir, "fake-agent.sh");
+  if (isWindows) {
+    return writeBatchWrapper(dir, [
+      // resolveSpawnCommand routes a .cmd through a shell, so %* still carries the quotes it
+      // added. %%~A strips them, and the tab keeps the log in the format readArgvLog expects.
+      "setlocal EnableDelayedExpansion",
+      'set "T3ARGV="',
+      'for %%A in (%*) do set "T3ARGV=!T3ARGV!%%~A\t"',
+      `>>${quoteForBatch(argvLogPath)} echo(!T3ARGV!`,
+      `set ${quoteForBatch(`T3_ACP_REQUEST_LOG_PATH=${requestLogPath}`)}`,
+      ...batchEnvSets(extraEnv),
+      batchExec,
+    ]);
+  }
+  const wrapperPath = NodePath.join(dir, wrapperFileName);
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
@@ -148,9 +192,6 @@ const makeResolveCursorSettings = Effect.gen(function* () {
   );
 });
 
-// The ACP agent these tests stand in for is a POSIX shell script, which Windows cannot execute.
-const skipPosixShellStub = process.platform === "win32";
-
 const cursorAdapterTestLayer = it.layer(
   Layer.effect(
     CursorAdapter,
@@ -171,172 +212,165 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-  it.effect.skipIf(skipPosixShellStub)(
-    "starts a session and maps mock ACP prompt flow to runtime events",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CursorAdapter;
-        const settings = yield* ServerSettingsService;
-        const threadId = ThreadId.make("cursor-mock-thread");
+  it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-mock-thread");
 
-        const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
-        yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
-        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
-          Stream.runCollect,
-          Effect.forkChild,
-        );
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
 
-        const session = yield* adapter.startSession({
-          threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
-        });
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
 
-        assert.equal(session.provider, "cursor");
-        assert.deepStrictEqual(session.resumeCursor, {
-          schemaVersion: 1,
-          sessionId: "mock-session-1",
-        });
+      assert.equal(session.provider, "cursor");
+      assert.deepStrictEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "mock-session-1",
+      });
 
-        yield* adapter.sendTurn({
-          threadId,
-          input: "hello mock",
-          attachments: [],
-        });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "hello mock",
+        attachments: [],
+      });
 
-        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
-        const types = runtimeEvents.map((e) => e.type);
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const types = runtimeEvents.map((e) => e.type);
 
-        for (const t of [
-          "session.started",
-          "session.state.changed",
-          "thread.started",
-          "turn.started",
-          "turn.plan.updated",
-          "item.started",
-          "content.delta",
-          "item.completed",
-          "turn.completed",
-        ] as const) {
-          assert.include(types, t);
-        }
+      for (const t of [
+        "session.started",
+        "session.state.changed",
+        "thread.started",
+        "turn.started",
+        "turn.plan.updated",
+        "item.started",
+        "content.delta",
+        "item.completed",
+        "turn.completed",
+      ] as const) {
+        assert.include(types, t);
+      }
 
-        const assistantStarted = runtimeEvents.find(
-          (event) =>
-            event.type === "item.started" && event.payload.itemType === "assistant_message",
-        );
-        assert.isDefined(assistantStarted);
+      const assistantStarted = runtimeEvents.find(
+        (event) => event.type === "item.started" && event.payload.itemType === "assistant_message",
+      );
+      assert.isDefined(assistantStarted);
 
-        const delta = runtimeEvents.find((e) => e.type === "content.delta");
-        assert.isDefined(delta);
-        if (delta?.type === "content.delta") {
-          assert.equal(delta.payload.delta, "hello from mock");
-          assert.match(String(delta.itemId), /^assistant:mock-session-1:runtime:[^:]+:segment:0$/);
-        }
+      const delta = runtimeEvents.find((e) => e.type === "content.delta");
+      assert.isDefined(delta);
+      if (delta?.type === "content.delta") {
+        assert.equal(delta.payload.delta, "hello from mock");
+        assert.match(String(delta.itemId), /^assistant:mock-session-1:runtime:[^:]+:segment:0$/);
+      }
 
-        const assistantCompleted = runtimeEvents.find(
-          (event) =>
-            event.type === "item.completed" && event.payload.itemType === "assistant_message",
-        );
-        assert.isDefined(assistantCompleted);
+      const assistantCompleted = runtimeEvents.find(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      assert.isDefined(assistantCompleted);
 
-        const planUpdate = runtimeEvents.find((event) => event.type === "turn.plan.updated");
-        assert.isDefined(planUpdate);
-        if (planUpdate?.type === "turn.plan.updated") {
-          assert.deepStrictEqual(planUpdate.payload.plan, [
-            { step: "Inspect mock ACP state", status: "completed" },
-            { step: "Implement the requested change", status: "inProgress" },
-          ]);
-        }
+      const planUpdate = runtimeEvents.find((event) => event.type === "turn.plan.updated");
+      assert.isDefined(planUpdate);
+      if (planUpdate?.type === "turn.plan.updated") {
+        assert.deepStrictEqual(planUpdate.payload.plan, [
+          { step: "Inspect mock ACP state", status: "completed" },
+          { step: "Implement the requested change", status: "inProgress" },
+        ]);
+      }
 
-        yield* adapter.stopSession(threadId);
-      }),
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "steers a running turn instead of opening a new one on mid-turn sendTurn",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CursorAdapter;
-        const settings = yield* ServerSettingsService;
-        const threadId = ThreadId.make("cursor-steer-thread");
+  it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-steer-thread");
 
-        // Keep the first prompt in flight long enough for the steer to land.
-        const wrapperPath = yield* Effect.promise(() =>
-          makeMockAgentWrapper({ T3_ACP_PROMPT_DELAY_MS: "1500" }),
-        );
-        yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      // Keep the first prompt in flight long enough for the steer to land.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_PROMPT_DELAY_MS: "1500" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
-        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
-          Stream.filter((event) => event.threadId === threadId),
-          Stream.takeUntil((event) => event.type === "turn.completed"),
-          Stream.runCollect,
-          Effect.forkChild,
-        );
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
 
-        yield* adapter.startSession({
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const firstTurnFiber = yield* adapter
+        .sendTurn({
           threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
-        });
+          input: "run 5 commands",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
 
-        const firstTurnFiber = yield* adapter
-          .sendTurn({
-            threadId,
-            input: "run 5 commands",
-            attachments: [],
-          })
-          .pipe(Effect.forkChild);
-
-        // Poll until the first prompt is in flight — sendTurn binds the active
-        // turn id before prompting. The mock agent runs on the real clock, so
-        // each TestClock.adjust just provides the scheduler hops for its stdio
-        // responses to land.
-        yield* Effect.gen(function* () {
-          for (let attempt = 0; attempt < 200; attempt += 1) {
-            const sessions = yield* adapter.listSessions();
-            const session = sessions.find((entry) => entry.threadId === threadId);
-            if (session?.activeTurnId !== undefined) {
-              return;
-            }
-            yield* TestClock.adjust("10 millis");
+      // Poll until the first prompt is in flight — sendTurn binds the active
+      // turn id before prompting. The mock agent runs on the real clock, so
+      // each TestClock.adjust just provides the scheduler hops for its stdio
+      // responses to land.
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          const sessions = yield* adapter.listSessions();
+          const session = sessions.find((entry) => entry.threadId === threadId);
+          if (session?.activeTurnId !== undefined) {
+            return;
           }
-          throw new Error("Timed out waiting for the first prompt to be in flight.");
-        });
+          yield* TestClock.adjust("10 millis");
+        }
+        throw new Error("Timed out waiting for the first prompt to be in flight.");
+      });
 
-        // Steer: a second sendTurn while the first prompt is still in flight
-        // continues the same turn.
-        const steeredTurn = yield* adapter.sendTurn({
-          threadId,
-          input: "actually run 15",
-          attachments: [],
-        });
-        const firstTurn = yield* Fiber.join(firstTurnFiber);
-        assert.equal(String(steeredTurn.turnId), String(firstTurn.turnId));
+      // Steer: a second sendTurn while the first prompt is still in flight
+      // continues the same turn.
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "actually run 15",
+        attachments: [],
+      });
+      const firstTurn = yield* Fiber.join(firstTurnFiber);
+      assert.equal(String(steeredTurn.turnId), String(firstTurn.turnId));
 
-        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
-        const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
-        const turnCompletedEvents = runtimeEvents.filter(
-          (event) => event.type === "turn.completed",
-        );
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
 
-        // One turn boundary for the whole run: the superseded first prompt
-        // resolving must not settle the merged turn.
-        assert.equal(turnStartedEvents.length, 1);
-        assert.equal(String(turnStartedEvents[0]?.turnId), String(firstTurn.turnId));
-        assert.equal(turnCompletedEvents.length, 1);
-        assert.equal(String(turnCompletedEvents[0]?.turnId), String(firstTurn.turnId));
+      // One turn boundary for the whole run: the superseded first prompt
+      // resolving must not settle the merged turn.
+      assert.equal(turnStartedEvents.length, 1);
+      assert.equal(String(turnStartedEvents[0]?.turnId), String(firstTurn.turnId));
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(firstTurn.turnId));
 
-        yield* adapter.stopSession(threadId);
-      }),
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)("closes the ACP child process when a session stops", () =>
+  itChildExit("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const settings = yield* ServerSettingsService;
@@ -368,7 +402,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
+  itChildExit(
     "serializes concurrent startSession calls for the same thread and closes the replaced ACP session",
     () =>
       Effect.gen(function* () {
@@ -436,7 +470,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)("maps app plan mode onto the ACP plan session mode", () =>
+  it.effect("maps app plan mode onto the ACP plan session mode", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
@@ -492,7 +526,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
+  it.effect(
     "applies initial model and mode configuration during startSession and skips repeating it on first send",
     () =>
       Effect.gen(function* () {
@@ -564,7 +598,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
+  it.effect(
     "streams ACP tool calls and approvals on the active turn in approval-required mode",
     () =>
       Effect.gen(function* () {
@@ -737,7 +771,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       ),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
+  it.effect(
     "auto-approves ACP tool permissions in full-access mode without approval runtime events",
     () =>
       Effect.gen(function* () {
@@ -834,239 +868,230 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "segments assistant messages around ACP tool activity in full-access mode",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CursorAdapter;
-        const serverSettings = yield* ServerSettingsService;
-        const threadId = ThreadId.make("cursor-assistant-tool-segmentation");
-        const runtimeEvents: Array<ProviderRuntimeEvent> = [];
-        const settledEventTypes = new Set<string>();
-        const settledEventsReady = yield* Deferred.make<void>();
+  it.effect("segments assistant messages around ACP tool activity in full-access mode", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-assistant-tool-segmentation");
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const settledEventTypes = new Set<string>();
+      const settledEventsReady = yield* Deferred.make<void>();
 
-        const wrapperPath = yield* Effect.promise(() =>
-          makeMockAgentWrapper({ T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS: "1" }),
-        );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS: "1" }),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { cursor: { binaryPath: wrapperPath } },
+      });
 
-        const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-          Effect.gen(function* () {
-            runtimeEvents.push(event);
-            if (String(event.threadId) !== String(threadId)) {
-              return;
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          runtimeEvents.push(event);
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          if (
+            event.type === "content.delta" ||
+            (event.type === "item.completed" && event.payload.itemType === "command_execution") ||
+            event.type === "turn.completed"
+          ) {
+            if (event.type === "content.delta") {
+              settledEventTypes.add(`delta:${event.payload.delta}`);
+            } else {
+              settledEventTypes.add(event.type);
             }
             if (
-              event.type === "content.delta" ||
-              (event.type === "item.completed" && event.payload.itemType === "command_execution") ||
-              event.type === "turn.completed"
+              settledEventTypes.has("delta:before tool") &&
+              settledEventTypes.has("delta:after tool") &&
+              settledEventTypes.has("item.completed") &&
+              settledEventTypes.has("turn.completed")
             ) {
-              if (event.type === "content.delta") {
-                settledEventTypes.add(`delta:${event.payload.delta}`);
-              } else {
-                settledEventTypes.add(event.type);
-              }
-              if (
-                settledEventTypes.has("delta:before tool") &&
-                settledEventTypes.has("delta:after tool") &&
-                settledEventTypes.has("item.completed") &&
-                settledEventTypes.has("turn.completed")
-              ) {
-                yield* Deferred.succeed(settledEventsReady, undefined).pipe(Effect.orDie);
-              }
+              yield* Deferred.succeed(settledEventsReady, undefined).pipe(Effect.orDie);
             }
-          }),
-        ).pipe(Effect.forkChild);
+          }
+        }),
+      ).pipe(Effect.forkChild);
 
-        yield* adapter.startSession({
-          threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
-        });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
 
-        const turn = yield* adapter.sendTurn({
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "run an interleaved tool call",
+        attachments: [],
+      });
+
+      yield* Deferred.await(settledEventsReady);
+      yield* Fiber.interrupt(runtimeEventsFiber);
+
+      const turnEvents = runtimeEvents.filter(
+        (event) =>
+          String(event.threadId) === String(threadId) &&
+          String(event.turnId) === String(turn.turnId),
+      );
+      const firstAssistantStartIndex = turnEvents.findIndex(
+        (event) => event.type === "item.started" && event.payload.itemType === "assistant_message",
+      );
+      const firstAssistantDeltaIndex = turnEvents.findIndex(
+        (event) => event.type === "content.delta" && event.payload.delta === "before tool",
+      );
+      const assistantBoundaryIndex = turnEvents.findIndex(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      const toolUpdateIndex = turnEvents.findIndex(
+        (event) => event.type === "item.updated" && event.payload.itemType === "command_execution",
+      );
+      const toolCompletedIndex = turnEvents.findIndex(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "command_execution",
+      );
+      const secondAssistantStartIndex = turnEvents.findIndex(
+        (event, index) =>
+          index > toolCompletedIndex &&
+          event.type === "item.started" &&
+          event.payload.itemType === "assistant_message",
+      );
+      const secondAssistantDeltaIndex = turnEvents.findIndex(
+        (event) => event.type === "content.delta" && event.payload.delta === "after tool",
+      );
+
+      assert.isAtLeast(firstAssistantStartIndex, 0);
+      assert.isAtLeast(firstAssistantDeltaIndex, 0);
+      assert.isAtLeast(assistantBoundaryIndex, 0);
+      assert.isAtLeast(toolUpdateIndex, 0);
+      assert.isAtLeast(toolCompletedIndex, 0);
+      assert.isAtLeast(secondAssistantStartIndex, 0);
+      assert.isAtLeast(secondAssistantDeltaIndex, 0);
+      assert.isBelow(firstAssistantStartIndex, firstAssistantDeltaIndex);
+      assert.isBelow(firstAssistantDeltaIndex, assistantBoundaryIndex);
+      assert.isBelow(assistantBoundaryIndex, toolUpdateIndex);
+      assert.isBelow(toolUpdateIndex, toolCompletedIndex);
+      assert.isBelow(toolCompletedIndex, secondAssistantStartIndex);
+      assert.isBelow(secondAssistantStartIndex, secondAssistantDeltaIndex);
+
+      const assistantStarts = turnEvents.filter(
+        (event) => event.type === "item.started" && event.payload.itemType === "assistant_message",
+      );
+      const assistantDeltas = turnEvents.filter((event) => event.type === "content.delta");
+      assert.lengthOf(assistantStarts, 2);
+      assert.lengthOf(assistantDeltas, 2);
+      if (
+        assistantStarts[0]?.type === "item.started" &&
+        assistantStarts[1]?.type === "item.started" &&
+        assistantDeltas[0]?.type === "content.delta" &&
+        assistantDeltas[1]?.type === "content.delta"
+      ) {
+        assert.notEqual(String(assistantStarts[0].itemId), String(assistantStarts[1].itemId));
+        assert.equal(String(assistantDeltas[0].itemId), String(assistantStarts[0].itemId));
+        assert.equal(String(assistantDeltas[1].itemId), String(assistantStarts[1].itemId));
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("cancels pending ACP approvals and marks the turn cancelled when interrupted", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-cancel-probe");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath, { T3_ACP_EMIT_TOOL_CALLS: "1" }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const requestResolvedReady = yield* Deferred.make<ProviderRuntimeEvent>();
+      const turnCompletedReady = yield* Deferred.make<ProviderRuntimeEvent>();
+      let interrupted = false;
+
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          if (event.type === "request.opened" && event.requestId && !interrupted) {
+            interrupted = true;
+            yield* adapter.respondToRequest(
+              threadId,
+              ApprovalRequestId.make(String(event.requestId)),
+              "cancel",
+            );
+            yield* adapter.interruptTurn(threadId);
+            return;
+          }
+          if (event.type === "request.resolved") {
+            yield* Deferred.succeed(requestResolvedReady, event).pipe(Effect.ignore);
+            return;
+          }
+          if (event.type === "turn.completed") {
+            yield* Deferred.succeed(turnCompletedReady, event).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({
           threadId,
-          input: "run an interleaved tool call",
+          input: "cancel this turn",
           attachments: [],
-        });
+        })
+        .pipe(Effect.forkChild);
 
-        yield* Deferred.await(settledEventsReady);
-        yield* Fiber.interrupt(runtimeEventsFiber);
+      const requestResolved = yield* Deferred.await(requestResolvedReady);
+      const turnCompleted = yield* Deferred.await(turnCompletedReady);
+      yield* Fiber.join(sendTurnFiber);
+      yield* Fiber.interrupt(runtimeEventsFiber);
 
-        const turnEvents = runtimeEvents.filter(
-          (event) =>
-            String(event.threadId) === String(threadId) &&
-            String(event.turnId) === String(turn.turnId),
-        );
-        const firstAssistantStartIndex = turnEvents.findIndex(
-          (event) =>
-            event.type === "item.started" && event.payload.itemType === "assistant_message",
-        );
-        const firstAssistantDeltaIndex = turnEvents.findIndex(
-          (event) => event.type === "content.delta" && event.payload.delta === "before tool",
-        );
-        const assistantBoundaryIndex = turnEvents.findIndex(
-          (event) =>
-            event.type === "item.completed" && event.payload.itemType === "assistant_message",
-        );
-        const toolUpdateIndex = turnEvents.findIndex(
-          (event) =>
-            event.type === "item.updated" && event.payload.itemType === "command_execution",
-        );
-        const toolCompletedIndex = turnEvents.findIndex(
-          (event) =>
-            event.type === "item.completed" && event.payload.itemType === "command_execution",
-        );
-        const secondAssistantStartIndex = turnEvents.findIndex(
-          (event, index) =>
-            index > toolCompletedIndex &&
-            event.type === "item.started" &&
-            event.payload.itemType === "assistant_message",
-        );
-        const secondAssistantDeltaIndex = turnEvents.findIndex(
-          (event) => event.type === "content.delta" && event.payload.delta === "after tool",
-        );
+      assert.equal(requestResolved.type, "request.resolved");
+      if (requestResolved.type === "request.resolved") {
+        assert.equal(requestResolved.payload.decision, "cancel");
+      }
 
-        assert.isAtLeast(firstAssistantStartIndex, 0);
-        assert.isAtLeast(firstAssistantDeltaIndex, 0);
-        assert.isAtLeast(assistantBoundaryIndex, 0);
-        assert.isAtLeast(toolUpdateIndex, 0);
-        assert.isAtLeast(toolCompletedIndex, 0);
-        assert.isAtLeast(secondAssistantStartIndex, 0);
-        assert.isAtLeast(secondAssistantDeltaIndex, 0);
-        assert.isBelow(firstAssistantStartIndex, firstAssistantDeltaIndex);
-        assert.isBelow(firstAssistantDeltaIndex, assistantBoundaryIndex);
-        assert.isBelow(assistantBoundaryIndex, toolUpdateIndex);
-        assert.isBelow(toolUpdateIndex, toolCompletedIndex);
-        assert.isBelow(toolCompletedIndex, secondAssistantStartIndex);
-        assert.isBelow(secondAssistantStartIndex, secondAssistantDeltaIndex);
+      assert.equal(turnCompleted.type, "turn.completed");
+      if (turnCompleted.type === "turn.completed") {
+        assert.equal(turnCompleted.payload.state, "cancelled");
+        assert.equal(turnCompleted.payload.stopReason, "cancelled");
+      }
 
-        const assistantStarts = turnEvents.filter(
-          (event) =>
-            event.type === "item.started" && event.payload.itemType === "assistant_message",
-        );
-        const assistantDeltas = turnEvents.filter((event) => event.type === "content.delta");
-        assert.lengthOf(assistantStarts, 2);
-        assert.lengthOf(assistantDeltas, 2);
-        if (
-          assistantStarts[0]?.type === "item.started" &&
-          assistantStarts[1]?.type === "item.started" &&
-          assistantDeltas[0]?.type === "content.delta" &&
-          assistantDeltas[1]?.type === "content.delta"
-        ) {
-          assert.notEqual(String(assistantStarts[0].itemId), String(assistantStarts[1].itemId));
-          assert.equal(String(assistantDeltas[0].itemId), String(assistantStarts[0].itemId));
-          assert.equal(String(assistantDeltas[1].itemId), String(assistantStarts[1].itemId));
-        }
+      const isCancelledApprovalResponse = (entry: Record<string, unknown>) =>
+        !("method" in entry) &&
+        typeof entry.result === "object" &&
+        entry.result !== null &&
+        "outcome" in entry.result &&
+        typeof entry.result.outcome === "object" &&
+        entry.result.outcome !== null &&
+        "outcome" in entry.result.outcome &&
+        entry.result.outcome.outcome === "cancelled";
+      const approvalResponses = yield* waitForJsonLogMatch(
+        requestLogPath,
+        isCancelledApprovalResponse,
+      );
+      assert.isTrue(approvalResponses.some(isCancelledApprovalResponse));
 
-        yield* adapter.stopSession(threadId);
-      }),
+      yield* adapter.stopSession(threadId);
+    }),
   );
-
-  it.effect.skipIf(skipPosixShellStub)(
-    "cancels pending ACP approvals and marks the turn cancelled when interrupted",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CursorAdapter;
-        const serverSettings = yield* ServerSettingsService;
-        const threadId = ThreadId.make("cursor-cancel-probe");
-        const tempDir = yield* Effect.promise(() =>
-          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
-        );
-        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
-        const argvLogPath = NodePath.join(tempDir, "argv.txt");
-        yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
-        const wrapperPath = yield* Effect.promise(() =>
-          makeProbeWrapper(requestLogPath, argvLogPath, { T3_ACP_EMIT_TOOL_CALLS: "1" }),
-        );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
-
-        const requestResolvedReady = yield* Deferred.make<ProviderRuntimeEvent>();
-        const turnCompletedReady = yield* Deferred.make<ProviderRuntimeEvent>();
-        let interrupted = false;
-
-        const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-          Effect.gen(function* () {
-            if (String(event.threadId) !== String(threadId)) {
-              return;
-            }
-            if (event.type === "request.opened" && event.requestId && !interrupted) {
-              interrupted = true;
-              yield* adapter.respondToRequest(
-                threadId,
-                ApprovalRequestId.make(String(event.requestId)),
-                "cancel",
-              );
-              yield* adapter.interruptTurn(threadId);
-              return;
-            }
-            if (event.type === "request.resolved") {
-              yield* Deferred.succeed(requestResolvedReady, event).pipe(Effect.ignore);
-              return;
-            }
-            if (event.type === "turn.completed") {
-              yield* Deferred.succeed(turnCompletedReady, event).pipe(Effect.ignore);
-            }
-          }),
-        ).pipe(Effect.forkChild);
-
-        yield* adapter.startSession({
-          threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "approval-required",
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
-        });
-
-        const sendTurnFiber = yield* adapter
-          .sendTurn({
-            threadId,
-            input: "cancel this turn",
-            attachments: [],
-          })
-          .pipe(Effect.forkChild);
-
-        const requestResolved = yield* Deferred.await(requestResolvedReady);
-        const turnCompleted = yield* Deferred.await(turnCompletedReady);
-        yield* Fiber.join(sendTurnFiber);
-        yield* Fiber.interrupt(runtimeEventsFiber);
-
-        assert.equal(requestResolved.type, "request.resolved");
-        if (requestResolved.type === "request.resolved") {
-          assert.equal(requestResolved.payload.decision, "cancel");
-        }
-
-        assert.equal(turnCompleted.type, "turn.completed");
-        if (turnCompleted.type === "turn.completed") {
-          assert.equal(turnCompleted.payload.state, "cancelled");
-          assert.equal(turnCompleted.payload.stopReason, "cancelled");
-        }
-
-        const isCancelledApprovalResponse = (entry: Record<string, unknown>) =>
-          !("method" in entry) &&
-          typeof entry.result === "object" &&
-          entry.result !== null &&
-          "outcome" in entry.result &&
-          typeof entry.result.outcome === "object" &&
-          entry.result.outcome !== null &&
-          "outcome" in entry.result.outcome &&
-          entry.result.outcome.outcome === "cancelled";
-        const approvalResponses = yield* waitForJsonLogMatch(
-          requestLogPath,
-          isCancelledApprovalResponse,
-        );
-        assert.isTrue(approvalResponses.some(isCancelledApprovalResponse));
-
-        yield* adapter.stopSession(threadId);
-      }),
-  );
-  it.effect.skipIf(skipPosixShellStub)("stopping a session settles pending approval waits", () =>
+  it.effect("stopping a session settles pending approval waits", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
@@ -1109,7 +1134,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)("stopping a session settles pending user-input waits", () =>
+  it.effect("stopping a session settles pending user-input waits", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const serverSettings = yield* ServerSettingsService;
@@ -1152,235 +1177,215 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "interrupting a session settles pending user-input waits",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CursorAdapter;
-        const serverSettings = yield* ServerSettingsService;
-        const threadId = ThreadId.make("cursor-interrupt-pending-user-input");
-        const userInputRequested = yield* Deferred.make<void>();
+  it.effect("interrupting a session settles pending user-input waits", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-interrupt-pending-user-input");
+      const userInputRequested = yield* Deferred.make<void>();
 
-        const wrapperPath = yield* Effect.promise(() =>
-          makeMockAgentWrapper({ T3_ACP_EMIT_ASK_QUESTION: "1" }),
-        );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_ASK_QUESTION: "1" }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
-        yield* Stream.runForEach(adapter.streamEvents, (event) => {
-          if (
-            String(event.threadId) !== String(threadId) ||
-            event.type !== "user-input.requested"
-          ) {
-            return Effect.void;
-          }
-          return Deferred.succeed(userInputRequested, undefined).pipe(Effect.ignore);
-        }).pipe(Effect.forkChild);
+      yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId) || event.type !== "user-input.requested") {
+          return Effect.void;
+        }
+        return Deferred.succeed(userInputRequested, undefined).pipe(Effect.ignore);
+      }).pipe(Effect.forkChild);
 
-        yield* adapter.startSession({
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const sendTurnFiber = yield* adapter
+        .sendTurn({
           threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
-        });
+          input: "ask me a question and then interrupt",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
 
-        const sendTurnFiber = yield* adapter
-          .sendTurn({
-            threadId,
-            input: "ask me a question and then interrupt",
-            attachments: [],
-          })
-          .pipe(Effect.forkChild);
+      yield* Deferred.await(userInputRequested);
+      yield* adapter.interruptTurn(threadId);
+      yield* Fiber.await(sendTurnFiber);
 
-        yield* Deferred.await(userInputRequested);
-        yield* adapter.interruptTurn(threadId);
-        yield* Fiber.await(sendTurnFiber);
-
-        assert.equal(yield* adapter.hasSession(threadId), true);
-        yield* adapter.stopSession(threadId);
-      }),
+      assert.equal(yield* adapter.hasSession(threadId), true);
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "broadcasts runtime events to multiple stream consumers",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CursorAdapter;
-        const settings = yield* ServerSettingsService;
-        const threadId = ThreadId.make("cursor-runtime-event-broadcast");
+  it.effect("broadcasts runtime events to multiple stream consumers", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-runtime-event-broadcast");
 
-        const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
-        yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
-        const firstConsumer = yield* Stream.take(adapter.streamEvents, 3).pipe(
-          Stream.runCollect,
-          Effect.forkChild,
-        );
-        const secondConsumer = yield* Stream.take(adapter.streamEvents, 3).pipe(
-          Stream.runCollect,
-          Effect.forkChild,
-        );
+      const firstConsumer = yield* Stream.take(adapter.streamEvents, 3).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const secondConsumer = yield* Stream.take(adapter.streamEvents, 3).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
 
-        yield* adapter.startSession({
-          threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
-        });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
 
-        const firstEvents = Array.from(yield* Fiber.join(firstConsumer));
-        const secondEvents = Array.from(yield* Fiber.join(secondConsumer));
+      const firstEvents = Array.from(yield* Fiber.join(firstConsumer));
+      const secondEvents = Array.from(yield* Fiber.join(secondConsumer));
 
-        assert.deepStrictEqual(
-          firstEvents.map((event) => event.type),
-          ["session.started", "session.state.changed", "thread.started"],
-        );
-        assert.deepStrictEqual(
-          secondEvents.map((event) => event.type),
-          ["session.started", "session.state.changed", "thread.started"],
-        );
+      assert.deepStrictEqual(
+        firstEvents.map((event) => event.type),
+        ["session.started", "session.state.changed", "thread.started"],
+      );
+      assert.deepStrictEqual(
+        secondEvents.map((event) => event.type),
+        ["session.started", "session.state.changed", "thread.started"],
+      );
 
-        yield* adapter.stopSession(threadId);
-      }),
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "switches model in-session via session/set_config_option",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CursorAdapter;
-        const serverSettings = yield* ServerSettingsService;
-        const threadId = ThreadId.make("cursor-model-switch");
-        const tempDir = yield* Effect.promise(() =>
-          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
-        );
-        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
-        const argvLogPath = NodePath.join(tempDir, "argv.txt");
-        yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
-        const wrapperPath = yield* Effect.promise(() =>
-          makeProbeWrapper(requestLogPath, argvLogPath),
-        );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
+  it.effect("switches model in-session via session/set_config_option", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-model-switch");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
-        yield* adapter.startSession({
-          threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
-        });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+      });
 
-        yield* adapter.sendTurn({
-          threadId,
-          input: "first turn",
-          attachments: [],
-        });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first turn",
+        attachments: [],
+      });
 
-        yield* adapter.sendTurn({
-          threadId,
-          input: "second turn after switching model",
-          attachments: [],
-          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
-            { id: "fastMode", value: true },
-          ]),
-        });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "second turn after switching model",
+        attachments: [],
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
+          { id: "fastMode", value: true },
+        ]),
+      });
 
-        const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
-        assert.lengthOf(argvRuns, 1, "session should not restart — only one spawn");
-        assert.deepStrictEqual(argvRuns[0], ["acp"]);
+      const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
+      assert.lengthOf(argvRuns, 1, "session should not restart — only one spawn");
+      assert.deepStrictEqual(argvRuns[0], ["acp"]);
 
-        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
-        const setConfigRequests = requests.filter(
-          (entry) =>
-            entry.method === "session/set_config_option" &&
-            (entry.params as Record<string, unknown> | undefined)?.configId === "model",
-        );
-        assert.isAbove(setConfigRequests.length, 0, "should call session/set_config_option");
-        assert.equal(
-          (setConfigRequests[0]?.params as Record<string, unknown>)?.value,
-          "composer-2",
-        );
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const setConfigRequests = requests.filter(
+        (entry) =>
+          entry.method === "session/set_config_option" &&
+          (entry.params as Record<string, unknown> | undefined)?.configId === "model",
+      );
+      assert.isAbove(setConfigRequests.length, 0, "should call session/set_config_option");
+      assert.equal((setConfigRequests[0]?.params as Record<string, unknown>)?.value, "composer-2");
 
-        const fastConfigRequests = requests.filter(
-          (entry) =>
-            entry.method === "session/set_config_option" &&
-            (entry.params as Record<string, unknown> | undefined)?.configId === "fast",
-        );
-        assert.isAbove(fastConfigRequests.length, 0, "should apply fast mode as a separate config");
-        const lastFastConfig = fastConfigRequests[fastConfigRequests.length - 1];
-        assert.equal((lastFastConfig?.params as Record<string, unknown>)?.value, "true");
+      const fastConfigRequests = requests.filter(
+        (entry) =>
+          entry.method === "session/set_config_option" &&
+          (entry.params as Record<string, unknown> | undefined)?.configId === "fast",
+      );
+      assert.isAbove(fastConfigRequests.length, 0, "should apply fast mode as a separate config");
+      const lastFastConfig = fastConfigRequests[fastConfigRequests.length - 1];
+      assert.equal((lastFastConfig?.params as Record<string, unknown>)?.value, "true");
 
-        yield* adapter.stopSession(threadId);
-      }),
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "clears prior fast mode in-session when the next turn sets fastMode: false",
-    () =>
-      Effect.gen(function* () {
-        const adapter = yield* CursorAdapter;
-        const serverSettings = yield* ServerSettingsService;
-        const threadId = ThreadId.make("cursor-fast-mode-reset");
-        const tempDir = yield* Effect.promise(() =>
-          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
-        );
-        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
-        const argvLogPath = NodePath.join(tempDir, "argv.txt");
-        yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
-        const wrapperPath = yield* Effect.promise(() =>
-          makeProbeWrapper(requestLogPath, argvLogPath),
-        );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
+  it.effect("clears prior fast mode in-session when the next turn sets fastMode: false", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-fast-mode-reset");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
-        yield* adapter.startSession({
-          threadId,
-          provider: ProviderDriverKind.make("cursor"),
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
-        });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+      });
 
-        yield* adapter.sendTurn({
-          threadId,
-          input: "first turn with fast mode",
-          attachments: [],
-          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
-            { id: "fastMode", value: true },
-          ]),
-        });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "first turn with fast mode",
+        attachments: [],
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
+          { id: "fastMode", value: true },
+        ]),
+      });
 
-        yield* adapter.sendTurn({
-          threadId,
-          input: "second turn without fast mode",
-          attachments: [],
-          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
-            { id: "fastMode", value: false },
-          ]),
-        });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "second turn without fast mode",
+        attachments: [],
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
+          { id: "fastMode", value: false },
+        ]),
+      });
 
-        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
-        const fastConfigRequests = requests.filter(
-          (entry) =>
-            entry.method === "session/set_config_option" &&
-            (entry.params as Record<string, unknown> | undefined)?.configId === "fast",
-        );
-        assert.isAtLeast(fastConfigRequests.length, 2, "should set fast mode on and then off");
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const fastConfigRequests = requests.filter(
+        (entry) =>
+          entry.method === "session/set_config_option" &&
+          (entry.params as Record<string, unknown> | undefined)?.configId === "fast",
+      );
+      assert.isAtLeast(fastConfigRequests.length, 2, "should set fast mode on and then off");
 
-        const lastFastConfig = fastConfigRequests[fastConfigRequests.length - 1];
-        assert.equal((lastFastConfig?.params as Record<string, unknown>)?.value, "false");
+      const lastFastConfig = fastConfigRequests[fastConfigRequests.length - 1];
+      assert.equal((lastFastConfig?.params as Record<string, unknown>)?.value, "false");
 
-        yield* adapter.stopSession(threadId);
-      }),
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
+  it.effect(
     "applies fast mode on the first turn when modelSelection uses a non-default instance id",
     () => {
       const customInstanceId = ProviderInstanceId.make("cursor_secondary");
