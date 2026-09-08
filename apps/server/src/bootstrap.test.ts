@@ -55,6 +55,17 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+// Windows has no /dev/null; its null device is reachable only through the device namespace.
+const nullDevicePath = process.platform === "win32" ? "//./NUL" : "/dev/null";
+
+// readBootstrapEnvelope reads through a duplicate of this descriptor on POSIX and leaves closing
+// to us. Windows has no /proc equivalent to duplicate through, so it reads ours directly and
+// closes it as the stream tears down; closing again from here would race that close.
+const releaseBootstrapFd = (fd: number) => {
+  if (process.platform === "win32") return;
+  NodeFS.closeSync(fd);
+};
+
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
 
@@ -71,7 +82,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
@@ -117,7 +128,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
       const fdPath = `/proc/self/fd/${fd}`;
 
@@ -146,7 +157,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
   it.effect("returns none when the fd is unavailable", () =>
     Effect.gen(function* () {
-      const fd = NodeFS.openSync("/dev/null", "r");
+      const fd = NodeFS.openSync(nullDevicePath, "r");
       NodeFS.closeSync(fd);
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
@@ -157,8 +168,8 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("preserves fd and cause when stat fails for a non-availability reason", () =>
     Effect.gen(function* () {
       const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync("/dev/null", "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        Effect.sync(() => NodeFS.openSync(nullDevicePath, "r")),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
 
       fstatSyncInterceptor.failFd = fd;
@@ -185,7 +196,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
       const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
         timeoutMs: 100,
@@ -201,40 +212,44 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
-  it.effect("returns none when the bootstrap read times out before any value arrives", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
-      const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
+  // Needs mkfifo and a POSIX shell to hold the write end open; Windows named pipes are a
+  // different API and cannot stand in for a FIFO opened by path.
+  it.effect.skipIf(process.platform === "win32")(
+    "returns none when the bootstrap read times out before any value arrives",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
+        const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
 
-      yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
+        yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
 
-      const _writer = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; sleep 60', "sh", fifoPath], {
-            stdio: ["ignore", "ignore", "ignore"],
-          }),
-        ),
-        (writer) =>
-          Effect.sync(() => {
-            writer.kill("SIGKILL");
-          }),
-      );
+        const _writer = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; sleep 60', "sh", fifoPath], {
+              stdio: ["ignore", "ignore", "ignore"],
+            }),
+          ),
+          (writer) =>
+            Effect.sync(() => {
+              writer.kill("SIGKILL");
+            }),
+        );
 
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
+        const fd = yield* Effect.acquireRelease(
+          Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
+          (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
+        );
 
-      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
-        timeoutMs: 100,
-      }).pipe(Effect.forkScoped);
+        const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
+          timeoutMs: 100,
+        }).pipe(Effect.forkScoped);
 
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.millis(100));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(100));
 
-      const payload = yield* Fiber.join(fiber);
-      assertNone(payload);
-    }).pipe(Effect.provide(TestClock.layer())),
+        const payload = yield* Fiber.join(fiber);
+        assertNone(payload);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 });

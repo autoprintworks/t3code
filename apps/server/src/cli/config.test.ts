@@ -54,6 +54,14 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     devAllowedOrigins: [],
   } as const;
 
+  // readBootstrapEnvelope reads through a duplicate of this descriptor on POSIX and leaves closing
+  // to us. Windows has no /proc equivalent to duplicate through, so it reads ours directly and
+  // closes it as the stream tears down; closing again from here would race that close.
+  const releaseBootstrapFd = (fd: number) => {
+    if (process.platform === "win32") return;
+    NodeFS.closeSync(fd);
+  };
+
   const openBootstrapFd = Effect.fn(function* (payload: DesktopBackendBootstrapValue) {
     const fs = yield* FileSystem.FileSystem;
     const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
@@ -61,7 +69,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     yield* fs.writeFileString(filePath, `${encoded}\n`);
     return yield* Effect.acquireRelease(
       Effect.sync(() => NodeFS.openSync(filePath, "r")),
-      (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+      (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
     );
   });
 
@@ -283,7 +291,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
   it.effect("uses bootstrap envelope values as fallbacks when flags and env are absent", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = "/tmp/t3-bootstrap-home";
+      const baseDir = join(NodeOS.tmpdir(), "t3-bootstrap-home");
       const fd = yield* openBootstrapFd(
         makeDesktopBootstrap({
           port: 4888,
