@@ -1,8 +1,10 @@
 import {
+  isProviderSkillUserInvocable,
   type ClaudeSettings,
   type ModelCapabilities,
   type ModelSelection,
   type ServerProviderModel,
+  type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -671,6 +673,29 @@ function parseClaudeInitializationCommands(
   );
 }
 
+/**
+ * Drop the slash commands that stand for a skill the user is not meant to pick.
+ *
+ * Claude Code surfaces every discovered skill as `/<name>`, so an agent-only
+ * skill would otherwise reach the `/` menu through the back door after the
+ * skill picker had already hidden it. Filtering here keeps one answer to
+ * "may a user start this", the same one `isProviderSkillUserInvocable` gives.
+ */
+export function withoutAgentOnlySkillCommands(
+  commands: ReadonlyArray<ServerProviderSlashCommand>,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const hiddenSkillNames = new Set(
+    skills
+      .filter((skill) => !isProviderSkillUserInvocable(skill))
+      .map((skill) => skill.name.toLowerCase()),
+  );
+  if (hiddenSkillNames.size === 0) {
+    return commands;
+  }
+  return commands.filter((command) => !hiddenSkillNames.has(command.name.toLowerCase()));
+}
+
 function dedupeSlashCommands(
   commands: ReadonlyArray<ServerProviderSlashCommand>,
 ): ReadonlyArray<ServerProviderSlashCommand> {
@@ -1013,7 +1038,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ? capabilitiesOutcome.probe
       : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const dedupedSlashCommands = dedupeSlashCommands(probe?.slashCommands ?? []);
+  const dedupedSlashCommands = withoutAgentOnlySkillCommands(
+    dedupeSlashCommands(probe?.slashCommands ?? []),
+    skills,
+  );
 
   if (capabilitiesOutcome._tag !== "Succeeded") {
     const message = claudeCapabilitiesWarningMessage(capabilitiesOutcome);

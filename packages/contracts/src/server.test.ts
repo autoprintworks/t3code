@@ -2,8 +2,11 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isProviderSkillModelInvocable,
+  isProviderSkillUserInvocable,
   ServerConfig,
   ServerProvider,
+  ServerProviderSkill,
   ServerProviders,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
@@ -12,6 +15,8 @@ const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
 const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
 const decodeAvailableEditors = Schema.decodeUnknownSync(ServerConfig.fields.availableEditors);
+const decodeProviderSkill = Schema.decodeUnknownSync(ServerProviderSkill);
+const encodeProviderSkill = Schema.encodeSync(ServerProviderSkill);
 
 const baseProviderSnapshot = {
   instanceId: "codex",
@@ -153,5 +158,38 @@ describe("server config forward compatibility", () => {
     ]);
 
     expect(parsed).toEqual([decodedBase]);
+  });
+});
+
+describe("ServerProviderSkill invocability", () => {
+  it("round-trips both invocability opt-outs", () => {
+    const wire = {
+      name: "harness-adapters",
+      path: "/skills/harness-adapters/SKILL.md",
+      enabled: true,
+      userInvocable: false,
+      modelInvocable: false,
+    };
+
+    const parsed = decodeProviderSkill(wire);
+
+    expect(parsed.userInvocable).toBe(false);
+    expect(parsed.modelInvocable).toBe(false);
+    expect(encodeProviderSkill(parsed)).toEqual(wire);
+    expect(isProviderSkillUserInvocable(parsed)).toBe(false);
+    expect(isProviderSkillModelInvocable(parsed)).toBe(false);
+  });
+
+  it("treats absent invocability as invocable by both a user and the agent", () => {
+    const parsed = decodeProviderSkill({
+      name: "deploy",
+      path: "/skills/deploy/SKILL.md",
+      enabled: true,
+    });
+
+    expect(parsed.userInvocable).toBeUndefined();
+    expect(parsed.modelInvocable).toBeUndefined();
+    expect(isProviderSkillUserInvocable(parsed)).toBe(true);
+    expect(isProviderSkillModelInvocable(parsed)).toBe(true);
   });
 });

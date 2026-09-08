@@ -208,3 +208,18 @@ If the preset needs different Claude files, give it a different `CLAUDE_CONFIG_D
 different API keys, base URLs, or router settings, use Environment variables.
 
 Do not put environment variable assignments in `Launch arguments`.
+
+## Some Of My Claude Skills Are Missing From The Skill Menu
+
+That is on purpose. A skill file can say who is allowed to start it, and T3 Code follows what it
+says.
+
+- A skill marked `user-invocable: false` is meant for the agent only. It stays out of the skill
+  menu and out of the `/` command list, so those menus show what you can actually pick.
+- A skill marked `disable-model-invocation: true` is the reverse: the agent may not start it, so
+  you have to. It stays in the menu and carries a small **Manual** label.
+- A skill that says neither is listed as normal, and either you or the agent can start it.
+
+Skills you do not write yourself often carry these markers, so a shorter menu after an update is
+usually the skill author's choice, not a fault. To get a skill back in the menu, remove
+`user-invocable: false` from the top of its `SKILL.md` file.

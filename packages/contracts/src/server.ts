@@ -85,6 +85,15 @@ export const ServerProviderSlashCommand = Schema.Struct({
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 
+/**
+ * A skill a provider can run, plus who is allowed to start it.
+ *
+ * The two invocability fields are opt-outs: absent means the skill is both
+ * user-invocable (it belongs in the `$` picker) and model-invocable (the
+ * agent may start it on its own). Only a skill that declares otherwise in
+ * its frontmatter carries `false`, so older snapshots and providers that
+ * report no invocability metadata keep the permissive default.
+ */
 export const ServerProviderSkill = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
@@ -93,8 +102,22 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
+  /** `false` when a user should not pick this skill; agent-only reference material. */
+  userInvocable: Schema.optional(Schema.Boolean),
+  /** `false` when the agent may not start this skill; a picker is its only entry point. */
+  modelInvocable: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
+
+/** Whether a picker should offer this skill. Absent invocability means yes. */
+export const isProviderSkillUserInvocable = (
+  skill: Pick<ServerProviderSkill, "userInvocable">,
+): boolean => skill.userInvocable !== false;
+
+/** Whether the agent may start this skill itself. Absent invocability means yes. */
+export const isProviderSkillModelInvocable = (
+  skill: Pick<ServerProviderSkill, "modelInvocable">,
+): boolean => skill.modelInvocable !== false;
 
 /**
  * Ask one provider instance which skills a thread rooted at `cwd` can run.

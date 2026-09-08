@@ -1,4 +1,32 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import {
+  isProviderSkillModelInvocable,
+  isProviderSkillUserInvocable,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+
+/**
+ * The skills a composer picker may offer: enabled, and not marked agent-only.
+ *
+ * Agent-only skills are reference material the model loads at a trigger, so
+ * offering them is pure noise. Web and mobile both call this, so one place
+ * decides what a picker hides.
+ */
+export function pickableProviderSkills(
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ReadonlyArray<ServerProviderSkill> {
+  return skills.filter((skill) => skill.enabled && isProviderSkillUserInvocable(skill));
+}
+
+/**
+ * The badge a composer menu row carries when the agent may not start the skill
+ * itself, so a picker is its only entry point. Ordinary skills, which either
+ * side can start, get `null` and stay unmarked.
+ */
+export function formatProviderSkillInvocationLabel(
+  skill: Pick<ServerProviderSkill, "modelInvocable">,
+): string | null {
+  return isProviderSkillModelInvocable(skill) ? null : "Manual";
+}
 
 /**
  * Whether a skill row belongs to the thread's own project or to the user.

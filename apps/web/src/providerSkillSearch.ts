@@ -5,7 +5,10 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 
-import { formatProviderSkillDisplayName } from "@t3tools/shared/providerSkillPresentation";
+import {
+  formatProviderSkillDisplayName,
+  pickableProviderSkills,
+} from "@t3tools/shared/providerSkillPresentation";
 
 function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
   const normalizedName = skill.name.toLowerCase();
@@ -71,11 +74,11 @@ export function searchProviderSkills(
   query: string,
   limit = Number.POSITIVE_INFINITY,
 ): ServerProviderSkill[] {
-  const enabledSkills = skills.filter((skill) => skill.enabled);
+  const pickableSkills = pickableProviderSkills(skills);
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\$+/ });
 
   if (!normalizedQuery) {
-    return enabledSkills;
+    return [...pickableSkills];
   }
 
   const ranked: Array<{
@@ -84,7 +87,7 @@ export function searchProviderSkills(
     tieBreaker: string;
   }> = [];
 
-  for (const skill of enabledSkills) {
+  for (const skill of pickableSkills) {
     const score = scoreProviderSkill(skill, normalizedQuery);
     if (score === null) {
       continue;
