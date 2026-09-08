@@ -633,16 +633,6 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
   );
 }
 
-function parseFirstChildPidFromPgrep(stdout: string): number | null {
-  for (const line of stdout.split(/\r?\n/g)) {
-    const n = Number.parseInt(line.trim(), 10);
-    if (Number.isInteger(n) && n > 0) {
-      return n;
-    }
-  }
-  return null;
-}
-
 /**
  * One host process-table snapshot, shared by every terminal session in a poll
  * round. The subprocess check only needs two views of the table, so both are

@@ -16,6 +16,7 @@ import * as Encoding from "effect/Encoding";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -24,7 +25,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { expect } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
@@ -1763,4 +1764,179 @@ it.layer(
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
   );
+});
+
+const windowsProcessTable = (rows: ReadonlyArray<readonly [number, number, string]>): string =>
+  rows.map(([pid, parentPid, name]) => `${pid}|${parentPid}|${name}`).join("\r\n");
+
+const succeedingRunOutput = (stdout: string): ProcessRunner.ProcessRunOutput => ({
+  stdout,
+  stderr: "",
+  code: 0 as ProcessRunner.ProcessRunOutput["code"],
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+});
+
+it.layer(NodeServices.layer, { excludeTestServices: true })(
+  "TerminalManager subprocess poll rounds",
+  (it) => {
+    it.effect("issues one process-table snapshot per round, whatever the session count", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
+        const ptyAdapter = new FakePtyAdapter();
+        const runs: ProcessRunner.ProcessRunInput[] = [];
+        // Held open so the first round is still in flight while we count.
+        const gate = yield* Latch.make(false);
+        const stdout = windowsProcessTable([
+          [9000, 1, "pwsh.exe"],
+          [9001, 1, "pwsh.exe"],
+          [9002, 1, "pwsh.exe"],
+          [9500, 9000, "vim.exe"],
+          [9501, 9001, "vim.exe"],
+          [9502, 9002, "vim.exe"],
+        ]);
+
+        const manager = yield* TerminalManager.makeWithOptions({
+          logsDir: join(baseDir, "logs"),
+          ptyAdapter,
+          subprocessPollIntervalMs: 20,
+          processKillGraceMs: 1,
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.gen(function* () {
+                runs.push(input);
+                yield* Latch.await(gate);
+                return succeedingRunOutput(stdout);
+              }),
+          }),
+        );
+
+        const events: TerminalEvent[] = [];
+        const unsubscribe = yield* manager.subscribe((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+        yield* manager.open(openInput({ terminalId: "one" }));
+        yield* manager.open(openInput({ terminalId: "two" }));
+        yield* manager.open(openInput({ terminalId: "three" }));
+
+        yield* waitFor(Effect.sync(() => runs.length > 0));
+        // Three running sessions, one probe: the old shape spawned one each.
+        yield* Effect.sleep("60 millis");
+        assert.equal(runs.length, 1);
+        assert.equal(runs[0]?.command, "powershell.exe");
+        expect(runs[0]?.args).toContain("-NonInteractive");
+
+        yield* Latch.open(gate);
+        yield* waitFor(
+          Effect.sync(
+            () =>
+              new Set(
+                events
+                  .filter((event) => event.type === "activity" && event.hasRunningSubprocess)
+                  .map((event) => event.terminalId),
+              ).size === 3,
+          ),
+        );
+        expect(
+          events
+            .filter((event) => event.type === "activity")
+            .every((event) => event.label === "vim"),
+        ).toBe(true);
+      }),
+    );
+
+    it.effect("skips a tick rather than overlapping a round that overruns its period", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
+        const ptyAdapter = new FakePtyAdapter();
+        let inFlight = 0;
+        let maxInFlight = 0;
+        let rounds = 0;
+
+        const manager = yield* TerminalManager.makeWithOptions({
+          logsDir: join(baseDir, "logs"),
+          ptyAdapter,
+          // A round that takes ten times its period: the old poll started a new
+          // one every period regardless.
+          subprocessPollIntervalMs: 20,
+          processKillGraceMs: 1,
+          subprocessRound: () =>
+            Effect.gen(function* () {
+              rounds += 1;
+              inFlight += 1;
+              maxInFlight = Math.max(maxInFlight, inFlight);
+              yield* Effect.sleep("200 millis");
+              inFlight -= 1;
+              return () =>
+                Effect.succeed({
+                  hasRunningSubprocess: false,
+                  childCommand: null,
+                  processIds: [],
+                });
+            }),
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () => Effect.succeed(succeedingRunOutput("")),
+          }),
+        );
+
+        yield* manager.open(openInput());
+        yield* waitFor(Effect.sync(() => rounds > 0));
+        yield* Effect.sleep("500 millis");
+
+        assert.equal(maxInFlight, 1);
+        // 500 ms of 200 ms rounds, never 500 ms of 20 ms ticks.
+        expect(rounds).toBeLessThanOrEqual(4);
+      }),
+    );
+  },
+);
+
+describe("terminal process snapshots", () => {
+  it("derives every session's answer from one Windows snapshot", () => {
+    const snapshot = TerminalManager.parseWindowsProcessSnapshot(
+      ["9000|1|pwsh.exe", "9500|9000|node.exe", "9600|9500|esbuild.exe", "9001|1|pwsh.exe"].join(
+        "\r\n",
+      ),
+    );
+
+    const withChild = TerminalManager.inspectProcessSnapshot(snapshot, 9000, "win32");
+    assert.equal(withChild.hasRunningSubprocess, true);
+    assert.equal(withChild.childCommand, "node");
+    expect([...withChild.processIds].toSorted()).toEqual([9000, 9500, 9600]);
+
+    const withoutChild = TerminalManager.inspectProcessSnapshot(snapshot, 9001, "win32");
+    assert.equal(withoutChild.hasRunningSubprocess, false);
+    expect(withoutChild.processIds).toEqual([]);
+  });
+
+  it("reads posix rows whose command contains spaces, and skips junk rows", () => {
+    const snapshot = TerminalManager.parsePosixProcessSnapshot(
+      [
+        "  501     1 /bin/zsh",
+        "  620   501 /Applications/My App/bin/agent",
+        "  700   620 /usr/bin/node",
+        "PID PPID COMM",
+      ].join("\n"),
+    );
+
+    const result = TerminalManager.inspectProcessSnapshot(snapshot, 501, "darwin");
+    assert.equal(result.hasRunningSubprocess, true);
+    expect([...result.processIds].toSorted()).toEqual([501, 620, 700]);
+
+    const leaf = TerminalManager.inspectProcessSnapshot(snapshot, 620, "darwin");
+    assert.equal(leaf.childCommand, "node");
+  });
 });
