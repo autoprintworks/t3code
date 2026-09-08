@@ -124,6 +124,30 @@ only thing that makes a stored answer wrong is the root changing, and
 [`RepositoryIdentityReactor`][identityreactor] invalidates the entry when a project's meta update
 carries a new workspace root.
 
+## Host polls
+
+Two subsystems watch the host on a timer, and both shell out to do it: the terminal subprocess check
+in [`Manager.ts`](../../apps/server/src/terminal/Manager.ts), which decides whether a terminal shows
+a "vim" style label, and the preview port scanner in
+[`PortScanner.ts`](../../apps/server/src/preview/PortScanner.ts), which finds local dev servers. One
+pass of either is a **round**. A round pays for one host probe however many sessions or listeners it
+answers, so its cost does not grow with the number of terminals open.
+
+Both take their cadence from the back-off poll engine in
+[`pollLoop.ts`](../../apps/server/src/pollLoop.ts). The terminal poll's base period is 2 s and the
+port scan's is 3 s. A round that reports no change doubles the next period, up to 8 times the base
+for the terminal poll and 4 times for the port scan, so an idle machine settles at 16 s and 12 s
+respectively. Anything that means the host is not idle - a published terminal event, a changed
+listener set, a new preview retainer - wakes the poll and puts the next round back on the base
+period. A wake never shortens the base period itself, so a chatty host cannot drive either poll
+faster than its configured rate.
+
+A probe that fails is not treated as an answer. The terminal poll keeps each session's last known
+label through two consecutive failures and clears them all on the third, so one bad probe does not
+blink every label while a host that has stopped answering does not leave a stale "running" label up
+for good. Because the poll may have backed off by then, a stale label can take up to three
+backed-off periods to clear.
+
 ## Provider drivers
 
 Five drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
