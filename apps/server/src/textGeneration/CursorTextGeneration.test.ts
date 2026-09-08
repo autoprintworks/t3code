@@ -18,6 +18,7 @@ import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { skipPosixShellStub } from "../testUtils/hostPlatform.ts";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
@@ -90,201 +91,189 @@ function waitForFileContent(path: string): Effect.Effect<string> {
   });
 }
 
-// The provider CLI these tests stand in for is a POSIX shell script, which Windows cannot execute.
-const skipPosixShellStub = process.platform === "win32";
-
 it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
-  it.effect.skipIf(skipPosixShellStub)(
-    "uses ACP model config options instead of raw CLI model ids",
-    () => {
-      const requestLogDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-log-"),
-      );
-      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+  // The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+  const posixOnly = it.effect.skipIf(skipPosixShellStub);
+  posixOnly("uses ACP model config options instead of raw CLI model ids", () => {
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-log-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
 
-      return withFakeAcpAgent(
-        {
-          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
-            subject: "Add generated commit message",
-            body: "- verify cursor acp model config path",
-          }),
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const generated = yield* textGeneration.generateCommitMessage({
-              cwd: process.cwd(),
-              branch: "feature/cursor-text-generation",
-              stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
-              stagedPatch:
-                "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
-              modelSelection: {
-                ...createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
-                  { id: "reasoning", value: "xhigh" },
-                  { id: "fastMode", value: true },
-                  { id: "contextWindow", value: "1m" },
-                ]),
-              },
-            });
-
-            expect(generated.subject).toBe("Add generated commit message");
-            expect(generated.body).toBe("- verify cursor acp model config path");
-
-            const requests = NodeFS.readFileSync(requestLogPath, "utf8")
-              .trim()
-              .split("\n")
-              .filter((line) => line.length > 0)
-              .map(
-                (line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> },
-              );
-
-            expect(
-              requests.find((request) => request.method === "initialize")?.params
-                ?.clientCapabilities,
-            ).toMatchObject({
-              _meta: {
-                parameterizedModelPicker: true,
-              },
-            });
-            expect(
-              requests.some(
-                (request) =>
-                  request.method === "session/set_config_option" &&
-                  request.params?.configId === "model" &&
-                  request.params?.value === "gpt-5.4",
-              ),
-            ).toBe(true);
-            expect(
-              requests.some(
-                (request) =>
-                  request.method === "session/set_config_option" &&
-                  request.params?.configId === "reasoning" &&
-                  request.params?.value === "extra-high",
-              ),
-            ).toBe(true);
-            expect(
-              requests.some(
-                (request) =>
-                  request.method === "session/set_config_option" &&
-                  request.params?.configId === "context" &&
-                  request.params?.value === "1m",
-              ),
-            ).toBe(true);
-            expect(
-              requests.some(
-                (request) =>
-                  request.method === "session/set_config_option" &&
-                  request.params?.configId === "fast" &&
-                  request.params?.value === "true",
-              ),
-            ).toBe(true);
-            expect(
-              requests.find((request) => request.method === "session/prompt")?.params?.prompt,
-            ).toEqual(
-              expect.arrayContaining([
-                expect.objectContaining({
-                  type: "text",
-                  text: expect.stringContaining("Staged patch:"),
-                }),
+    return withFakeAcpAgent(
+      {
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          subject: "Add generated commit message",
+          body: "- verify cursor acp model config path",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/cursor-text-generation",
+            stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
+            stagedPatch:
+              "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
+            modelSelection: {
+              ...createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
+                { id: "reasoning", value: "xhigh" },
+                { id: "fastMode", value: true },
+                { id: "contextWindow", value: "1m" },
               ]),
+            },
+          });
+
+          expect(generated.subject).toBe("Add generated commit message");
+          expect(generated.body).toBe("- verify cursor acp model config path");
+
+          const requests = NodeFS.readFileSync(requestLogPath, "utf8")
+            .trim()
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map(
+              (line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> },
             );
 
-            NodeFS.rmSync(requestLogDir, { recursive: true, force: true });
-          }),
-      );
-    },
+          expect(
+            requests.find((request) => request.method === "initialize")?.params?.clientCapabilities,
+          ).toMatchObject({
+            _meta: {
+              parameterizedModelPicker: true,
+            },
+          });
+          expect(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "model" &&
+                request.params?.value === "gpt-5.4",
+            ),
+          ).toBe(true);
+          expect(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "reasoning" &&
+                request.params?.value === "extra-high",
+            ),
+          ).toBe(true);
+          expect(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "context" &&
+                request.params?.value === "1m",
+            ),
+          ).toBe(true);
+          expect(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "fast" &&
+                request.params?.value === "true",
+            ),
+          ).toBe(true);
+          expect(
+            requests.find((request) => request.method === "session/prompt")?.params?.prompt,
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: "text",
+                text: expect.stringContaining("Staged patch:"),
+              }),
+            ]),
+          );
+
+          NodeFS.rmSync(requestLogDir, { recursive: true, force: true });
+        }),
+    );
+  });
+
+  posixOnly("accepts json objects with extra assistant text around them", () =>
+    withFakeAcpAgent(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT:
+          'Sure, here is the JSON:\n```json\n{\n  "subject": "Update README dummy comment with attribution and date",\n  "body": ""\n}\n```\nDone.',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/cursor-noisy-json",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
+
+          expect(generated.subject).toBe("Update README dummy comment with attribution and date");
+          expect(generated.body).toBe("");
+        }),
+    ),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "accepts json objects with extra assistant text around them",
-    () =>
-      withFakeAcpAgent(
-        {
-          T3_ACP_PROMPT_RESPONSE_TEXT:
-            'Sure, here is the JSON:\n```json\n{\n  "subject": "Update README dummy comment with attribution and date",\n  "body": ""\n}\n```\nDone.',
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const generated = yield* textGeneration.generateCommitMessage({
-              cwd: process.cwd(),
-              branch: "feature/cursor-noisy-json",
-              stagedSummary: "M README.md",
-              stagedPatch: "diff --git a/README.md b/README.md",
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("cursor"),
-                model: "composer-2",
-              },
-            });
+  posixOnly("generates thread titles through Cursor ACP text generation", () =>
+    withFakeAcpAgent(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          title: '"Trim reconnect spinner status after resume."',
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Fix the reconnect spinner after a resumed session.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
 
-            expect(generated.subject).toBe("Update README dummy comment with attribution and date");
-            expect(generated.body).toBe("");
-          }),
-      ),
+          expect(generated.title).toBe("Trim reconnect spinner status after resume.");
+        }),
+    ),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "generates thread titles through Cursor ACP text generation",
-    () =>
-      withFakeAcpAgent(
-        {
-          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
-            title: '"Trim reconnect spinner status after resume."',
-          }),
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const generated = yield* textGeneration.generateThreadTitle({
-              cwd: process.cwd(),
-              message: "Fix the reconnect spinner after a resumed session.",
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("cursor"),
-                model: "composer-2",
-              },
-            });
+  posixOnly("closes the ACP child process after text generation completes", () => {
+    const exitLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),
+    );
+    const exitLogPath = NodePath.join(exitLogDir, "exit.log");
 
-            expect(generated.title).toBe("Trim reconnect spinner status after resume.");
-          }),
-      ),
-  );
+    return withFakeAcpAgent(
+      {
+        T3_ACP_EXIT_LOG_PATH: exitLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          subject: "Close runtime after generation",
+          body: "",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/cursor-runtime-close",
+            stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
+            stagedPatch:
+              "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "closes the ACP child process after text generation completes",
-    () => {
-      const exitLogDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),
-      );
-      const exitLogPath = NodePath.join(exitLogDir, "exit.log");
+          expect(generated.subject).toBe("Close runtime after generation");
 
-      return withFakeAcpAgent(
-        {
-          T3_ACP_EXIT_LOG_PATH: exitLogPath,
-          T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
-            subject: "Close runtime after generation",
-            body: "",
-          }),
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const generated = yield* textGeneration.generateCommitMessage({
-              cwd: process.cwd(),
-              branch: "feature/cursor-runtime-close",
-              stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
-              stagedPatch:
-                "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("cursor"),
-                model: "composer-2",
-              },
-            });
+          const exitLog = yield* waitForFileContent(exitLogPath);
+          expect(exitLog).toContain("exit:0");
 
-            expect(generated.subject).toBe("Close runtime after generation");
-
-            const exitLog = yield* waitForFileContent(exitLogPath);
-            expect(exitLog).toContain("exit:0");
-
-            NodeFS.rmSync(exitLogDir, { recursive: true, force: true });
-          }),
-      );
-    },
-  );
+          NodeFS.rmSync(exitLogDir, { recursive: true, force: true });
+        }),
+    );
+  });
 });

@@ -12,6 +12,7 @@ import { expect } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import { skipPosixShellStub } from "../testUtils/hostPlatform.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -189,49 +190,42 @@ function withFakeClaudeEnv<A, E, R>(
   }).pipe(Effect.scoped);
 }
 
-// The provider CLI these tests stand in for is a POSIX shell script, which Windows cannot execute.
-const skipPosixShellStub = process.platform === "win32";
-
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
-  it.effect.skipIf(skipPosixShellStub)(
-    "forwards Claude thinking settings for Haiku without passing effort",
-    () =>
-      withFakeClaudeEnv(
-        {
-          output: JSON.stringify({
-            structured_output: {
-              subject: "Add important change",
-              body: "",
+  // The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+  const posixOnly = it.effect.skipIf(skipPosixShellStub);
+  posixOnly("forwards Claude thinking settings for Haiku without passing effort", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            subject: "Add important change",
+            body: "",
+          },
+        }),
+        argsMustContain: '--settings {"alwaysThinkingEnabled":false}',
+        argsMustNotContain: "--effort",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/claude-effect",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: {
+              ...createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-haiku-4-5", [
+                { id: "thinking", value: false },
+                { id: "effort", value: "high" },
+              ]),
             },
-          }),
-          argsMustContain: '--settings {"alwaysThinkingEnabled":false}',
-          argsMustNotContain: "--effort",
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const generated = yield* textGeneration.generateCommitMessage({
-              cwd: process.cwd(),
-              branch: "feature/claude-effect",
-              stagedSummary: "M README.md",
-              stagedPatch: "diff --git a/README.md b/README.md",
-              modelSelection: {
-                ...createModelSelection(
-                  ProviderInstanceId.make("claudeAgent"),
-                  "claude-haiku-4-5",
-                  [
-                    { id: "thinking", value: false },
-                    { id: "effort", value: "high" },
-                  ],
-                ),
-              },
-            });
+          });
 
-            expect(generated.subject).toBe("Add important change");
-          }),
-      ),
+          expect(generated.subject).toBe("Add important change");
+        }),
+    ),
   );
 
-  it.effect.skipIf(skipPosixShellStub)("forwards Claude fast mode and supported effort", () =>
+  posixOnly("forwards Claude fast mode and supported effort", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -264,7 +258,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect.skipIf(skipPosixShellStub)("generates thread titles through the Claude provider", () =>
+  posixOnly("generates thread titles through the Claude provider", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -295,64 +289,60 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect.skipIf(skipPosixShellStub)(
-    "runs Claude text generation with the configured CLAUDE_CONFIG_DIR",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const claudeConfigDir = path.join(process.cwd(), ".claude-work-test");
-        return yield* withFakeClaudeEnv(
-          {
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            output: JSON.stringify({
-              structured_output: {
-                title: "Use Claude home",
-              },
-            }),
-            configDirMustBe: claudeConfigDir,
-            claudeConfig: { homePath: claudeConfigDir },
-          },
-          (textGeneration) =>
-            Effect.gen(function* () {
-              const generated = yield* textGeneration.generateThreadTitle({
-                cwd: process.cwd(),
-                message: "thread title",
-                modelSelection: {
-                  instanceId: ProviderInstanceId.make("claudeAgent"),
-                  model: "claude-sonnet-4-6",
-                },
-              });
-
-              expect(generated.title).toBe(sanitizeThreadTitle("Use Claude home"));
-            }),
-        );
-      }),
-  );
-
-  it.effect.skipIf(skipPosixShellStub)(
-    "falls back when Claude thread title normalization becomes whitespace-only",
-    () =>
-      withFakeClaudeEnv(
+  posixOnly("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const claudeConfigDir = path.join(process.cwd(), ".claude-work-test");
+      return yield* withFakeClaudeEnv(
         {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
           output: JSON.stringify({
             structured_output: {
-              title: '  """   """  ',
+              title: "Use Claude home",
             },
           }),
+          configDirMustBe: claudeConfigDir,
+          claudeConfig: { homePath: claudeConfigDir },
         },
         (textGeneration) =>
           Effect.gen(function* () {
             const generated = yield* textGeneration.generateThreadTitle({
               cwd: process.cwd(),
-              message: "Name this thread.",
+              message: "thread title",
               modelSelection: {
                 instanceId: ProviderInstanceId.make("claudeAgent"),
                 model: "claude-sonnet-4-6",
               },
             });
 
-            expect(generated.title).toBe("New thread");
+            expect(generated.title).toBe(sanitizeThreadTitle("Use Claude home"));
           }),
-      ),
+      );
+    }),
+  );
+
+  posixOnly("falls back when Claude thread title normalization becomes whitespace-only", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({
+          structured_output: {
+            title: '  """   """  ',
+          },
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+
+          expect(generated.title).toBe("New thread");
+        }),
+    ),
   );
 });

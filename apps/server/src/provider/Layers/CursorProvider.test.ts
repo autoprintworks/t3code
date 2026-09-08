@@ -24,6 +24,10 @@ import {
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
+import { skipPosixShellStub } from "../../testUtils/hostPlatform.ts";
+
+// The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+const itPosix = it.skipIf(skipPosixShellStub);
 
 const runNode = <A, E>(
   effect: Effect.Effect<
@@ -312,10 +316,6 @@ const cursorCliCommandMissingMessage = [
   "See https://cursor.com/docs/cli/installation.",
 ].join(" ");
 
-// The ACP agent and CLI these tests stand in for are POSIX shell scripts, which Windows cannot
-// execute.
-const skipPosixShellStub = process.platform === "win32";
-
 describe("getCursorFallbackModels", () => {
   it("does not publish any built-in cursor models before ACP discovery", () => {
     expect(
@@ -450,81 +450,72 @@ describe("checkCursorProviderStatus", () => {
     });
   });
 
-  it.skipIf(skipPosixShellStub)(
-    "passes the injected environment to ACP model discovery",
-    async () => {
-      const { requestLogPath, wrapperPath } = await runNode(makeProviderStatusEnvFixture());
+  itPosix("passes the injected environment to ACP model discovery", async () => {
+    const { requestLogPath, wrapperPath } = await runNode(makeProviderStatusEnvFixture());
 
-      const provider = await runNode(
-        checkCursorProviderStatus(
-          {
-            enabled: true,
-            binaryPath: wrapperPath,
-            apiEndpoint: "",
-            customModels: [],
-          },
-          {
-            ...process.env,
-            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-          },
-        ),
-      );
+    const provider = await runNode(
+      checkCursorProviderStatus(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        {
+          ...process.env,
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        },
+      ),
+    );
 
-      expect(provider.models.map((model) => model.slug)).toEqual([
-        "default",
-        "composer-2",
-        "gpt-5.4",
-        "claude-opus-4-6",
-      ]);
-      await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
-    },
-  );
+    expect(provider.models.map((model) => model.slug)).toEqual([
+      "default",
+      "composer-2",
+      "gpt-5.4",
+      "claude-opus-4-6",
+    ]);
+    await expect(runNode(waitForFileContent(requestLogPath))).resolves.toContain("initialize");
+  });
 });
 
 describe("discoverCursorModelsViaAcp", () => {
-  it.skipIf(skipPosixShellStub)(
-    "keeps the ACP probe runtime alive long enough to discover models",
-    async () => {
-      const wrapperPath = await runNode(makeMockAgentWrapper());
+  itPosix("keeps the ACP probe runtime alive long enough to discover models", async () => {
+    const wrapperPath = await runNode(makeMockAgentWrapper());
 
-      const models = await runNode(
-        discoverCursorModelsViaAcp({
-          enabled: true,
-          binaryPath: wrapperPath,
-          apiEndpoint: "",
-          customModels: [],
-        }).pipe(Effect.scoped),
-      );
+    const models = await runNode(
+      discoverCursorModelsViaAcp({
+        enabled: true,
+        binaryPath: wrapperPath,
+        apiEndpoint: "",
+        customModels: [],
+      }).pipe(Effect.scoped),
+    );
 
-      expect(models.map((model) => model.slug)).toEqual([
-        "default",
-        "composer-2",
-        "gpt-5.4",
-        "claude-opus-4-6",
-      ]);
-    },
-  );
+    expect(models.map((model) => model.slug)).toEqual([
+      "default",
+      "composer-2",
+      "gpt-5.4",
+      "claude-opus-4-6",
+    ]);
+  });
 
-  it.skipIf(skipPosixShellStub)(
-    "closes the ACP probe runtime after discovery completes",
-    async () => {
-      const { exitLogPath, wrapperPath } = await runNode(
-        makeExitLogFixture("cursor-provider-exit-log-"),
-      );
+  itPosix("closes the ACP probe runtime after discovery completes", async () => {
+    const { exitLogPath, wrapperPath } = await runNode(
+      makeExitLogFixture("cursor-provider-exit-log-"),
+    );
 
-      await runNode(
-        discoverCursorModelsViaAcp({
-          enabled: true,
-          binaryPath: wrapperPath,
-          apiEndpoint: "",
-          customModels: [],
-        }),
-      );
+    await runNode(
+      discoverCursorModelsViaAcp({
+        enabled: true,
+        binaryPath: wrapperPath,
+        apiEndpoint: "",
+        customModels: [],
+      }),
+    );
 
-      const exitLog = await runNode(waitForFileContent(exitLogPath));
-      expect(exitLog).toContain("SIGTERM");
-    },
-  );
+    const exitLog = await runNode(waitForFileContent(exitLogPath));
+    expect(exitLog).toContain("SIGTERM");
+  });
 });
 
 describe("parseCursorAboutOutput", () => {
