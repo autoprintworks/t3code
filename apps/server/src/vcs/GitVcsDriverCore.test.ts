@@ -1309,31 +1309,34 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
-    it.effect("preserves newline characters in worktree paths when listing refs", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
-        const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+    // Needs a directory whose name contains a newline; Windows forbids that character in a path.
+    it.effect.skipIf(process.platform === "win32")(
+      "preserves newline characters in worktree paths when listing refs",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
 
-        yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
+          yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
 
-        const refs = yield* driver.listRefs({ cwd, refresh: true });
-        const listedPath = refs.refs.find(
-          (ref) => ref.name === "feature/newline-path",
-        )?.worktreePath;
+          const refs = yield* driver.listRefs({ cwd, refresh: true });
+          const listedPath = refs.refs.find(
+            (ref) => ref.name === "feature/newline-path",
+          )?.worktreePath;
 
-        if (typeof listedPath !== "string") {
-          return assert.fail("expected the linked branch to include its worktree path");
-        }
-        assert.equal(
-          yield* fileSystem.realPath(listedPath),
-          yield* fileSystem.realPath(worktreePath),
-        );
-      }),
+          if (typeof listedPath !== "string") {
+            return assert.fail("expected the linked branch to include its worktree path");
+          }
+          assert.equal(
+            yield* fileSystem.realPath(listedPath),
+            yield* fileSystem.realPath(worktreePath),
+          );
+        }),
     );
 
     it.effect("creates and removes a worktree for a new refName", () =>

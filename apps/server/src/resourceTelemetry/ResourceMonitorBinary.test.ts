@@ -12,7 +12,11 @@ import { ServerConfig } from "../config.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 
 describe("ResourceMonitorBinary", () => {
-  it.effect("resolves an executable override", () =>
+  // These two simulate a POSIX host against the real filesystem, and Windows cannot set the execute
+  // bit the resolver looks for there.
+  const skipNoExecuteBit = process.platform === "win32";
+
+  it.effect.skipIf(skipNoExecuteBit)("resolves an executable override", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -36,27 +40,29 @@ describe("ResourceMonitorBinary", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("resolves an executable override on an unsupported platform", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-resource-monitor-binary-",
-      });
-      const binaryPath = `${baseDir}/custom-resource-monitor`;
-      yield* fileSystem.writeFileString(binaryPath, "binary");
-      yield* fileSystem.chmod(binaryPath, 0o755);
+  it.effect.skipIf(skipNoExecuteBit)(
+    "resolves an executable override on an unsupported platform",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-resource-monitor-binary-",
+        });
+        const binaryPath = `${baseDir}/custom-resource-monitor`;
+        yield* fileSystem.writeFileString(binaryPath, "binary");
+        yield* fileSystem.chmod(binaryPath, 0o755);
 
-      const service = yield* ResourceMonitorBinary.make().pipe(
-        Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
-        Effect.provideService(HostProcessPlatform, "freebsd"),
-        Effect.provideService(HostProcessArchitecture, "ia32"),
-        Effect.provideService(HostProcessEnvironment, {
-          T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
-        }),
-      );
+        const service = yield* ResourceMonitorBinary.make().pipe(
+          Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Effect.provideService(HostProcessPlatform, "freebsd"),
+          Effect.provideService(HostProcessArchitecture, "ia32"),
+          Effect.provideService(HostProcessEnvironment, {
+            T3CODE_RESOURCE_MONITOR_PATH: binaryPath,
+          }),
+        );
 
-      assert.equal(yield* service.resolve, binaryPath);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        assert.equal(yield* service.resolve, binaryPath);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rejects a non-executable POSIX override", () =>

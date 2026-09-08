@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeBuiltinPath from "node:path";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -156,7 +158,8 @@ it.effect("clones a looked-up repository into the requested destination", () =>
     const parent = yield* fs.makeTempDirectoryScoped({
       prefix: "t3-source-control-clone-parent-",
     });
-    const destinationPath = `${parent}/t3code`;
+    // Joined with the host separator: the service splits this path to derive the clone parent.
+    const destinationPath = NodeBuiltinPath.join(parent, "t3code");
     const cloneCalls: Array<{ cwd: string; args: ReadonlyArray<string> }> = [];
 
     yield* Effect.gen(function* () {
