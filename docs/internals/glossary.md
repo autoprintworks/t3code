@@ -162,6 +162,10 @@ Controls how assistant text reaches the thread timeline. In [the contracts][1], 
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
 
+#### Model manifest
+
+The per-driver list of current model slugs that decides which models land in the model picker's legacy section. Bundled at `apps/server/src/provider/model-manifest.json` and refreshed at runtime from the same file on `main`, so classification updates ship as commits instead of releases. See the [provider architecture][16] model manifest section.
+
 #### Repository identity
 
 The repository a project's workspace root belongs to, keyed by its canonical git remote. It is derived state, not user input: [RepositoryIdentityReactor.ts][26] resolves it with `git` on a background worker and records it through the `project.repository-identity-recorded` event, and [ProjectionProjects.ts][27] stores it on the project row next to the workspace root it came from.

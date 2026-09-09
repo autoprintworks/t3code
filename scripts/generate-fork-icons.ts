@@ -18,7 +18,6 @@
  *   assets/fork/fork-macos-1024.png       macOS master, keeping upstream's grid padding
  *   assets/fork/fork-windows.ico          16, 24, 32, 48, 64, 128, 256
  *   assets/fork/fork-web-*                favicons and the apple touch icon
- *   apps/desktop/resources/icon.png, icon.ico, icon.icns
  */
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -265,40 +264,6 @@ function resize(source: PNG, size: number): PNG {
   return out;
 }
 
-/**
- * ICNS entries this fork ships. Each holds a PNG rendition at the size Apple
- * assigns to that four-character type.
- */
-const ICNS_ENTRIES = [
-  ["icp4", 16],
-  ["icp5", 32],
-  ["ic11", 32],
-  ["ic12", 64],
-  ["ic07", 128],
-  ["ic08", 256],
-  ["ic13", 256],
-  ["ic09", 512],
-  ["ic14", 512],
-  ["ic10", 1024],
-] as const satisfies ReadonlyArray<readonly [string, number]>;
-
-function encodeIcns(renditions: ReadonlyMap<number, Buffer>): Buffer {
-  const chunks = ICNS_ENTRIES.map(([type, size]) => {
-    const png = renditions.get(size);
-    if (!png) throw new Error(`Missing a ${size}x${size} rendition for ICNS type ${type}.`);
-    const header = Buffer.alloc(8);
-    header.write(type, 0, "ascii");
-    header.writeUInt32BE(png.length + 8, 4);
-    return Buffer.concat([header, png]);
-  });
-
-  const body = Buffer.concat(chunks);
-  const header = Buffer.alloc(8);
-  header.write("icns", 0, "ascii");
-  header.writeUInt32BE(body.length + 8, 4);
-  return Buffer.concat([header, body]);
-}
-
 /** Encodes one PNG per requested size, reusing the master where the size matches. */
 function renderSizes(master: PNG, sizes: Iterable<number>): ReadonlyMap<number, Buffer> {
   return new Map(
@@ -332,10 +297,9 @@ export function buildForkIconArtifacts(masters: {
   const macos = brandMaster(PNG.sync.read(masters.macos));
 
   // Windows, Linux and the web read the edge-to-edge plate; macOS wants
-  // upstream's grid padding, so its own master feeds the .icns and the 512px
-  // dock icon rather than the universal one.
+  // upstream's grid padding, so its own master ships whole and the packager
+  // derives the per-size renditions from it.
   const universalRenditions = renderSizes(universal, [...WINDOWS_ICON_SIZES, ...WEB_ICON_SIZES]);
-  const macosRenditions = renderSizes(macos, [...ICNS_ENTRIES.map(([, size]) => size), 512]);
 
   const windowsIco = encodePngIco(
     WINDOWS_ICON_SIZES.map((size) => ({ size, contents: universalRenditions.get(size)! })),
@@ -358,9 +322,6 @@ export function buildForkIconArtifacts(masters: {
       relativePath: "assets/fork/fork-web-apple-touch-180.png",
       contents: universalRenditions.get(180)!,
     },
-    { relativePath: "apps/desktop/resources/icon.ico", contents: windowsIco },
-    { relativePath: "apps/desktop/resources/icon.png", contents: macosRenditions.get(512)! },
-    { relativePath: "apps/desktop/resources/icon.icns", contents: encodeIcns(macosRenditions) },
   ];
 }
 

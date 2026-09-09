@@ -22,8 +22,10 @@ describe("Windows console suppression is wired into the server entry points", ()
     expect(source).toContain(
       'import { hideWindowsConsoleWindows } from "@t3tools/shared/windowsConsole"',
     );
-    const main = source.slice(source.indexOf("if (import.meta.main) {"));
-    expect(main).toContain("hideWindowsConsoleWindows();");
+    // `isEntrypoint` is upstream's guard for "this module is the program".
+    const guard = source.indexOf("isEntrypoint({");
+    expect(guard).toBeGreaterThan(-1);
+    expect(source.slice(guard)).toContain("hideWindowsConsoleWindows();");
   });
 
   it("serviceLauncher.ts hides the console of the server child it spawns", () => {

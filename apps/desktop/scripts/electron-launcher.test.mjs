@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 import {
   makeDevelopmentLauncherScript,
   resolveElectronBinaryPath,
+  resolveMacLauncherIconPaths,
   resolveMacLauncherPaths,
 } from "./electron-launcher.mjs";
 
@@ -76,5 +77,22 @@ describe("electron development launcher", () => {
     });
     assert.include(script, `exec '${NodePath.join(executableDir, "Electron")}'`);
     assert.notInclude(script, "node_modules/electron");
+  });
+
+  it("derives launcher icons from canonical development and production assets", () => {
+    const development = resolveMacLauncherIconPaths("/runtime", true);
+    const production = resolveMacLauncherIconPaths("/runtime", false);
+
+    // Joined with the host separator, so build the expected tail the same way.
+    assert.ok(
+      development.sourceIconPath.endsWith(
+        NodePath.join("assets", "dev", "blueprint-macos-1024.png"),
+      ),
+    );
+    assert.equal(development.generatedIconPath, NodePath.join("/runtime", "icon-dev.icns"));
+    assert.ok(
+      production.sourceIconPath.endsWith(NodePath.join("assets", "prod", "black-macos-1024.png")),
+    );
+    assert.equal(production.generatedIconPath, NodePath.join("/runtime", "icon-prod.icns"));
   });
 });

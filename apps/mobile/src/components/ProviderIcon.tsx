@@ -1,8 +1,8 @@
-import { useColorScheme } from "react-native";
 import { Image, Path, Rect, Svg } from "react-native-svg";
 
 import { resolveProviderIconKey } from "@t3tools/contracts";
 
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { ANTIGRAVITY_ICON_DATA_URL } from "./providerIconArtwork";
 
 type ProviderIconProps = {
@@ -27,7 +27,8 @@ type ProviderIconProps = {
  * answer for a glyph a newer server named and this build does not have.
  */
 export function ProviderIcon(props: ProviderIconProps) {
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
   const iconKey = resolveProviderIconKey({

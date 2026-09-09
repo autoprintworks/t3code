@@ -41,17 +41,20 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AcpAgentDriver } from "../acpAgent/AcpAgentDriver.ts";
+import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
+import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import type { AnyProviderDriver } from "../ProviderDriver.ts";
 import type { ProviderInstanceRegistryShape } from "../Services/ProviderInstanceRegistry.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
-const DRIVERS = [
+const DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
   CodexDriver,
   ClaudeDriver,
   CursorDriver,
@@ -139,6 +142,7 @@ const makeTestLayer = (log: ProbeLog) => {
   }).pipe(
     Layer.provideMerge(infraLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(makeHttpClientLayer(log)),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   );
@@ -160,6 +164,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   homePath: "",
   customModels: [],
   launchArgs: "",
+  autoCompactWindow: "",
   ...overrides,
 });
 
@@ -202,14 +207,14 @@ const makeAcpAgentConfig = (overrides: Partial<AcpAgentSettings>): AcpAgentSetti
  * One instance of every shipped driver.
  *
  * `outerEnabled` is the envelope flag the settings UI toggles.
- * `innerEnabled` is the driver config's own flag, which must never decide
- * whether a probe runs.
+ * `innerEnabled` is the driver config's own flag. Upstream takes the most
+ * restrictive of the two, so an off flag on either side means no probe.
  */
 const makeConfigMap = (input: {
   readonly outerEnabled: ReadonlyArray<ProviderInstanceId>;
   readonly innerEnabled?: boolean;
 }): ProviderInstanceConfigMap => {
-  const innerEnabled = input.innerEnabled ?? false;
+  const innerEnabled = input.innerEnabled ?? true;
   const outer = (instanceId: ProviderInstanceId) => input.outerEnabled.includes(instanceId);
   return {
     [CODEX_ID]: {
@@ -296,9 +301,7 @@ describe("provider status probes honour the enabled flag", () => {
     return Effect.gen(function* () {
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers: DRIVERS,
-        // Codex is on at the envelope while its driver config says `enabled:
-        // false`, so a probe here also proves the inner flag does not gate.
-        configMap: makeConfigMap({ outerEnabled: [CODEX_ID], innerEnabled: false }),
+        configMap: makeConfigMap({ outerEnabled: [CODEX_ID] }),
       });
 
       yield* awaitFirstSpawn(log);
@@ -344,7 +347,7 @@ describe("provider status probes honour the enabled flag", () => {
     return Effect.gen(function* () {
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers: DRIVERS,
-        configMap: makeConfigMap({ outerEnabled: [ACP_AGENT_ID], innerEnabled: false }),
+        configMap: makeConfigMap({ outerEnabled: [ACP_AGENT_ID] }),
       });
 
       yield* awaitFirstSpawn(log);

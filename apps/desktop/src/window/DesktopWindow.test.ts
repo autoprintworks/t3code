@@ -38,6 +38,8 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import { DESKTOP_DEVELOPMENT_SCHEME } from "../electron/ElectronProtocol.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
@@ -66,9 +68,14 @@ const environmentInput = {
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
+  let zoomLevel = 0;
   const webContents = {
     copyImageAt: vi.fn(),
     getURL: vi.fn(() => DEVELOPMENT_APP_URL),
+    getZoomLevel: vi.fn(() => zoomLevel),
+    setZoomLevel: vi.fn((level: number) => {
+      zoomLevel = level;
+    }),
     isLoadingMainFrame: vi.fn(() => false),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
@@ -78,6 +85,7 @@ function makeFakeBrowserWindow() {
     reload: vi.fn(),
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
+    setBackgroundThrottling: vi.fn(),
     setWindowOpenHandler: vi.fn(),
   };
 
@@ -121,11 +129,21 @@ function makeFakeBrowserWindow() {
     openDevTools: webContents.openDevTools,
     reload: webContents.reload,
     send: webContents.send,
+    setZoomLevel: webContents.setZoomLevel,
+    setBackgroundThrottling: webContents.setBackgroundThrottling,
     setAutoHideCursor: window.setAutoHideCursor,
     webContentsListeners,
     windowListeners,
   };
 }
+
+const desktopClientSettingsLayer = Layer.mock(DesktopClientSettings.DesktopClientSettings)({
+  get: Effect.succeed(Option.none()),
+});
+
+const electronAppLayer = Layer.mock(ElectronApp.ElectronApp)({
+  quit: Effect.void,
+});
 
 const desktopAssetsLayer = Layer.succeed(DesktopAssets.DesktopAssets, {
   iconPaths: Effect.succeed({
@@ -191,6 +209,7 @@ function makeTestLayer(input: {
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
+  readonly previewZoomReapplies?: number[];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -251,8 +270,10 @@ function makeTestLayer(input: {
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
+        desktopClientSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
+        electronAppLayer,
         electronMenuLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
@@ -269,6 +290,10 @@ function makeTestLayer(input: {
           setMainWindow: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
+          reapplyZoom: () =>
+            Effect.sync(() => {
+              input.previewZoomReapplies?.push(input.window.webContents.getZoomLevel());
+            }),
         }),
       ),
     ),
@@ -350,7 +375,9 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           desktopAssetsLayer,
           desktopEnvironmentLayer,
           DesktopAppSettings.layerTest(),
+          desktopClientSettingsLayer,
           desktopServerExposureLayer,
+          electronAppLayer,
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
@@ -488,6 +515,42 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  // Chromium hands the main window's zoom level down to embedded preview
+  // guests, so every app zoom has to put the preview browser back at its own
+  // zoom or zooming the UI drags the previewed page with it.
+  it.effect("restores the preview browser's own zoom after zooming the app", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const previewZoomReapplies: number[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        previewZoomReapplies,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        yield* desktopWindow.zoomMain("out");
+        yield* desktopWindow.zoomMain("out");
+        yield* desktopWindow.zoomMain("in");
+        yield* desktopWindow.zoomMain("reset");
+
+        assert.deepEqual(
+          fakeWindow.setZoomLevel.mock.calls.map(([level]) => level),
+          [-0.5, -1, -0.5, 0],
+        );
+        // Recorded after the window level moved, so the preview is put back at
+        // its own zoom on every step rather than left on the inherited one.
+        assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("uses the persisted main window bounds when opening the window", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -544,6 +607,35 @@ describe("DesktopWindow", () => {
         }
         readyToShow();
         assert.equal(fakeWindow.maximize.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  // The window boots hidden with throttling disabled so first paint runs at
+  // full speed; the first reveal must hand it back to normal hidden-window
+  // throttling or a minimized window stays expensive forever.
+  it.effect("re-enables background throttling on first reveal", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.equal(fakeWindow.setBackgroundThrottling.mock.calls.length, 0);
+        const readyToShow = fakeWindow.windowListeners.get("ready-to-show");
+        if (!readyToShow) {
+          return yield* Effect.die("window ready-to-show listener was not registered");
+        }
+        readyToShow();
+        assert.deepEqual(fakeWindow.setBackgroundThrottling.mock.calls, [[true]]);
       }).pipe(Effect.provide(layer));
     }),
   );

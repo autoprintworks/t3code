@@ -37,6 +37,7 @@ export function brandTitleOffset(nativeLeadingItem: boolean): number {
  */
 export function CompactBrandTitle(
   props: {
+    readonly allowFontScaling?: boolean;
     readonly nativeLeadingItem?: boolean;
   } = {},
 ) {
@@ -61,6 +62,7 @@ export function CompactBrandTitle(
     >
       <T3Wordmark color={iconColor} height={15} />
       <Text
+        allowFontScaling={props.allowFontScaling}
         style={{
           color: mutedColor,
           fontFamily: "DMSans-Medium",
@@ -70,13 +72,24 @@ export function CompactBrandTitle(
       >
         Code
       </Text>
-      <BrandPill backgroundColor={subtleColor} color={mutedColor} label={FORK_TAG_LABEL} />
-      <BrandPill backgroundColor={subtleColor} color={mutedColor} label={stageLabel} />
+      <BrandPill
+        allowFontScaling={props.allowFontScaling}
+        backgroundColor={subtleColor}
+        color={mutedColor}
+        label={FORK_TAG_LABEL}
+      />
+      <BrandPill
+        allowFontScaling={props.allowFontScaling}
+        backgroundColor={subtleColor}
+        color={mutedColor}
+        label={stageLabel}
+      />
     </View>
   );
 }
 
 function BrandPill(props: {
+  readonly allowFontScaling?: boolean;
   readonly backgroundColor: ColorValue;
   readonly color: ColorValue;
   readonly label: string;
@@ -91,6 +104,7 @@ function BrandPill(props: {
       }}
     >
       <Text
+        allowFontScaling={props.allowFontScaling}
         style={{
           color: props.color,
           fontFamily: "DMSans-Bold",
@@ -106,7 +120,7 @@ function BrandPill(props: {
 }
 
 export function renderCompactBrandTitle() {
-  return <CompactBrandTitle />;
+  return <CompactBrandTitle allowFontScaling={Platform.OS === "ios"} />;
 }
 
 export function renderCompactBrandHeaderItems(): NativeStackHeaderItem[] {

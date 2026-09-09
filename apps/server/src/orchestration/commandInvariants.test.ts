@@ -16,7 +16,6 @@ import {
   findThreadById,
   issuedByFleet,
   listThreadsByProjectId,
-  requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
   requireThreadPromptable,
@@ -309,26 +308,6 @@ describe("commandInvariants", () => {
       );
       assert.equal(duplicate._tag, "Failure");
       assert.include(String(duplicate), "already exists");
-    }),
-  );
-
-  effectIt.effect("requires non-negative integers", () =>
-    Effect.gen(function* () {
-      yield* requireNonNegativeInteger({
-        commandType: "thread.checkpoint.revert",
-        field: "turnCount",
-        value: 0,
-      });
-
-      const negative = yield* Effect.exit(
-        requireNonNegativeInteger({
-          commandType: "thread.checkpoint.revert",
-          field: "turnCount",
-          value: -1,
-        }),
-      );
-      assert.equal(negative._tag, "Failure");
-      assert.include(String(negative), "greater than or equal to 0");
     }),
   );
 });

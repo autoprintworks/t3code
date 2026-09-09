@@ -1,16 +1,15 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import {
+  formatProviderSkillDisplayName,
+  pickableProviderSkills,
+} from "@t3tools/client-runtime/providerSkills";
+import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 
-import {
-  formatProviderSkillDisplayName,
-  pickableProviderSkills,
-} from "@t3tools/shared/providerSkillPresentation";
-
-function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
+export function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
   const normalizedName = skill.name.toLowerCase();
   const normalizedLabel = formatProviderSkillDisplayName(skill).toLowerCase();
   const normalizedShortDescription = skill.shortDescription?.toLowerCase() ?? "";

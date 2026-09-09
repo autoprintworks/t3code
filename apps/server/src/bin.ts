@@ -13,10 +13,12 @@ import { connectCommand } from "./cli/connect.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
+import { isEntrypoint } from "./entrypoint.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { serviceCommand } from "./cli/service.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
+import { triageCommand } from "./cli/triage.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -56,15 +58,22 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       projectCommand,
       serviceCommand,
       servicePreflightCommand,
+      triageCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );
 
 export const cli = makeCli();
 
-if (import.meta.main) {
+if (
+  isEntrypoint({
+    moduleUrl: import.meta.url,
+    entryPath: process.argv[1],
+    runtimeMain: import.meta.main,
+  })
+) {
   // Nothing this process spawns should draw a console window on Windows.
-  // Guarded by `import.meta.main` because importing the CLI as a library must
+  // Guarded by the entrypoint check because importing the CLI as a library must
   // not patch a host process's prototypes behind its back.
   hideWindowsConsoleWindows();
   Command.run(cli, { version: packageJson.version }).pipe(

@@ -2,7 +2,7 @@ import { ProviderDriverKind, type ServerProviderSkill } from "@t3tools/contracts
 import {
   formatProviderSkillDisplayName,
   pickableProviderSkills,
-} from "@t3tools/shared/providerSkillPresentation";
+} from "@t3tools/client-runtime/providerSkills";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -15,10 +15,10 @@ vi.mock("react-native", () => ({
   View: "View",
   useColorScheme: () => "dark",
 }));
-vi.mock("@callstack/liquid-glass", () => ({
-  isLiquidGlassSupported: false,
-  LiquidGlassView: "LiquidGlassView",
-}));
+// `GlassSurface` reaches expo-glass-effect and uniwind, neither of which this
+// runner parses. Both stand in as a host element and a plain colour.
+vi.mock("../../components/GlassSurface", () => ({ GlassSurface: "GlassSurface" }));
+vi.mock("../../lib/useThemeColor", () => ({ useThemeColor: () => "#000000" }));
 vi.mock("../../components/AppSymbol", () => ({ SymbolView: "SymbolView" }));
 vi.mock("../../components/AppText", () => ({ AppText: "AppText" }));
 vi.mock("../../components/PierreEntryIcon", () => ({ PierreEntryIcon: "PierreEntryIcon" }));

@@ -95,9 +95,6 @@ const SUBPROCESS_ROUND_CONCURRENCY = 4;
 // held under a fraction of whatever period is in force: a probe that outlasts
 // its own period would make the poll's cadence a fiction. At the shipped 2000 ms
 // period the Windows fraction works out at the same 1500 ms it always was.
-const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_500;
-const POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_000;
-const PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION = 0.75;
 // A probe can fail transiently: the host is thrashing, PowerShell is slow to
 // start, `ps` is briefly unavailable. One failure leaves every session's last
 // known state alone rather than reporting "no subprocess" for all of them. A
@@ -107,7 +104,6 @@ const PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION = 0.75;
 const SUBPROCESS_FAILURE_TOLERANCE = 3;
 // A busy Windows host has well over a thousand processes; the old 32 KiB cap
 // silently truncated the table and hid subprocesses behind it.
-const PROCESS_SNAPSHOT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
@@ -121,10 +117,20 @@ export class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<Termin
   {
     cause: Schema.optional(Schema.Defect()),
     command: Schema.Literals(["powershell", "ps"]),
+    exitCode: Schema.optional(Schema.NullOr(Schema.Number)),
+    timedOut: Schema.optional(Schema.Boolean),
+    stdoutTruncated: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
-    return `Failed to snapshot the host process table with ${this.command}`;
+    const details = [
+      this.exitCode !== undefined && this.exitCode !== null ? `exit code ${this.exitCode}` : null,
+      this.timedOut ? "timed out" : null,
+      this.stdoutTruncated ? "output truncated" : null,
+    ]
+      .filter((detail) => detail !== null)
+      .join(", ");
+    return `Failed to inspect terminal subprocesses with ${this.command}${details.length > 0 ? ` (${details})` : ""}`;
   }
 }
 
@@ -656,9 +662,44 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
  * round. The subprocess check only needs two views of the table, so both are
  * built once per round and read many times.
  */
-interface HostProcessSnapshot {
+export interface TerminalProcessTableSnapshot {
   readonly childrenByParent: ReadonlyMap<number, ReadonlyArray<number>>;
-  readonly commandByPid: ReadonlyMap<number, string>;
+  readonly commandById: ReadonlyMap<number, string>;
+}
+
+export function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
+  const childrenByParent = new Map<number, number[]>();
+  const commandById = new Map<number, string>();
+  for (const line of stdout.split(/\r?\n/g)) {
+    // `comm=` is the final column and may itself contain spaces, so only the
+    // first two tokens are structural.
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    commandById.set(pid, (match[3] ?? "").trim());
+    const children = childrenByParent.get(ppid) ?? [];
+    children.push(pid);
+    childrenByParent.set(ppid, children);
+  }
+  return { childrenByParent, commandById };
+}
+
+export function parseWindowsProcessTable(stdout: string): TerminalProcessTableSnapshot {
+  const childrenByParent = new Map<number, number[]>();
+  const commandById = new Map<number, string>();
+  for (const line of stdout.split(/\r?\n/g)) {
+    const [pidRaw, parentPidRaw, nameRaw] = line.trim().split("|", 3);
+    const pid = Number(pidRaw);
+    const parentPid = Number(parentPidRaw);
+    if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) continue;
+    commandById.set(pid, nameRaw?.trim() ?? "");
+    const children = childrenByParent.get(parentPid) ?? [];
+    children.push(pid);
+    childrenByParent.set(parentPid, children);
+  }
+  return { childrenByParent, commandById };
 }
 
 const EMPTY_INSPECT_RESULT: TerminalSubprocessInspectResult = {
@@ -667,75 +708,18 @@ const EMPTY_INSPECT_RESULT: TerminalSubprocessInspectResult = {
   processIds: [],
 };
 
-const addProcessSnapshotRow = (
-  childrenByParent: Map<number, number[]>,
-  commandByPid: Map<number, string>,
-  pid: number,
-  parentPid: number,
-  command: string,
-): void => {
-  if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) return;
-  commandByPid.set(pid, command.trim());
-  const children = childrenByParent.get(parentPid) ?? [];
-  children.push(pid);
-  childrenByParent.set(parentPid, children);
-};
-
-/**
- * Parses the Windows probe's `pid|parentPid|imageName` rows into a snapshot.
- * Rows that are not two numbers then a name are skipped, which also absorbs a
- * truncated final row.
- */
-export function parseWindowsProcessSnapshot(stdout: string): HostProcessSnapshot {
-  const childrenByParent = new Map<number, number[]>();
-  const commandByPid = new Map<number, string>();
-  for (const line of stdout.split(/\r?\n/g)) {
-    const [pidRaw, parentPidRaw, nameRaw] = line.trim().split("|", 3);
-    addProcessSnapshotRow(
-      childrenByParent,
-      commandByPid,
-      Number(pidRaw),
-      Number(parentPidRaw),
-      nameRaw ?? "",
-    );
-  }
-  return { childrenByParent, commandByPid };
-}
-
-/**
- * Parses `ps -eo pid=,ppid=,comm=` rows into a snapshot. The command is the
- * rest of the line, because a `comm` value can be a path containing spaces.
- */
-export function parsePosixProcessSnapshot(stdout: string): HostProcessSnapshot {
-  const childrenByParent = new Map<number, number[]>();
-  const commandByPid = new Map<number, string>();
-  for (const line of stdout.split(/\r?\n/g)) {
-    const match = /^(\d+)\s+(\d+)\s*(.*)$/.exec(line.trim());
-    if (!match) continue;
-    addProcessSnapshotRow(
-      childrenByParent,
-      commandByPid,
-      Number(match[1]),
-      Number(match[2]),
-      match[3] ?? "",
-    );
-  }
-  return { childrenByParent, commandByPid };
-}
-
 /**
  * Answers one terminal's subprocess question from a shared snapshot. Pure, so a
  * round pays for the process table once however many terminals are running.
  */
-export function inspectProcessSnapshot(
-  snapshot: HostProcessSnapshot,
+export function deriveSubprocessInspectResult(
+  snapshot: TerminalProcessTableSnapshot,
   terminalPid: number,
   platform: NodeJS.Platform,
 ): TerminalSubprocessInspectResult {
   if (!Number.isInteger(terminalPid) || terminalPid <= 0) return EMPTY_INSPECT_RESULT;
-  const childPid = snapshot.childrenByParent.get(terminalPid)?.[0];
+  const childPid = (snapshot.childrenByParent.get(terminalPid) ?? [])[0];
   if (childPid === undefined) return EMPTY_INSPECT_RESULT;
-
   const processIds = new Set<number>([terminalPid]);
   const pending = [terminalPid];
   while (pending.length > 0) {
@@ -747,8 +731,7 @@ export function inspectProcessSnapshot(
       pending.push(pid);
     }
   }
-
-  const normalized = normalizeChildCommandName(snapshot.commandByPid.get(childPid) ?? "", platform);
+  const normalized = normalizeChildCommandName(snapshot.commandById.get(childPid) ?? "", platform);
   return {
     hasRunningSubprocess: true,
     childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
@@ -756,86 +739,124 @@ export function inspectProcessSnapshot(
   };
 }
 
-// powershell.exe is a real executable - never spawn it through cmd.exe shell
-// mode, which would re-tokenize the `-Command` payload (pipes, semicolons)
-// before PowerShell ever sees it.
-const WINDOWS_PROCESS_SNAPSHOT_COMMAND =
-  'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+const POSIX_PS_ABSOLUTE_PATHS = ["/bin/ps", "/usr/bin/ps"] as const;
 
-const snapshotTimeoutMs = (ceilingMs: number, periodMs: number): number =>
-  Math.max(1, Math.min(ceilingMs, Math.floor(periodMs * PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION)));
+// Resolve `ps` to an absolute path once at startup. Spawning by bare name
+// walks every PATH entry per spawn (one failed posix_spawn per directory
+// until the hit), which is measurable at a 1s poll cadence on long PATHs.
+const resolvePosixPsCommand = Effect.fn("terminal.resolvePosixPsCommand")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  for (const candidate of POSIX_PS_ABSOLUTE_PATHS) {
+    const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+    if (exists) return candidate;
+  }
+  return "ps";
+});
 
-const processSnapshotProbe = (platform: NodeJS.Platform, periodMs: number) =>
-  platform === "win32"
-    ? ({
-        command: "powershell.exe",
-        args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_SNAPSHOT_COMMAND],
-        timeoutMs: snapshotTimeoutMs(WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS, periodMs),
-        source: "powershell",
-        parse: parseWindowsProcessSnapshot,
-      } as const)
-    : ({
-        command: "ps",
-        args: ["-eo", "pid=,ppid=,comm="],
-        timeoutMs: snapshotTimeoutMs(POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS, periodMs),
-        source: "ps",
-        parse: parsePosixProcessSnapshot,
-      } as const);
-
-/**
- * Takes the one process-table snapshot a poll round is allowed. A failed or
- * timed-out probe fails the round, which leaves every session's last known
- * state alone instead of reporting "no subprocess" for all of them.
- */
-const hostProcessSnapshot = Effect.fn("terminal.hostProcessSnapshot")(function* (
-  platform: NodeJS.Platform,
-  periodMs: number,
+const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot")(function* (
+  psCommand: string,
 ): Effect.fn.Return<
-  HostProcessSnapshot,
+  TerminalProcessTableSnapshot,
   TerminalSubprocessCheckError,
   ProcessRunner.ProcessRunner
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const probe = processSnapshotProbe(platform, periodMs);
   const result = yield* processRunner
     .run({
-      command: probe.command,
-      args: probe.args,
-      timeout: probe.timeoutMs,
-      maxOutputBytes: PROCESS_SNAPSHOT_MAX_OUTPUT_BYTES,
+      command: psCommand,
+      args: ["-eo", "pid=,ppid=,comm="],
+      timeout: "1 second",
+      maxOutputBytes: 524_288,
       outputMode: "truncate",
       timeoutBehavior: "timedOutResult",
     })
     .pipe(
       Effect.mapError(
-        (cause) => new TerminalSubprocessCheckError({ cause, command: probe.source }),
+        (cause) =>
+          new TerminalSubprocessCheckError({
+            cause,
+            command: "ps",
+          }),
       ),
     );
-  if (result.timedOut || result.code !== 0) {
+  if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
+    // Not authoritative: an empty or partial table would mark every terminal
+    // idle and clear its registered process ids. Failing skips the tick.
     return yield* new TerminalSubprocessCheckError({
-      command: probe.source,
-      cause: result.timedOut
-        ? `${probe.command} timed out after ${probe.timeoutMs}ms`
-        : `${probe.command} exited with code ${String(result.code)}`,
+      command: "ps",
+      exitCode: result.code,
+      timedOut: result.timedOut,
+      stdoutTruncated: result.stdoutTruncated,
     });
   }
-  return probe.parse(result.stdout);
+  return parsePosixProcessTable(result.stdout);
 });
 
-/** The shipped round: one snapshot, then a pure lookup per session. */
+const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnapshot")(
+  function* (): Effect.fn.Return<
+    TerminalProcessTableSnapshot,
+    TerminalSubprocessCheckError,
+    ProcessRunner.ProcessRunner
+  > {
+    const command =
+      'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+    const processRunner = yield* ProcessRunner.ProcessRunner;
+    const result = yield* processRunner
+      .run({
+        // powershell.exe is a real executable — never spawn it through cmd.exe
+        // shell mode, which would re-tokenize the `-Command` payload (pipes,
+        // semicolons) before PowerShell ever sees it.
+        command: "powershell.exe",
+        args: ["-NoProfile", "-NonInteractive", "-Command", command],
+        timeout: "1500 millis",
+        maxOutputBytes: 262_144,
+        outputMode: "truncate",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new TerminalSubprocessCheckError({
+              cause,
+              command: "powershell",
+            }),
+        ),
+      );
+    if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
+      // Not authoritative: an empty or partial table would mark every terminal
+      // idle and clear its registered process ids. Failing skips the tick.
+      return yield* new TerminalSubprocessCheckError({
+        command: "powershell",
+        exitCode: result.code,
+        timedOut: result.timedOut,
+        stdoutTruncated: result.stdoutTruncated,
+      });
+    }
+    return parseWindowsProcessTable(result.stdout);
+  },
+);
+
+/**
+ * The shipped round: one snapshot, then a pure lookup per session. A failed or
+ * timed-out probe fails the round, which leaves every session's last known
+ * state alone instead of reporting "no subprocess" for all of them.
+ */
 const defaultSubprocessRound =
   (
     platform: NodeJS.Platform,
     processRunner: ProcessRunner.ProcessRunner["Service"],
-    periodMs: number,
+    psCommand: string,
   ): TerminalSubprocessRound =>
   () =>
-    hostProcessSnapshot(platform, periodMs).pipe(
+    (platform === "win32"
+      ? windowsProcessTableSnapshot()
+      : posixProcessTableSnapshot(psCommand)
+    ).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       Effect.map(
         (snapshot): TerminalSubprocessInspector =>
           (terminalPid) =>
-            Effect.succeed(inspectProcessSnapshot(snapshot, terminalPid, platform)),
+            Effect.succeed(deriveSubprocessInspectResult(snapshot, terminalPid, platform)),
       ),
     );
 
@@ -1214,11 +1235,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  // Resolved once at start-up: spawning `ps` by bare name walks every PATH
+  // entry per spawn, which is measurable at this poll cadence.
+  const psCommand = platform === "win32" ? "ps" : yield* resolvePosixPsCommand();
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
   const subprocessRound: TerminalSubprocessRound =
-    options.subprocessRound ??
-    defaultSubprocessRound(platform, processRunner, subprocessPollIntervalMs);
+    options.subprocessRound ?? defaultSubprocessRound(platform, processRunner, psCommand);
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;

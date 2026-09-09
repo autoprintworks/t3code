@@ -34,6 +34,7 @@ import {
 } from "./AcpPeerSessions.ts";
 import {
   collectSessionConfigOptionValues,
+  decideToolCallUpdateEmission,
   extractModelConfigId,
   findSessionConfigOption,
   mergeToolCallState,
@@ -46,6 +47,12 @@ import {
   type AcpSessionModeState,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
+
+interface AcpToolCallTrackedState {
+  readonly state: AcpToolCallState;
+  readonly lastEmittedDetailLength: number | undefined;
+  readonly skippedSinceEmit: number;
+}
 
 function formatConfigOptionValue(value: string | boolean): string {
   return JSON.stringify(value);
@@ -364,7 +371,7 @@ interface AcpAssistantSegmentState {
  */
 interface AcpPeerRoute {
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
-  readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
+  readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
 }
 
@@ -386,7 +393,7 @@ export const make = (
     const runtimeScope = yield* Scope.Scope;
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
-    const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
+    const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
@@ -724,7 +731,7 @@ export const make = (
         }
         const route = {
           modeStateRef: yield* Ref.make<AcpSessionModeState | undefined>(undefined),
-          toolCallsRef: yield* Ref.make(new Map<string, AcpToolCallState>()),
+          toolCallsRef: yield* Ref.make(new Map<string, AcpToolCallTrackedState>()),
           assistantSegmentRef: yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 }),
         } satisfies AcpPeerRoute;
         // Claiming the route before the request is what makes the replay
@@ -1224,7 +1231,7 @@ const handleSessionUpdate = ({
 }: {
   readonly offer: AcpParsedSessionEventSink;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
-  readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
+  readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
   readonly params: EffectAcpSchema.SessionNotification;
@@ -1242,18 +1249,31 @@ const handleSessionUpdate = ({
           offer,
           assistantSegmentRef,
         });
-        const { previous, merged } = yield* Ref.modify(toolCallsRef, (current) => {
-          const previous = current.get(event.toolCall.toolCallId);
+        const { merged, decision } = yield* Ref.modify(toolCallsRef, (current) => {
+          const tracked = current.get(event.toolCall.toolCallId);
+          const previous = tracked?.state;
           const nextToolCall = mergeToolCallState(previous, event.toolCall);
+          const decision = decideToolCallUpdateEmission({
+            previous,
+            next: nextToolCall,
+            lastEmittedDetailLength: tracked?.lastEmittedDetailLength,
+            skippedSinceEmit: tracked?.skippedSinceEmit ?? 0,
+          });
           const next = new Map(current);
           if (nextToolCall.status === "completed" || nextToolCall.status === "failed") {
             next.delete(nextToolCall.toolCallId);
           } else {
-            next.set(nextToolCall.toolCallId, nextToolCall);
+            next.set(nextToolCall.toolCallId, {
+              state: nextToolCall,
+              lastEmittedDetailLength: decision.emit
+                ? nextToolCall.detail?.length
+                : tracked?.lastEmittedDetailLength,
+              skippedSinceEmit: decision.skippedSinceEmit,
+            });
           }
-          return [{ previous, merged: nextToolCall }, next] as const;
+          return [{ merged: nextToolCall, decision }, next] as const;
         });
-        if (!shouldEmitToolCallUpdate(previous, merged)) {
+        if (!decision.emit) {
           continue;
         }
         yield* offer({
@@ -1297,19 +1317,6 @@ function updateModeState(modeState: AcpSessionModeState, nextModeId: string): Ac
         currentModeId: normalized,
       }
     : modeState;
-}
-
-function shouldEmitToolCallUpdate(
-  previous: AcpToolCallState | undefined,
-  next: AcpToolCallState,
-): boolean {
-  if (next.status === "completed" || next.status === "failed") {
-    return true;
-  }
-  if (!next.detail) {
-    return false;
-  }
-  return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
 
 const assistantItemId = (sessionId: string, runtimeId: string, segmentIndex: number) =>
