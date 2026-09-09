@@ -34,7 +34,7 @@
     },
     {
       "name": "terminal-subprocess-poll",
-      "description": "Bounded terminal and preview polling, so Windows stops spawning one PowerShell per terminal per second at unbounded concurrency. Issue #83. The fix is not on main yet; this entry reserves the seam so an upstream merge cannot quietly remove the files or the test it lands in.",
+      "description": "Bounded terminal and preview polling, so Windows stops spawning one PowerShell per terminal per second at unbounded concurrency. Issue #83, merged to main in #106. This branch predates that merge, so here the entry still reserves the seam; it holds the landed files once main is merged in.",
       "files": ["apps/server/src/terminal/Manager.ts", "apps/server/src/preview/PortScanner.ts"],
       "test": "apps/server/src/terminal/Manager.test.ts",
       "patchesUpstream": true
