@@ -93,16 +93,16 @@ release is how a fix reaches the desktop without anyone running a build by hand.
 
 ### Before any of it runs
 
-GitHub Actions is disabled on `autoprintworks/t3code` today
-(`gh api repos/autoprintworks/t3code/actions/permissions` returns `enabled: false`). Nothing in this
-section runs until a maintainer turns Actions on in Settings -> Actions -> General.
+GitHub Actions is on for `autoprintworks/t3code`, with `allowed_actions: all`. The workflows this
+fork inherited from upstream and does not want are disabled from the Actions tab, not deleted:
+`release.yml`, `deploy-relay`, both Mobile EAS workflows and Mobile Showcase Screenshots. Leave
+them that way. Re-enabling `release.yml` starts upstream's scheduled nightly release from this
+fork's default branch.
 
-Turning Actions on also arms the scheduled workflows this fork inherited from upstream, including
-`release.yml`, which this ticket may not change. Decide about `release.yml` in the same pass.
-
-A `workflow_dispatch` workflow must also sit on the default branch before GitHub will accept a
-dispatch, even a dispatch aimed at another branch. So the first dispatch of this workflow happens
-after it is merged to `main`.
+One GitHub rule still holds: a `workflow_dispatch` workflow must sit on the default branch before
+GitHub accepts a dispatch, even a dispatch aimed at another branch. A dispatch from a feature branch
+fails with `HTTP 404: workflow fork-update.yml not found on the default branch`. So the first
+dispatch of this workflow happens after it is merged to `main`.
 
 ### What runs when
 
@@ -122,10 +122,14 @@ There are two jobs.
 2. `release`, on `windows-latest`. It repeats the merge at the commit the gate passed, bumps the
    version, runs `pnpm dist:desktop:win`, then `pnpm release:smoke`, then publishes and pushes.
 
-The gate runs on Linux, not Windows. That is a deliberate split. The server and shared suites still
-fail on Windows ([#80](https://github.com/autoprintworks/t3code/issues/80)), so a Windows gate is red
-before it starts and no release could ever pass it. Everything that has to be Windows, the installer
-and the release smoke check, stays on `windows-latest`. Move the gate to Windows once #80 lands.
+The gate runs on Linux, not Windows. That is a deliberate split. The Windows test suite was red when
+this pipeline was written ([#80](https://github.com/autoprintworks/t3code/issues/80)), so a Windows
+gate would have been red before it started and no release could ever pass it. Everything that has to
+be Windows, the installer and the release smoke check, stays on `windows-latest`.
+
+#80 has since landed on `main`. Moving the gate to `windows-latest` is now a question of whether a
+full Windows run is worth the runner minutes, not of whether it can pass. Prove it with one dispatch
+before moving it.
 
 The merge is always `git merge --no-ff`. Never a rebase
 ([#60](https://github.com/autoprintworks/t3code/issues/60)). A rebase would rewrite the fork's own
@@ -162,10 +166,11 @@ tests. It runs in the gate and in `ci.yml`, so an upstream merge that deletes a 
 before it can publish.
 
 Two entries need a word. `terminal-subprocess-poll`
-([#83](https://github.com/autoprintworks/t3code/issues/83)) is not on `main` yet; the entry reserves
-the files and the test so an upstream merge cannot quietly remove them. #80 has no landed code of its
-own, so its landed sibling [#75](https://github.com/autoprintworks/t3code/issues/75), the Windows
-fix in `scripts/release-smoke.ts`, sits inside `fork-desktop-build`.
+([#83](https://github.com/autoprintworks/t3code/issues/83)) landed on `main` in #106; the entry
+reserves its files and its test so an upstream merge cannot quietly remove them. #80 landed in #107
+as test fixes with no product code of its own, so its landed sibling
+[#75](https://github.com/autoprintworks/t3code/issues/75), the Windows fix in
+`scripts/release-smoke.ts`, is what `fork-desktop-build` holds for it.
 
 Add an entry whenever you add a fork feature. The manifest is the list of things an upstream merge
 must not break.
@@ -186,15 +191,16 @@ on `main`, dispatch the workflow again against the same tag.
 ### The fork is behind upstream
 
 `main` last took upstream at `v0.0.32` (`3c7959c04 Merge upstream v0.0.32`). Upstream is on
-`v0.0.41-nightly`. No upstream tag merges into `main` cleanly today:
+`v0.0.41-nightly`. No upstream tag merges into `main` cleanly:
 
 | upstream ref                    | conflicting files |
 | ------------------------------- | ----------------- |
 | `v0.0.33-nightly.20260807.1025` | 4                 |
-| `v0.0.33`                       | 15                |
-| `v0.0.41-nightly.20260908.1414` | 105               |
+| `v0.0.33`                       | 76                |
+| `v0.0.41-nightly.20260908.1414` | 105 and rising    |
 
-Measured with `git merge-tree --write-tree --name-only main <ref>`.
+Measured with `git merge-tree --write-tree --name-only main <ref>`. The counts climb as `main` moves,
+so re-measure before planning the catch-up rather than trusting this table.
 
 So the first scheduled run will file a conflict issue, not a release. Someone has to walk the fork
 forward by hand first, one upstream tag at a time, before the pipeline can take the newest nightly on
