@@ -30,7 +30,35 @@ const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 type SkillFrontmatter =
   | { readonly kind: "missing" }
   | { readonly kind: "malformed" }
-  | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
+  | {
+      readonly kind: "parsed";
+      readonly name?: string;
+      readonly description?: string;
+      readonly userInvocable?: boolean;
+      readonly modelInvocable?: boolean;
+    };
+
+/**
+ * Read the two invocability opt-outs, which two skill-set conventions spell
+ * differently and in opposite directions:
+ *
+ *  - `disable-model-invocation: true` (Claude Code / marketplace skills) means
+ *    the agent may not start the skill, so a picker is its only entry point.
+ *  - `user-invocable: false` (firstmate skills) means the reverse: the agent
+ *    loads it at a precise trigger and a user should never pick it.
+ *
+ * Only the opt-outs are recorded; the permissive default stays absent so the
+ * wire payload does not grow for the skills that behave normally.
+ */
+function readSkillInvocability(record: Record<string, unknown>): {
+  readonly userInvocable?: boolean;
+  readonly modelInvocable?: boolean;
+} {
+  return {
+    ...(record["user-invocable"] === false ? { userInvocable: false } : {}),
+    ...(record["disable-model-invocation"] === true ? { modelInvocable: false } : {}),
+  };
+}
 
 function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
@@ -55,6 +83,7 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
     kind: "parsed",
     ...(name ? { name } : {}),
     ...(description ? { description } : {}),
+    ...readSkillInvocability(record),
   };
 }
 
@@ -142,6 +171,12 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         scope: root.scope,
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
+          : {}),
+        ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
+          ? { userInvocable: false }
+          : {}),
+        ...(frontmatter.kind === "parsed" && frontmatter.modelInvocable === false
+          ? { modelInvocable: false }
           : {}),
       });
     }

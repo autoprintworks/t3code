@@ -15,6 +15,7 @@ import { GrokSettings, ProviderInstanceId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { skipPosixShellStub } from "../testUtils/hostPlatform.ts";
 import { makeGrokTextGeneration } from "./GrokTextGeneration.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -80,7 +81,9 @@ function readJsonRpcRequests(
 }
 
 it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
-  it.effect("uses ACP with disabled tool capabilities and forwards the requested model id", () => {
+  // The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+  const posixOnly = it.effect.skipIf(skipPosixShellStub);
+  posixOnly("uses ACP with disabled tool capabilities and forwards the requested model id", () => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
     );
@@ -125,7 +128,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
     );
   });
 
-  it.effect("extracts the JSON object when Grok wraps it in conversational text", () =>
+  posixOnly("extracts the JSON object when Grok wraps it in conversational text", () =>
     withFakeAcpGrok(
       {
         T3_ACP_PROMPT_RESPONSE_TEXT:
@@ -145,7 +148,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
     ),
   );
 
-  it.effect("surfaces ACP request failures as text generation errors", () =>
+  posixOnly("surfaces ACP request failures as text generation errors", () =>
     withFakeAcpGrok(
       {
         T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ branch: "unreachable" }),
@@ -168,7 +171,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
     ),
   );
 
-  it.effect("fails with TextGenerationError when output is empty", () =>
+  posixOnly("fails with TextGenerationError when output is empty", () =>
     withFakeAcpGrok(
       {
         T3_ACP_PROMPT_RESPONSE_TEXT: "   \n  ",
@@ -188,7 +191,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
     ),
   );
 
-  it.effect("decodes a structured PR title + body", () =>
+  posixOnly("decodes a structured PR title + body", () =>
     withFakeAcpGrok(
       {
         T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
@@ -214,7 +217,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
     ),
   );
 
-  it.effect("fails with TextGenerationError when output is unparseable JSON", () =>
+  posixOnly("fails with TextGenerationError when output is unparseable JSON", () =>
     withFakeAcpGrok(
       {
         T3_ACP_PROMPT_RESPONSE_TEXT: "totally not json output from a confused model",

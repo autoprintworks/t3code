@@ -1,4 +1,6 @@
-import * as NodePath from "@effect/platform-node/NodePath";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePathLayer from "@effect/platform-node/NodePath";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -89,7 +91,7 @@ function makeLayer(input: {
   return input.fileSystem
     ? serviceLayer.pipe(
         Layer.provide(Layer.succeed(FileSystem.FileSystem, input.fileSystem)),
-        Layer.provideMerge(NodePath.layer),
+        Layer.provideMerge(NodePathLayer.layer),
       )
     : serviceLayer.pipe(Layer.provideMerge(NodeServices.layer));
 }
@@ -156,7 +158,8 @@ it.effect("clones a looked-up repository into the requested destination", () =>
     const parent = yield* fs.makeTempDirectoryScoped({
       prefix: "t3-source-control-clone-parent-",
     });
-    const destinationPath = `${parent}/t3code`;
+    // Joined with the host separator: the service splits this path to derive the clone parent.
+    const destinationPath = NodePath.join(parent, "t3code");
     const cloneCalls: Array<{ cwd: string; args: ReadonlyArray<string> }> = [];
 
     yield* Effect.gen(function* () {

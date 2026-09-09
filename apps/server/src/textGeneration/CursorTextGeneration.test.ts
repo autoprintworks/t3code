@@ -18,6 +18,7 @@ import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { skipPosixShellStub } from "../testUtils/hostPlatform.ts";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
@@ -91,7 +92,9 @@ function waitForFileContent(path: string): Effect.Effect<string> {
 }
 
 it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
-  it.effect("uses ACP model config options instead of raw CLI model ids", () => {
+  // The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+  const posixOnly = it.effect.skipIf(skipPosixShellStub);
+  posixOnly("uses ACP model config options instead of raw CLI model ids", () => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-log-"),
     );
@@ -188,7 +191,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
     );
   });
 
-  it.effect("accepts json objects with extra assistant text around them", () =>
+  posixOnly("accepts json objects with extra assistant text around them", () =>
     withFakeAcpAgent(
       {
         T3_ACP_PROMPT_RESPONSE_TEXT:
@@ -213,7 +216,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates thread titles through Cursor ACP text generation", () =>
+  posixOnly("generates thread titles through Cursor ACP text generation", () =>
     withFakeAcpAgent(
       {
         T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
@@ -236,7 +239,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
     ),
   );
 
-  it.effect("closes the ACP child process after text generation completes", () => {
+  posixOnly("closes the ACP child process after text generation completes", () => {
     const exitLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-cursor-text-exit-log-"),
     );

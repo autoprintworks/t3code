@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatProviderSkillDisplayName,
   formatProviderSkillInstallSource,
+  formatProviderSkillInvocationLabel,
   formatProviderSkillScopeLabel,
 } from "./providerSkillPresentation.ts";
 
@@ -85,5 +86,16 @@ describe("formatProviderSkillScopeLabel", () => {
         path: "/workspace/skills/mystery/SKILL.md",
       }),
     ).toBe(null);
+  });
+});
+
+describe("formatProviderSkillInvocationLabel", () => {
+  it("marks a skill the agent may not start", () => {
+    expect(formatProviderSkillInvocationLabel({ modelInvocable: false })).toBe("Manual");
+  });
+
+  it("leaves ordinary skills unmarked", () => {
+    expect(formatProviderSkillInvocationLabel({})).toBeNull();
+    expect(formatProviderSkillInvocationLabel({ modelInvocable: true })).toBeNull();
   });
 });

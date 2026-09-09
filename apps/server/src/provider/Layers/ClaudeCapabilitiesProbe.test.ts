@@ -1,6 +1,10 @@
-import { ClaudeSettings } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  type ServerProviderSkill,
+  type ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -11,6 +15,7 @@ import {
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   isLegacyClaudeModel,
   probeClaudeCapabilities,
+  withoutAgentOnlySkillCommands,
 } from "./ClaudeProvider.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -71,6 +76,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "#!/usr/bin/env node",
           'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
           'import { createInterface } from "node:readline";',
+          'import { tmpdir } from "node:os";',
           "const args = process.argv.slice(2);",
           'const mcpConfigIndex = args.indexOf("--mcp-config");',
           "const rawMcpConfig = mcpConfigIndex >= 0 ? args[mcpConfigIndex + 1] : undefined;",
@@ -85,6 +91,9 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "  connectorEnv: process.env.ENABLE_CLAUDEAI_MCP_SERVERS,",
           "  mcpConfig,",
           "}));",
+          // Windows refuses to remove a directory that is a live process's working directory,
+          // and the SDK does not reap this stub. The cwd is recorded above, so step out of it.
+          "process.chdir(tmpdir());",
           "const lines = createInterface({ input: process.stdin });",
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
@@ -105,7 +114,10 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "    },",
           '  }) + "\\n");',
           "});",
-          "setInterval(() => {}, 1_000);",
+          // The SDK aborts by closing this pipe. Exiting on that close keeps the stub from
+          // outliving the test and holding its working directory open, which Windows refuses
+          // to remove.
+          'lines.on("close", () => process.exit(0));',
           "",
         ].join("\n"),
       );
@@ -154,4 +166,40 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       assert.equal(invocation.args.includes("--setting-sources=user,project,local"), true);
     }).pipe(Effect.scoped),
   );
+});
+
+describe("withoutAgentOnlySkillCommands", () => {
+  const skill = (name: string, userInvocable?: boolean): ServerProviderSkill => ({
+    name,
+    path: `/skills/${name}/SKILL.md`,
+    enabled: true,
+    ...(userInvocable === undefined ? {} : { userInvocable }),
+  });
+
+  it("drops the slash command that stands for a skill a user may not pick", () => {
+    const commands = withoutAgentOnlySkillCommands(
+      [
+        { name: "deploy", description: "Deploy the app" },
+        { name: "Harness-Adapters", description: "Agent-only reference" },
+      ],
+      [skill("deploy"), skill("harness-adapters", false)],
+    );
+
+    assert.deepStrictEqual(
+      commands.map((command) => command.name),
+      ["deploy"],
+    );
+  });
+
+  it("keeps every command when no skill is agent-only", () => {
+    const commands: ReadonlyArray<ServerProviderSlashCommand> = [
+      { name: "deploy" },
+      { name: "to-tickets" },
+    ];
+
+    assert.strictEqual(
+      withoutAgentOnlySkillCommands(commands, [skill("deploy"), skill("to-tickets")]),
+      commands,
+    );
+  });
 });

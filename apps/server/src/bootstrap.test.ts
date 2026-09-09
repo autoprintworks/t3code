@@ -20,6 +20,8 @@ import {
   readBootstrapEnvelope,
 } from "./bootstrap.ts";
 import { assertNone, assertSome } from "@effect/vitest/utils";
+import { releaseBootstrapFd } from "./testUtils/bootstrapFd.ts";
+import { isWindowsHost, skipPosixFifo } from "./testUtils/hostPlatform.ts";
 
 const openSyncInterceptor = vi.hoisted(() => ({
   failPath: null as string | null,
@@ -55,6 +57,9 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+// Windows has no /dev/null; its null device is reachable only through the device namespace.
+const nullDevicePath = isWindowsHost ? "//./NUL" : "/dev/null";
+
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
 
@@ -71,7 +76,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
@@ -117,7 +122,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
       const fdPath = `/proc/self/fd/${fd}`;
 
@@ -146,7 +151,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
   it.effect("returns none when the fd is unavailable", () =>
     Effect.gen(function* () {
-      const fd = NodeFS.openSync("/dev/null", "r");
+      const fd = NodeFS.openSync(nullDevicePath, "r");
       NodeFS.closeSync(fd);
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
@@ -157,8 +162,8 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("preserves fd and cause when stat fails for a non-availability reason", () =>
     Effect.gen(function* () {
       const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync("/dev/null", "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        Effect.sync(() => NodeFS.openSync(nullDevicePath, "r")),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
 
       fstatSyncInterceptor.failFd = fd;
@@ -185,7 +190,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
       const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
         timeoutMs: 100,
@@ -201,7 +206,11 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
-  it.effect("returns none when the bootstrap read times out before any value arrives", () =>
+  // Needs mkfifo and a POSIX shell to hold the write end open; Windows named pipes are a
+  // different API and cannot stand in for a FIFO opened by path.
+  const posixOnly = it.effect.skipIf(skipPosixFifo);
+
+  posixOnly("returns none when the bootstrap read times out before any value arrives", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
@@ -223,7 +232,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       const fd = yield* Effect.acquireRelease(
         Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
+        (fd) => Effect.sync(() => releaseBootstrapFd(fd)),
       );
 
       const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {

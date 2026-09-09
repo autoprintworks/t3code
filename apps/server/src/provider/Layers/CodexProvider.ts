@@ -269,6 +269,9 @@ function parseCodexSkillsListResponse(
       name: skill.name,
       path: skill.path,
       enabled: skill.enabled,
+      // No invocability fields: the Codex app-server reports none, and absent
+      // is the contract's documented default of user-invocable and
+      // model-invocable. See `ServerProviderSkill`.
     };
 
     if (skill.description) {

@@ -27,6 +27,7 @@ import {
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { isWindowsHost, skipBatchStubChildExit } from "../../testUtils/hostPlatform.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
@@ -41,12 +42,40 @@ const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.
 const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath] as const;
 
+// The adapter spawns these wrappers through the configured binaryPath, so a wrapper has to be
+// something the host can execute: a shell script on POSIX, a batch file on Windows.
+const wrapperFileName = isWindowsHost ? "fake-agent.cmd" : "fake-agent.sh";
+
+// A Windows path can hold a backslash but never a quote, so plain quoting is enough and
+// JSON.stringify would double every separator.
+const quoteForBatch = (value: string) => `"${value}"`;
+const batchEnvSets = (extraEnv?: Record<string, string>) =>
+  Object.entries(extraEnv ?? {}).map(([key, value]) => `set ${quoteForBatch(`${key}=${value}`)}`);
+const batchExec = `${quoteForBatch(mockAgentCommand)} ${mockAgentArgs.map(quoteForBatch).join(" ")} %*`;
+
+async function writeBatchWrapper(dir: string, lines: readonly string[]) {
+  const wrapperPath = NodePath.join(dir, wrapperFileName);
+  await NodeFSP.writeFile(wrapperPath, ["@echo off", ...lines, ""].join("\r\n"), "utf8");
+  return wrapperPath;
+}
+
 async function makeMockAgentWrapper(
   extraEnv?: Record<string, string>,
   options?: { initialDelaySeconds?: number },
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-mock-"));
-  const wrapperPath = NodePath.join(dir, "fake-agent.sh");
+  if (isWindowsHost) {
+    // timeout.exe refuses to run with stdin redirected, so node holds the startup delay instead.
+    const delaySeconds = options?.initialDelaySeconds;
+    return writeBatchWrapper(dir, [
+      ...batchEnvSets(extraEnv),
+      ...(delaySeconds
+        ? [`node -e "setTimeout(() => {}, ${Math.round(delaySeconds * 1000)})"`]
+        : []),
+      batchExec,
+    ]);
+  }
+  const wrapperPath = NodePath.join(dir, wrapperFileName);
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
@@ -66,7 +95,20 @@ async function makeProbeWrapper(
   extraEnv?: Record<string, string>,
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-probe-"));
-  const wrapperPath = NodePath.join(dir, "fake-agent.sh");
+  if (isWindowsHost) {
+    return writeBatchWrapper(dir, [
+      // resolveSpawnCommand routes a .cmd through a shell, so %* still carries the quotes it
+      // added. %%~A strips them, and the tab keeps the log in the format readArgvLog expects.
+      "setlocal EnableDelayedExpansion",
+      'set "T3ARGV="',
+      'for %%A in (%*) do set "T3ARGV=!T3ARGV!%%~A\t"',
+      `>>${quoteForBatch(argvLogPath)} echo(!T3ARGV!`,
+      `set ${quoteForBatch(`T3_ACP_REQUEST_LOG_PATH=${requestLogPath}`)}`,
+      ...batchEnvSets(extraEnv),
+      batchExec,
+    ]);
+  }
+  const wrapperPath = NodePath.join(dir, wrapperFileName);
   const envExports = Object.entries(extraEnv ?? {})
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
@@ -168,6 +210,8 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+  const itChildExit = it.effect.skipIf(skipBatchStubChildExit);
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -326,7 +370,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect("closes the ACP child process when a session stops", () =>
+  itChildExit("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const settings = yield* ServerSettingsService;
@@ -358,7 +402,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect(
+  itChildExit(
     "serializes concurrent startSession calls for the same thread and closes the replaced ACP session",
     () =>
       Effect.gen(function* () {

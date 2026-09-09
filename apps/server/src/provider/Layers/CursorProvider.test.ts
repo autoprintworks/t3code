@@ -24,6 +24,10 @@ import {
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
+import { skipPosixShellStub } from "../../testUtils/hostPlatform.ts";
+
+// The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+const itPosix = it.skipIf(skipPosixShellStub);
 
 const runNode = <A, E>(
   effect: Effect.Effect<
@@ -446,7 +450,7 @@ describe("checkCursorProviderStatus", () => {
     });
   });
 
-  it("passes the injected environment to ACP model discovery", async () => {
+  itPosix("passes the injected environment to ACP model discovery", async () => {
     const { requestLogPath, wrapperPath } = await runNode(makeProviderStatusEnvFixture());
 
     const provider = await runNode(
@@ -475,7 +479,7 @@ describe("checkCursorProviderStatus", () => {
 });
 
 describe("discoverCursorModelsViaAcp", () => {
-  it("keeps the ACP probe runtime alive long enough to discover models", async () => {
+  itPosix("keeps the ACP probe runtime alive long enough to discover models", async () => {
     const wrapperPath = await runNode(makeMockAgentWrapper());
 
     const models = await runNode(
@@ -495,7 +499,7 @@ describe("discoverCursorModelsViaAcp", () => {
     ]);
   });
 
-  it("closes the ACP probe runtime after discovery completes", async () => {
+  itPosix("closes the ACP probe runtime after discovery completes", async () => {
     const { exitLogPath, wrapperPath } = await runNode(
       makeExitLogFixture("cursor-provider-exit-log-"),
     );

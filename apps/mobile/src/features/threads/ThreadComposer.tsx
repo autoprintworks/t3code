@@ -68,6 +68,7 @@ import {
   providerOptionsConfigurationLabel,
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
+import { pickableProviderSkills } from "@t3tools/shared/providerSkillPresentation";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { useComposerSkills } from "../../state/queries";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
@@ -430,13 +431,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     if (composerTrigger.kind === "skill") {
-      const enabledSkills = composerSkills.skills.filter((s) => s.enabled);
+      const pickableSkills = pickableProviderSkills(composerSkills.skills);
       const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
         trimLeadingPattern: /^\$+/,
       });
 
       if (!normalizedQuery) {
-        return enabledSkills.slice(0, 20).map((skill) => ({
+        return pickableSkills.slice(0, 20).map((skill) => ({
           id: `skill:${skill.name}`,
           type: "skill" as const,
           skill,
@@ -446,11 +447,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }
 
       const ranked: Array<{
-        item: (typeof enabledSkills)[number];
+        item: (typeof pickableSkills)[number];
         score: number;
         tieBreaker: string;
       }> = [];
-      for (const skill of enabledSkills) {
+      for (const skill of pickableSkills) {
         const displayLabel = (skill.displayName ?? skill.name).toLowerCase();
         const scores = [
           scoreQueryMatch({

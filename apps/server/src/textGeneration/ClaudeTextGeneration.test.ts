@@ -12,6 +12,7 @@ import { expect } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import { skipPosixShellStub } from "../testUtils/hostPlatform.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -190,7 +191,9 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
-  it.effect("forwards Claude thinking settings for Haiku without passing effort", () =>
+  // The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+  const posixOnly = it.effect.skipIf(skipPosixShellStub);
+  posixOnly("forwards Claude thinking settings for Haiku without passing effort", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -222,7 +225,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("forwards Claude fast mode and supported effort", () =>
+  posixOnly("forwards Claude fast mode and supported effort", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -255,7 +258,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates thread titles through the Claude provider", () =>
+  posixOnly("generates thread titles through the Claude provider", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -286,7 +289,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
+  posixOnly("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const claudeConfigDir = path.join(process.cwd(), ".claude-work-test");
@@ -318,7 +321,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     }),
   );
 
-  it.effect("falls back when Claude thread title normalization becomes whitespace-only", () =>
+  posixOnly("falls back when Claude thread title normalization becomes whitespace-only", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({

@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import { sha256 } from "@noble/hashes/sha2";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -18,10 +20,32 @@ import {
   makeCloudflaredRelayClient,
 } from "./relayClient.ts";
 
+// `isExecutableFile` reads the POSIX execute bit off a real file, and Windows has no such bit, so
+// every test that writes an executable and then resolves it has to simulate the host it really
+// runs on. The checksum case never gets that far, so it keeps the fixed linux/x64 host below.
+// oxlint-disable-next-line t3code/no-global-process-runtime -- names a real host trait for a plain module-level fixture, outside any Effect
+const { platform: realPlatform, arch: realArch } = process;
+const realExecutableName = realPlatform === "win32" ? "cloudflared.exe" : "cloudflared";
+
+// Pinned so an unlisted host (for example win32-arm64) still resolves as "missing" rather than
+// "unsupported"; the archive shape is irrelevant to the tests that pass it.
+const pinnedReleaseAsset = {
+  url: "https://example.test/cloudflared",
+  sha256: Encoding.encodeHex(sha256(new TextEncoder().encode("pinned"))),
+  archive: "binary",
+} as const;
+
 const hostRuntimeLayer = (env: Record<string, string> = {}) =>
   Layer.mergeAll(
     Layer.succeed(HostProcessPlatform, "linux"),
     Layer.succeed(HostProcessArchitecture, "x64"),
+    ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
+  );
+
+const realHostRuntimeLayer = (env: Record<string, string> = {}) =>
+  Layer.mergeAll(
+    Layer.succeed(HostProcessPlatform, realPlatform),
+    Layer.succeed(HostProcessArchitecture, realArch),
     ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
   );
 
@@ -69,11 +93,12 @@ describe("RelayClient", () => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-cloudflared-test-",
       });
-      const overridePath = `${baseDir}/override-cloudflared`;
+      const overridePath = NodePath.join(baseDir, "override-cloudflared");
       yield* fileSystem.writeFileString(overridePath, "override");
       yield* fileSystem.chmod(overridePath, 0o755);
       const manager = yield* makeCloudflaredRelayClient({
         baseDir,
+        releaseAsset: pinnedReleaseAsset,
       });
 
       expect(
@@ -98,7 +123,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new Uint8Array()),
           makeSpawnerLayer([]),
-          hostRuntimeLayer(),
+          realHostRuntimeLayer(),
         ),
       ),
     ),
@@ -128,7 +153,14 @@ describe("RelayClient", () => {
           }
         }),
       );
-      const managedPath = `${baseDir}/tools/cloudflared/${CLOUDFLARED_VERSION}/linux-x64/cloudflared`;
+      const managedPath = NodePath.join(
+        baseDir,
+        "tools",
+        "cloudflared",
+        CLOUDFLARED_VERSION,
+        `${realPlatform}-${realArch}`,
+        realExecutableName,
+      );
       expect(installed).toEqual({
         status: "available",
         executablePath: managedPath,
@@ -155,7 +187,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new TextEncoder().encode("test-cloudflared-binary")),
           makeSpawnerLayer([]),
-          hostRuntimeLayer(),
+          realHostRuntimeLayer(),
         ),
       ),
     ),
@@ -221,7 +253,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(bytes),
           makeSpawnerLayer(commands),
-          hostRuntimeLayer(),
+          realHostRuntimeLayer(),
         ),
       ),
     );
@@ -234,10 +266,11 @@ describe("RelayClient", () => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-cloudflared-test-",
       });
-      const binDir = `${baseDir}/bin`;
-      const executablePath = `${binDir}/cloudflared`;
+      const binDir = NodePath.join(baseDir, "bin");
+      const executablePath = NodePath.join(binDir, realExecutableName);
       const manager = yield* makeCloudflaredRelayClient({
         baseDir,
+        releaseAsset: pinnedReleaseAsset,
       });
 
       expect(yield* manager.resolve).toEqual({
@@ -263,7 +296,7 @@ describe("RelayClient", () => {
           NodeServices.layer,
           makeHttpClientLayer(new Uint8Array()),
           makeSpawnerLayer([]),
-          hostRuntimeLayer(env),
+          realHostRuntimeLayer(env),
         ),
       ),
     );

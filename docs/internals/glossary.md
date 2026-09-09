@@ -12,6 +12,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
 - [Connections](#connections)
+- [Host polls](#host-polls)
 
 ## Concepts
 
@@ -131,7 +132,11 @@ The session `subject` string the First Mate daemon mints its own bearer under, `
 
 #### Skill
 
-A named unit of provider behavior a user can invoke from the composer, discovered from the filesystem by the driver rather than configured in T3 Code. `ServerProviderSkill` in [the server contracts][36] carries the name, the file path it was found at, an optional scope, and whether the provider has it enabled. Only the Claude driver discovers them today; a driver that cannot scope discovery to a directory answers with its snapshot skills unchanged. See [ClaudeDriver.ts][37].
+A named unit of provider behavior a user can invoke from the composer, discovered from the filesystem by the driver rather than configured in T3 Code. `ServerProviderSkill` in [the server contracts][36] carries the name, the file path it was found at, an optional scope, whether the provider has it enabled, and its [invocability](#skill-invocability). Only the Claude driver discovers them today; a driver that cannot scope discovery to a directory answers with its snapshot skills unchanged. See [ClaudeDriver.ts][37].
+
+#### Skill invocability
+
+Who is allowed to start a skill. `ServerProviderSkill` carries two optional booleans, `userInvocable` and `modelInvocable`, and both are opt-outs: absent means the skill is invocable that way, so a provider that reports nothing keeps the permissive default and the wire payload stays small. Claude skill discovery reads them from two frontmatter conventions that point in opposite directions - `disable-model-invocation: true` sets `modelInvocable: false`, and `user-invocable: false` sets `userInvocable: false`. `isProviderSkillUserInvocable` and `isProviderSkillModelInvocable` in [the server contracts][36] are the only readers. A skill with `userInvocable: false` is left out of the composer's skill picker and out of the provider's `/` command list; a skill with `modelInvocable: false` keeps its row and carries a Manual badge, because a picker is its only entry point.
 
 #### Skill scope
 
@@ -201,6 +206,16 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 
 One client websocket, end to end, as a trace span. The environment opens `server.connection.clientSocket` when a client connects and ends it when the socket dies, carrying the close code, who sent the close frame, and the keepalive gaps, so a drop is explained rather than inferred. The client opens its own `clientRuntime.connection.rpcSession.socket` in [session.ts][39] and puts that span's `traceparent` on the connect URL, so the environment parents its span on the client's and both ends of one drop share a trace id and a `connection.id`. The client half only reaches the trace file where a client exports it, which every surface does through the shared exporter in [clientTracing.ts][41]; see [observability.md][40].
 
+### Host polls
+
+#### Round
+
+One pass of a timed host check. The terminal subprocess poll in [Manager.ts][47] and the preview port scanner in [PortScanner.ts][48] each run rounds. A round takes one host probe - one `powershell`/`ps` snapshot, or one `netstat`/`lsof` - and answers every session or listener from it, so its cost does not grow with the number of terminals open. Work a round cannot finish inside its period, such as naming more listener pids than its per-round cap allows, is left for the next round rather than stretching this one. See [architecture overview][24].
+
+#### Back-off poll
+
+The cadence policy both rounds run on, in [pollLoop.ts][49]. The first round runs at the base period; each round that reports no change multiplies the next period by a factor, up to a cap. A wake - the signal that the host is not idle - puts the next round back on the base period, but never cuts a base period short, so nothing can drive a poll faster than its configured rate. See [architecture overview][24].
+
 ## Practical Shortcuts
 
 - If you see `requested`, think "intent recorded".
@@ -263,3 +278,6 @@ One client websocket, end to end, as a trace span. The environment opens `server
 [44]: ../../apps/server/src/orchestration/http.ts
 [45]: ../../apps/server/src/ws.ts
 [46]: ../../apps/server/src/orchestration/Normalizer.ts
+[47]: ../../apps/server/src/terminal/Manager.ts
+[48]: ../../apps/server/src/preview/PortScanner.ts
+[49]: ../../apps/server/src/pollLoop.ts
