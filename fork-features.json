@@ -36,9 +36,13 @@
     },
     {
       "name": "terminal-subprocess-poll",
-      "description": "Bounded terminal and preview polling, so Windows stops spawning one PowerShell per terminal per second at unbounded concurrency. Issue #83, merged to main in #106. This branch predates that merge, so here the entry still reserves the seam; it holds the landed files once main is merged in.",
-      "files": ["apps/server/src/terminal/Manager.ts", "apps/server/src/preview/PortScanner.ts"],
-      "test": "apps/server/src/terminal/Manager.test.ts",
+      "description": "Bounded terminal and preview polling, so Windows stops spawning one PowerShell per terminal per second at unbounded concurrency. Issue #83, merged to main in #106. pollLoop.ts is the fork's own module and upstream has no file at that path, so its test cannot pass on plain upstream.",
+      "files": [
+        "apps/server/src/pollLoop.ts",
+        "apps/server/src/terminal/Manager.ts",
+        "apps/server/src/preview/PortScanner.ts"
+      ],
+      "test": "apps/server/src/pollLoop.test.ts",
       "patchesUpstream": true
     },
     {

@@ -114,9 +114,11 @@ jobs:
         env:
           UPSTREAM_REF: ${{ steps.resolve.outputs.upstream_ref }}
         run: |
+          # No -e in this step. The merge below is allowed to fail, because the step reads
+          # its exit code. So the two calls above the merge carry their own guard.
           set -uo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]" || { echo "git config user.name failed"; exit 1; }
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com" || { echo "git config user.email failed"; exit 1; }
 
           # Merge, never rebase (#60). A rebase would rewrite the fork's own history.
           if git merge --no-ff --no-edit -m "chore: merge upstream $UPSTREAM_REF" "$UPSTREAM_REF"; then
@@ -358,6 +360,7 @@ jobs:
           git commit -m "chore(release): prepare $VERSION"
 
       - name: Build the unsigned Windows installer
+        id: build
         shell: bash
         env:
           # The build reads its update source here. This is what points the installed fork at
@@ -366,6 +369,7 @@ jobs:
         run: pnpm dist:desktop:win
 
       - name: Release smoke
+        id: smoke
         shell: bash
         run: pnpm release:smoke
 
@@ -401,54 +405,110 @@ jobs:
           ls -l release-publish
 
       - name: Upload the installer
-        if: env.DRY_RUN == 'true'
+        if: env.DRY_RUN != 'false'
         uses: actions/upload-artifact@v7
         with:
           name: fork-installer-${{ steps.version.outputs.version }}
           path: release-publish/*
           if-no-files-found: error
 
-      - name: Stop before publish and before push
-        if: env.DRY_RUN == 'true'
+      - name: Stop before push and before publish
+        if: env.DRY_RUN != 'false'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
           MANIFEST: ${{ steps.assets.outputs.manifest }}
         run: echo "Dry run. Built $VERSION with $MANIFEST. Published nothing. Pushed nothing."
 
+      - name: Push the merge and the version bump
+        id: push
+        # Only an explicit false publishes and pushes. An empty or missing value is a dry run,
+        # so a defect upstream of this job cannot publish by omission.
+        if: env.DRY_RUN == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # First, so the tag the release carries names a commit that is on the default branch.
+          # A release created before the push has nothing on the default branch to tag, and
+          # GitHub falls back to that branch's current head, which is not the tree this job
+          # built. A rejected push means the default branch moved after the gate ran, and
+          # nothing is published at that point. Run the workflow again.
+          merged_sha="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/$FORK_DEFAULT_BRANCH"
+          echo "merged_sha=$merged_sha" >> "$GITHUB_OUTPUT"
+
       - name: Publish the fork release
-        if: env.DRY_RUN != 'true'
+        id: publish
+        if: env.DRY_RUN == 'false'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          MERGED_SHA: ${{ steps.push.outputs.merged_sha }}
         run: |
           set -euo pipefail
+          # --target pins the tag to the commit this job built and pushed one step ago.
+          # Without it GitHub tags whatever the default branch head is when the call lands.
           # Not a prerelease and not a draft. The desktop app's "latest" channel resolves the
           # tag through /releases/latest, which skips both.
           gh release create "v$VERSION" release-publish/* \
             --repo "$GITHUB_REPOSITORY" \
+            --target "$MERGED_SHA" \
             --title "T3 Code Fork $VERSION" \
             --latest \
             --notes "Fork build of upstream \`$UPSTREAM_REF\` with every fork change kept. The Windows installer is unsigned, so SmartScreen warns on first run."
-
-      - name: Push the merge and the version bump
-        if: env.DRY_RUN != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Last, so the branch and the published release never disagree. A rejected push means
-          # the default branch moved after the gate ran. Run the workflow again.
-          git push origin "HEAD:refs/heads/$FORK_DEFAULT_BRANCH"
 
       - name: Write the build failure report
         id: build_report
         if: failure()
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          ASSETS_OUTCOME: ${{ steps.assets.outcome }}
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: |
           set -euo pipefail
+
+          # The release job runs one step after another, so the first step that reports a
+          # failure is the one that broke.
+          failed_step="a step before the Windows build"
+          if [ "$BUILD_OUTCOME" = "failure" ]; then
+            failed_step="Build the unsigned Windows installer"
+          elif [ "$SMOKE_OUTCOME" = "failure" ]; then
+            failed_step="Release smoke"
+          elif [ "$ASSETS_OUTCOME" = "failure" ]; then
+            failed_step="Collect the release files"
+          elif [ "$PUSH_OUTCOME" = "failure" ]; then
+            failed_step="Push the merge and the version bump"
+          elif [ "$PUBLISH_OUTCOME" = "failure" ]; then
+            failed_step="Publish the fork release"
+          elif [ "$BUILD_OUTCOME" = "success" ]; then
+            failed_step="a step after the Windows build that carries no id"
+          fi
+
+          # Say what is on the repository now, rather than assuming. A release can exist by
+          # the time a later step fails, and a half-made release has to be seen by a human.
+          if [ -n "${VERSION:-}" ] && gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_state="Release \`v$VERSION\` exists. Look at it before running this again."
+          else
+            release_state="No fork release was published by this run."
+          fi
+
+          case "$PUSH_OUTCOME" in
+            success) push_state="The merge and the version bump are on \`$FORK_DEFAULT_BRANCH\`." ;;
+            failure) push_state="The push to \`$FORK_DEFAULT_BRANCH\` was rejected." ;;
+            *) push_state="Nothing was pushed to \`$FORK_DEFAULT_BRANCH\`." ;;
+          esac
+
           {
-            echo "\`$UPSTREAM_REF\` passed the fork gate, then failed the Windows build or the release smoke check."
-            echo "The fork update workflow published nothing and pushed nothing."
+            echo "\`$UPSTREAM_REF\` passed the fork gate, then the release job failed."
+            echo ""
+            echo "Failing step: $failed_step"
+            echo ""
+            echo "$release_state"
+            echo "$push_state"
             echo ""
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$RUNNER_TEMP/build-issue.md"
@@ -462,6 +522,8 @@ jobs:
         if: failure()
         uses: ./.github/actions/report-fork-update-issue
         with:
-          title: Upstream ${{ needs.gate.outputs.upstream_ref }} breaks the fork gate
+          # Its own title. The action dedupes on an exact title match, so sharing the gate's
+          # title would file a build failure as a comment on a merge-conflict issue.
+          title: Upstream ${{ needs.gate.outputs.upstream_ref }} fails the fork release build
           body: ${{ steps.build_report.outputs.body }}
           token: ${{ github.token }}

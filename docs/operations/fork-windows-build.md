@@ -157,8 +157,10 @@ The workflow runs on a schedule at 06:00 UTC, and on `workflow_dispatch`. Dispat
 
 - `upstream_ref`. The ref to merge. Empty means the newest upstream nightly tag, found with
   `git ls-remote --tags --refs https://github.com/pingdotgg/t3code 'v*-nightly.*' | sort -V | tail -n 1`.
-- `dry_run`. Default `true` on dispatch, `false` on the schedule. A dry run stops before publish and
-  before push, and uploads the installer as a workflow artifact instead.
+- `dry_run`. Default `true` on dispatch, `false` on the schedule. A dry run stops before push and
+  before publish, and uploads the installer as a workflow artifact instead. Only an exact `false`
+  pushes and publishes. An empty or missing value is a dry run, so a defect in the steps that
+  resolve the input cannot publish by omission.
 
 A real run only starts from `main`. A dispatch from any other branch must be a dry run.
 
@@ -167,7 +169,14 @@ There are two jobs.
 1. `gate`, on `ubuntu-latest`. It merges upstream, then runs `pnpm typecheck`, `pnpm lint`,
    `pnpm test` and `node scripts/check-fork-features.ts`.
 2. `release`, on `windows-latest`. It repeats the merge at the commit the gate passed, bumps the
-   version, runs `pnpm dist:desktop:win`, then `pnpm release:smoke`, then publishes and pushes.
+   version, runs `pnpm dist:desktop:win`, then `pnpm release:smoke`, then pushes the merge, then
+   publishes the release.
+
+The push comes before the publish, and the publish carries `--target <merged sha>`. A tag can only
+name a commit the repository already has on a branch. A release created before the push has no such
+commit, so GitHub tags the current head of the default branch instead, which is not the tree the job
+built. Push first, then tag the exact sha that was pushed. A rejected push means the default branch
+moved after the gate ran, and nothing is published at that point. Run the workflow again.
 
 The gate runs on Linux, not Windows. That is a deliberate split. The Windows test suite was red when
 this pipeline was written ([#80](https://github.com/autoprintworks/t3code/issues/80)), so a Windows
@@ -212,9 +221,11 @@ files it lives in, the test that proves it, and whether it patches a file upstre
 tests. It runs in the gate and in `ci.yml`, so an upstream merge that deletes a fork seam stops
 before it can publish.
 
-Two entries need a word. `terminal-subprocess-poll`
-([#83](https://github.com/autoprintworks/t3code/issues/83)) landed on `main` in #106; the entry
-reserves its files and its test so an upstream merge cannot quietly remove them. #80 landed in #107
+Every entry names a test that cannot pass on plain upstream. That is the point of the manifest: a
+test upstream also owns would stay green after an upstream merge deleted the fork's work. So
+`terminal-subprocess-poll` ([#83](https://github.com/autoprintworks/t3code/issues/83), landed on
+`main` in #106) names `apps/server/src/pollLoop.test.ts`. `pollLoop.ts` is the fork's own module and
+upstream has no file at that path, so the test fails to import on plain upstream. #80 landed in #107
 as test fixes with no product code of its own, so its landed sibling
 [#75](https://github.com/autoprintworks/t3code/issues/75), the Windows fix in
 `scripts/release-smoke.ts`, is what `fork-desktop-build` holds for it.
@@ -231,22 +242,29 @@ same tag comments on that issue rather than opening another.
 A red gate after a clean merge opens `Upstream <tag> breaks the fork gate` with the failing step, and
 also publishes nothing and pushes nothing.
 
+A failure in the release job, after a green gate, opens `Upstream <tag> fails the fork release
+build`. It has its own title, because the issue action dedupes on an exact title match and a build
+failure must never land as a comment on a conflict issue. Its body names the step that failed, says
+whether a release `v<version>` now exists, and says whether the merge reached the default branch. A
+release job can fail after the push, or after the publish, so the body reads the state rather than
+assuming it.
+
 A worker resolves a conflict by hand, in a normal pull request against `main`: merge the upstream tag
 locally, fix the conflicting files, open the pull request. Do not rebase. Once that pull request is
 on `main`, dispatch the workflow again against the same tag.
 
 ### The fork is behind upstream
 
-`main` last took upstream at `v0.0.32` (`3c7959c04 Merge upstream v0.0.32`). Upstream is on
-`v0.0.41-nightly`. No upstream tag merges into `main` cleanly:
+`main` last took upstream at `v0.0.33` (`464c76ccb`, merged in #114 under #109). Upstream is on
+`v0.0.41-nightly`, and the newest nightly still does not merge cleanly:
 
-| upstream ref                    | conflicting files |
-| ------------------------------- | ----------------- |
-| `v0.0.33-nightly.20260807.1025` | 4                 |
-| `v0.0.33`                       | 76                |
-| `v0.0.41-nightly.20260908.1414` | 105 and rising    |
+| upstream ref                    | conflicting files    |
+| ------------------------------- | -------------------- |
+| `v0.0.33`                       | 0, already on `main` |
+| `v0.0.41-nightly.20260908.1414` | 145                  |
 
-Measured with `git merge-tree --write-tree --name-only main <ref>`. The counts climb as `main` moves,
+Measured on 2026-09-09 with `git merge-tree --write-tree --name-only main <ref>`, counting the
+conflicted paths it prints after the tree oid. The counts move as `main` moves and as upstream tags,
 so re-measure before planning the catch-up rather than trusting this table.
 
 So the first scheduled run will file a conflict issue, not a release. Someone has to walk the fork
