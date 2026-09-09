@@ -70,7 +70,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.backendCwd, "/repo");
       // The fork's own app user model id. See DesktopEnvironment.ts and #59.
       assert.equal(environment.appUserModelId, "com.autoprintworks.t3code.dev");
-      assert.equal(environment.linuxWmClass, "t3code-dev");
+      assert.equal(environment.linuxWmClass, "t3code-fork-dev");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),
         Option.some("http://localhost:5173/"),
