@@ -7,7 +7,9 @@
       "files": [
         "apps/desktop/src/app/DesktopEnvironment.ts",
         "apps/desktop/src/app/DesktopLinuxUrlHandler.ts",
-        "apps/desktop/src/electron/ElectronProtocol.ts"
+        "apps/desktop/src/electron/ElectronProtocol.ts",
+        "apps/desktop/src/app/DesktopEnvironment.test.ts",
+        "apps/desktop/src/window/DesktopWindow.test.ts"
       ],
       "test": "apps/desktop/src/app/DesktopLinuxUrlHandler.test.ts",
       "patchesUpstream": true
