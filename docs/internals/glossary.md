@@ -13,6 +13,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Checkpointing](#checkpointing)
 - [Connections](#connections)
 - [Host polls](#host-polls)
+- [Appearance](#appearance)
 
 ## Concepts
 
@@ -220,6 +221,21 @@ One pass of a timed host check. The terminal subprocess poll in [Manager.ts][47]
 
 The cadence policy both rounds run on, in [pollLoop.ts][49]. The first round runs at the base period; each round that reports no change multiplies the next period by a factor, up to a cap. A wake - the signal that the host is not idle - puts the next round back on the base period, but never cuts a base period short, so nothing can drive a poll faster than its configured rate. See [architecture overview][24].
 
+### Appearance
+
+#### Environment theme
+
+A theme an environment's machine publishes for clients to follow, one file per theme under `themes/` in that environment's state directory; the filename is the theme id. [environmentTheme.ts][50] watches the directory and streams the set over `subscribeServerConfig`; clients render each as a library card, generating a full palette when the file carries seed colors and using the palette directly when it is a standard exported theme file. A desktop that retints its apps when the system theme changes rewrites its file, so T3 Code follows along without a restart. See [environment-theme.md][51].
+
+#### Default theme
+
+The environment's theme, held in its `settings.json` as `defaultTheme` (with `defaultThemeSetAt`
+as the set-generation) and set with `t3 theme set <id>`. Web and desktop clients apply each set
+once — live when connected, on the next connect otherwise — so setting it switches them, while a
+theme a user picks in Settings afterwards sticks until the next set; mobile keeps its own
+appearance settings. Naming a published [environment theme](#environment-theme) is how a desktop
+ships T3 Code already matching it.
+
 ## Practical Shortcuts
 
 - If you see `requested`, think "intent recorded".
@@ -285,3 +301,5 @@ The cadence policy both rounds run on, in [pollLoop.ts][49]. The first round run
 [47]: ../../apps/server/src/terminal/Manager.ts
 [48]: ../../apps/server/src/preview/PortScanner.ts
 [49]: ../../apps/server/src/pollLoop.ts
+[50]: ../../apps/server/src/environmentTheme.ts
+[51]: ../user/environment-theme.md
