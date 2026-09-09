@@ -116,9 +116,17 @@ function withRealCodexHarness<A, E>(
   ).pipe(Effect.provide(NodeServices.layer));
 }
 
-const seedProjectAndThread = (harness: OrchestrationIntegrationHarness) =>
+/**
+ * The decider clamps a client `createdAt` to the thread's last write, and the
+ * transcript is ordered by that value since the fork dropped its own ordering
+ * column in #93. A test that dates its runtime events from a fixture clock has
+ * to seed the thread from the same clock, or every message it sends is clamped
+ * up to the real time the thread was created and the runtime events, which are
+ * not clamped, sort in front of them.
+ */
+const seedProjectAndThread = (harness: OrchestrationIntegrationHarness, seededAt?: string) =>
   Effect.gen(function* () {
-    const createdAt = nowIso();
+    const createdAt = seededAt ?? nowIso();
     const provider = harness.adapterHarness?.provider ?? CODEX_PROVIDER;
     const defaultModel = DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
     const instanceId = defaultInstanceIdForDriver(provider);
@@ -707,7 +715,8 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
 it.live("reverts to an earlier checkpoint and trims checkpoint projections + git refs", () =>
   withHarness((harness) =>
     Effect.gen(function* () {
-      yield* seedProjectAndThread(harness);
+      // This test dates its runtime events from a fixture clock, so seed from it.
+      yield* seedProjectAndThread(harness, "2026-02-24T10:00:00.000Z");
 
       yield* harness.adapterHarness!.queueTurnResponseForNextSession({
         events: [

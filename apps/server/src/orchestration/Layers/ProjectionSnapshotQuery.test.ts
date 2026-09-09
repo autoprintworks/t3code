@@ -319,6 +319,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinnedAt: null,
           titleRegeneration: null,
           readOnly: false,
+          fleetOwned: false,
           deletedAt: null,
           messages: [
             {
