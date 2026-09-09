@@ -44,6 +44,7 @@ const projectRow = (input: {
   repositoryIdentity: null,
   repositoryIdentityWorkspaceRoot: null,
   defaultModelSelection: null,
+  defaultThreadEnvMode: null,
   scripts: [],
   createdAt: now,
   updatedAt: now,

@@ -1,4 +1,5 @@
 import { assert, describe, it } from "vite-plus/test";
+import * as NodePath from "node:path";
 
 import {
   makeDevelopmentLauncherScript,
@@ -56,15 +57,16 @@ describe("electron development launcher", () => {
       "T3 Code (Dev)",
     );
 
+    // The bundle paths are joined with the host separator, so join here too. A
+    // literal POSIX string would assert the machine running the suite.
+    const executableDir = NodePath.join(
+      "/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app",
+      "Contents",
+      "MacOS",
+    );
     assert.equal(paths.launcherExecutableName, "T3 Code (Dev) Launcher");
-    assert.equal(
-      paths.launcherBinaryPath,
-      "/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app/Contents/MacOS/T3 Code (Dev) Launcher",
-    );
-    assert.equal(
-      paths.runtimeElectronBinaryPath,
-      "/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app/Contents/MacOS/Electron",
-    );
+    assert.equal(paths.launcherBinaryPath, NodePath.join(executableDir, "T3 Code (Dev) Launcher"));
+    assert.equal(paths.runtimeElectronBinaryPath, NodePath.join(executableDir, "Electron"));
 
     const script = makeDevelopmentLauncherScript({
       electronBinaryPath: paths.runtimeElectronBinaryPath,
@@ -72,10 +74,7 @@ describe("electron development launcher", () => {
       desktopRoot: "/repo/apps/desktop",
       environment: {},
     });
-    assert.include(
-      script,
-      "exec '/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app/Contents/MacOS/Electron'",
-    );
+    assert.include(script, `exec '${NodePath.join(executableDir, "Electron")}'`);
     assert.notInclude(script, "node_modules/electron");
   });
 });

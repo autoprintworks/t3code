@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - joins expected paths with the host separator.
 import { assert, it } from "@effect/vitest";
+import * as NodePath from "node:path";
 import { PNG } from "pngjs";
 
 import showcaseConfig, {
@@ -106,14 +108,17 @@ it("selects an explicit CI Android ABI without changing the local default", () =
   assert.throws(() => resolveShowcaseAndroidAbi("mips"), /Unsupported T3_SHOWCASE_ANDROID_ABI/u);
 });
 
+// The root is composed with the host's path separator, so build the expected
+// value the same way. A literal POSIX string would assert the machine running
+// the suite instead of the platform branch under test.
 it("uses platform-correct default Android SDK roots", () => {
   assert.equal(
     resolveAndroidSdkRoot({ HOME: "/Users/showcase" }, "darwin"),
-    "/Users/showcase/Library/Android/sdk",
+    NodePath.join("/Users/showcase", "Library/Android/sdk"),
   );
   assert.equal(
     resolveAndroidSdkRoot({ HOME: "/home/showcase" }, "linux"),
-    "/home/showcase/Android/Sdk",
+    NodePath.join("/home/showcase", "Android/Sdk"),
   );
   assert.equal(
     resolveAndroidSdkRoot(
@@ -147,8 +152,8 @@ it("expands both appearances into independent upload-ready directories", () => {
       directory: showcaseCaptureDirectory("/captures", capture),
     })),
     [
-      { appearance: "light", directory: "/captures/apple/iphone-test/light" },
-      { appearance: "dark", directory: "/captures/apple/iphone-test/dark" },
+      { appearance: "light", directory: NodePath.join("/captures/apple/iphone-test", "light") },
+      { appearance: "dark", directory: NodePath.join("/captures/apple/iphone-test", "dark") },
     ],
   );
 });

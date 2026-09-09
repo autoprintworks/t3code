@@ -136,7 +136,9 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
-  it.effect("re-reads the remote on every resolve", () =>
+  // The answer is cached per workspace root, so a remote that changes under a
+  // resolved root is only visible after the reactor invalidates that root.
+  it.effect("re-reads the remote once the workspace root is invalidated", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({
@@ -149,9 +151,13 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(yield* resolver.resolve(cwd)).toBeNull();
 
       yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+
+      yield* resolver.invalidate(cwd);
       expect((yield* resolver.resolve(cwd))?.canonicalKey).toBe("github.com/t3tools/t3code");
 
       yield* git(cwd, ["remote", "set-url", "origin", "git@github.com:T3Tools/t3code-next.git"]);
+      yield* resolver.invalidate(cwd);
 
       const changedIdentity = yield* resolver.resolve(cwd);
       expect(changedIdentity?.canonicalKey).toBe("github.com/t3tools/t3code-next");

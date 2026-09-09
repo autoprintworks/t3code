@@ -215,11 +215,20 @@ isolatedLayer()("ForkMigrations - database carrying the retired ordering column"
       assert.deepStrictEqual(activities, [{ activity_id: "activity-1", sequence: null }]);
 
       // Slot 38 is upstream's again, so upstream's own migration 38 is not
-      // skipped by the migrator's highest-id-wins bookkeeping.
-      const legacyRows = yield* sql<{ readonly migration_id: number }>`
-        SELECT migration_id FROM effect_sql_migrations WHERE migration_id >= 38
+      // skipped by the migrator's highest-id-wins bookkeeping. Ids 38 to 40
+      // arrived in v0.0.33 and all three run on top of the freed slot.
+      const legacyRows = yield* sql<{
+        readonly migration_id: number;
+        readonly name: string;
+      }>`
+        SELECT migration_id, name FROM effect_sql_migrations
+        WHERE migration_id >= 38 ORDER BY migration_id
       `;
-      assert.deepStrictEqual(legacyRows, []);
+      assert.deepStrictEqual(legacyRows, [
+        { migration_id: 38, name: "ProjectionThreadsPinOrderKey" },
+        { migration_id: 39, name: "ProjectionProjectsDefaultThreadEnvMode" },
+        { migration_id: 40, name: "ProjectionProjectFaviconPath" },
+      ]);
     }),
   );
 });
