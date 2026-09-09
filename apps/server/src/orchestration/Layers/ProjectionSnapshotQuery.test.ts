@@ -384,6 +384,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
       ]);
 
+      // Fork migration 006 restored upstream's nullable `sequence` column, so a row that
+      // stores no sequence comes back with no `sequence` key at all. Pin that. Fork
+      // migration 002 made the column NOT NULL DEFAULT 0, and under it this read `sequence: 0`.
+      assert.equal(Object.hasOwn(snapshot.threads[0]?.activities[0] ?? {}, "sequence"), false);
+
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.snapshotSequence, 5);
       assert.deepEqual(shellSnapshot.projects, [
@@ -1105,7 +1110,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'runtime.note',
             'unsequenced first',
             '{"source":"unsequenced"}',
-            0,
+            NULL,
             '2026-04-01T00:00:06.000Z'
           ),
           (
@@ -1148,9 +1153,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           summary: "unsequenced first",
           payload: { source: "unsequenced" },
           turnId: null,
-          // Fork migration 002 closed this column off as NOT NULL and backfills rows that predate
-          // it with 0, so 0 is what "unsequenced" now looks like. It still sorts ahead of 1 and 2.
-          sequence: 0,
           createdAt: "2026-04-01T00:00:06.000Z",
         },
         {
@@ -1174,6 +1176,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-04-01T00:00:04.000Z",
         },
       ]);
+
+      // Fork migration 006 restored upstream's nullable `sequence` column, so a row that
+      // stores no sequence comes back with no `sequence` key at all. Pin that. Fork
+      // migration 002 made the column NOT NULL DEFAULT 0, and under it this read `sequence: 0`.
+      assert.equal(Object.hasOwn(snapshot.threads[0]?.activities[0] ?? {}, "sequence"), false);
     }),
   );
 

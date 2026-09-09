@@ -1,0 +1,41 @@
+name: Report fork update issue
+description: >-
+  Open one issue with the given title, or comment on the open issue that already carries it.
+  Keeps a nightly pipeline from filing the same conflict or gate failure again every day.
+
+inputs:
+  title:
+    description: Issue title. Matched exactly against open issues before a new one is opened.
+    required: true
+  body:
+    description: Issue body, used for the new issue or for the comment on the existing one.
+    required: true
+  token:
+    description: Token with issues:write on this repository.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Open or reuse the issue
+      shell: bash
+      env:
+        ISSUE_TITLE: ${{ inputs.title }}
+        ISSUE_BODY: ${{ inputs.body }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        body_path="$RUNNER_TEMP/fork-update-issue.md"
+        printf '%s\n' "$ISSUE_BODY" > "$body_path"
+
+        # gh's search is fuzzy, so match the title exactly here rather than trusting the hit.
+        existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+          --search "$ISSUE_TITLE in:title" --json number,title --jq '.[] | [.number, .title] | @tsv' \
+          | awk -F'\t' -v title="$ISSUE_TITLE" '$2 == title { print $1; exit }')
+
+        if [[ -n "$existing" ]]; then
+          gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body_path"
+          echo "Commented on existing issue #$existing."
+        else
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file "$body_path"
+        fi

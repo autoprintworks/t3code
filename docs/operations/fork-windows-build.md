@@ -132,6 +132,172 @@ and this fork has none of those secrets. Running the installer trips Windows Sma
 the same warning; there is nothing to fix here short of standing up a signing story, which is a
 separate decision this ticket does not make.
 
+## The update pipeline
+
+`.github/workflows/fork-update.yml` does the build above on a runner, then publishes it as a fork
+release. The installed fork points its update button at `autoprintworks/t3code`, so a published
+release is how a fix reaches the desktop without anyone running a build by hand.
+
+### Before any of it runs
+
+GitHub Actions is on for `autoprintworks/t3code`, with `allowed_actions: all`. The workflows this
+fork inherited from upstream and does not want are disabled from the Actions tab, not deleted:
+`release.yml`, `deploy-relay`, both Mobile EAS workflows and Mobile Showcase Screenshots. Leave
+them that way. Re-enabling `release.yml` starts upstream's scheduled nightly release from this
+fork's default branch.
+
+One GitHub rule still holds: a `workflow_dispatch` workflow must sit on the default branch before
+GitHub accepts a dispatch, even a dispatch aimed at another branch. A dispatch from a feature branch
+fails with `HTTP 404: workflow fork-update.yml not found on the default branch`. So the first
+dispatch of this workflow happens after it is merged to `main`.
+
+### What runs when
+
+The workflow runs on a schedule at 06:00 UTC, and on `workflow_dispatch`. Dispatch takes two inputs:
+
+- `upstream_ref`. The ref to merge. Empty means the newest upstream stable release tag, found
+  with `git ls-remote --tags --refs https://github.com/pingdotgg/t3code 'v*'`, kept to tags matching
+  `^v[0-9]+\.[0-9]+\.[0-9]+$`, ordered by `sort -V`. The fork tracks upstream stable releases and
+  never nightlies, so a `-nightly` tag is never picked by default. An explicit `upstream_ref` still
+  takes any ref, which is how a nightly or a branch is merged on purpose.
+- `dry_run`. Default `true` on dispatch, `false` on the schedule. A dry run stops before push and
+  before publish, and uploads the installer as a workflow artifact instead. Only an exact `false`
+  pushes and publishes. An empty or missing value is a dry run, so a defect in the steps that
+  resolve the input cannot publish by omission.
+
+A real run only starts from `main`. A dispatch from any other branch must be a dry run.
+
+Upstream cuts a stable release every few weeks, so on most mornings the newest one is already
+merged. The resolve step checks that with
+`git merge-base --is-ancestor <tag> refs/remotes/origin/main`, prints
+`Upstream <tag> is already on main. Nothing to do.` and stops. The gate steps and the whole release
+job are skipped, and the run is green. No issue is filed, because nothing is wrong. That check runs
+only when the tag was resolved by default, so an explicit `upstream_ref` can still rebuild a tag
+that is already merged.
+
+There are two jobs.
+
+1. `gate`, on `ubuntu-latest`. It merges upstream, then runs `pnpm typecheck`, `pnpm lint`,
+   `pnpm test` and `node scripts/check-fork-features.ts`.
+2. `release`, on `windows-latest`. It repeats the merge at the commit the gate passed, bumps the
+   version, runs `pnpm dist:desktop:win`, then `pnpm release:smoke`, then pushes the merge, then
+   publishes the release.
+
+The push comes before the publish, and the publish carries `--target <merged sha>`. A tag can only
+name a commit the repository already has on a branch. A release created before the push has no such
+commit, so GitHub tags the current head of the default branch instead, which is not the tree the job
+built. Push first, then tag the exact sha that was pushed. A rejected push means the default branch
+moved after the gate ran, and nothing is published at that point. Run the workflow again.
+
+The gate runs on Linux, not Windows. That is a deliberate split. The Windows test suite was red when
+this pipeline was written ([#80](https://github.com/autoprintworks/t3code/issues/80)), so a Windows
+gate would have been red before it started and no release could ever pass it. Everything that has to
+be Windows, the installer and the release smoke check, stays on `windows-latest`.
+
+#80 has since landed on `main`. Moving the gate to `windows-latest` is now a question of whether a
+full Windows run is worth the runner minutes, not of whether it can pass. Prove it with one dispatch
+before moving it.
+
+The merge is always `git merge --no-ff`. Never a rebase
+([#60](https://github.com/autoprintworks/t3code/issues/60)). A rebase would rewrite the fork's own
+commits on top of upstream and lose the record of what this fork changed.
+
+### The version scheme
+
+`<upstream base version>-ap.<n>`. A fork release is named after the upstream release it contains.
+
+`v0.0.33` gives base `0.0.33`, then `0.0.33-ap.1`. That is the rule the `chore(release): prepare`
+commits on `main` already follow.
+
+`<n>` is one above the highest `-ap` suffix already used for that base version, counting both the
+current `apps/desktop/package.json` version and any existing `v<base>-ap.*` tag. So a second run
+against the same upstream tag produces `0.0.33-ap.2`.
+
+A ref that carries no version, a branch, keeps the base the fork is already on and moves only
+`<n>`. A merge of `origin/main` at `0.0.33-ap.1` builds `0.0.33-ap.2`.
+
+The patch is not bumped. An earlier version of this workflow did bump it, so `v0.0.33` built
+`0.0.34-ap.1`. That names a version the build does not carry, and it collides with the `v0.0.34`
+upstream cuts next. The only thing a fork version has to sort above is the previous fork build,
+because `T3CODE_DESKTOP_UPDATE_REPOSITORY` points the installed app at the fork's own releases and
+nothing else is in that feed. `0.0.33-ap.2` sorts above `0.0.33-ap.1`, which is all that is needed.
+
+`0.0.33-ap.1` does not match `/-nightly\.\d{8}\.\d+$/`, so `resolveDesktopUpdateChannel` returns
+`latest` and the build writes `latest.yml`. The release carries the installer, the `.exe.blockmap`
+and `latest.yml`. It is published as a normal release, not a prerelease and not a draft, because the
+`latest` channel resolves the tag through GitHub's `/releases/latest`, which skips both.
+
+The build gets `T3CODE_DESKTOP_UPDATE_REPOSITORY=autoprintworks/t3code`. That is the only thing that
+sets the update feed; see the "No silent re-overwrite" note above.
+
+### The fork feature manifest
+
+`fork-features.json` at the repository root lists every feature this fork carries over upstream: the
+files it lives in, the test that proves it, and whether it patches a file upstream also owns.
+`scripts/check-fork-features.ts` fails when a listed file or test file is gone, then runs the listed
+tests. It runs in the gate and in `ci.yml`, so an upstream merge that deletes a fork seam stops
+before it can publish.
+
+Every entry names a test that cannot pass on plain upstream. That is the point of the manifest: a
+test upstream also owns would stay green after an upstream merge deleted the fork's work. So
+`terminal-subprocess-poll` ([#83](https://github.com/autoprintworks/t3code/issues/83), landed on
+`main` in #106) names `apps/server/src/pollLoop.test.ts`. `pollLoop.ts` is the fork's own module and
+upstream has no file at that path, so the test fails to import on plain upstream. #80 landed in #107
+as test fixes with no product code of its own, so its landed sibling
+[#75](https://github.com/autoprintworks/t3code/issues/75), the Windows fix in
+`scripts/release-smoke.ts`, is what `fork-desktop-build` holds for it.
+
+Add an entry whenever you add a fork feature. The manifest is the list of things an upstream merge
+must not break.
+
+### When a merge conflicts
+
+The gate aborts the merge, opens an issue titled `Upstream <tag> conflicts with fork` listing the
+conflicting files, publishes nothing, pushes nothing, and exits non-zero. A second conflict on the
+same tag comments on that issue rather than opening another.
+
+A red gate after a clean merge opens `Upstream <tag> breaks the fork gate` with the failing step, and
+also publishes nothing and pushes nothing.
+
+A failure in the release job, after a green gate, opens `Upstream <tag> fails the fork release
+build`. It has its own title, because the issue action dedupes on an exact title match and a build
+failure must never land as a comment on a conflict issue. Its body names the step that failed, says
+whether a release `v<version>` now exists, and says whether the merge reached the default branch. A
+release job can fail after the push, or after the publish, so the body reads the state rather than
+assuming it.
+
+A worker resolves a conflict by hand, in a normal pull request against `main`: merge the upstream tag
+locally, fix the conflicting files, open the pull request. Do not rebase. Once that pull request is
+on `main`, dispatch the workflow again against the same tag.
+
+### The fork is behind upstream
+
+`main` last took upstream at `v0.0.33` (`464c76ccb`, merged in #114 under #109). Upstream's newest
+stable release is `v0.0.40`, which is what the schedule resolves, and it does not merge cleanly:
+
+| upstream ref | conflicting files    |
+| ------------ | -------------------- |
+| `v0.0.33`    | 0, already on `main` |
+| `v0.0.40`    | 140                  |
+
+Measured on 2026-09-09 with `git merge-tree --write-tree --name-only main <ref>`, counting the
+conflicted paths it prints after the tree oid. The counts move as `main` moves and as upstream
+releases, so re-measure before planning the catch-up rather than trusting this table.
+
+So the first scheduled run will file a conflict issue, not a release. Someone has to walk the fork
+forward by hand first, one upstream release at a time, before the pipeline can take the newest
+stable release on its own. That catch-up is not part of #94.
+
+### The manual build as fallback
+
+The runner build is the same `dist:desktop:win` command described at the top of this document. When
+the pipeline is down, or a release has to go out before a conflict is resolved, build locally with
+[Reproducing this cold](#reproducing-this-cold) below and install the `.exe` by hand. A hand-built
+installer has no update feed unless you set `T3CODE_DESKTOP_UPDATE_REPOSITORY` yourself.
+
+Signing stays out of scope for the pipeline for the same reason it is out of scope locally: this fork
+has no signing secrets. See [Unsigned installer cost](#unsigned-installer-cost) above.
+
 ## Reproducing this cold
 
 1. `vp i` (first checkout only).
