@@ -23,8 +23,9 @@ interface ProviderSnapshotState {
  * A probe spawns the provider's CLI, so it only ever runs for a provider the
  * user enabled, and only at two moments: once when the instance is built, and
  * again whenever `streamSettings` reports a change the driver considers
- * material. There is no timer. A disabled instance answers with
- * `initialSnapshot`, which every driver builds without touching the CLI.
+ * material. A driver decides that with `checkProviderOnSettingsChange`. There
+ * is no timer. A disabled instance answers with `initialSnapshot`, which every
+ * driver builds without touching the CLI.
  *
  * `isEnabled` reads the instance's own enabled flag, the one the registry
  * resolved from settings and handed to `ProviderDriver.create`. It takes no
@@ -48,6 +49,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
+  readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
 }): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope> {
   const refreshSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* Effect.acquireRelease(
@@ -126,6 +128,21 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     if (!forceRefresh && !input.haveSettingsChanged(previousSettings, nextSettings)) {
       yield* Ref.set(settingsRef, nextSettings);
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
+    }
+
+    if (
+      !forceRefresh &&
+      input.checkProviderOnSettingsChange?.(previousSettings, nextSettings) === false
+    ) {
+      const state = yield* Ref.get(snapshotStateRef);
+      const nextGeneration = state.enrichmentGeneration + 1;
+      yield* Ref.set(snapshotStateRef, {
+        ...state,
+        enrichmentGeneration: nextGeneration,
+      });
+      yield* Ref.set(settingsRef, nextSettings);
+      yield* restartSnapshotEnrichment(nextSettings, state.snapshot, nextGeneration);
+      return state.snapshot;
     }
 
     const nextSnapshot = yield* takeSnapshot(nextSettings);

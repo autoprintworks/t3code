@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("react-native", () => ({
   Pressable: "Pressable",
   ScrollView: "ScrollView",
+  StyleSheet: { hairlineWidth: 1 },
   View: "View",
   useColorScheme: () => "dark",
 }));

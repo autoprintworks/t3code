@@ -808,7 +808,7 @@ describe("ClaudeAdapterLive", () => {
         mimeType: "image/png",
         sizeBytes: 4,
       };
-      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment)!);
       NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
       NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
 
@@ -5075,7 +5075,7 @@ describe("ClaudeAdapterLive", () => {
           const { attachmentsDir } = yield* ServerConfig;
           const attachmentPath = NodePath.join(
             attachmentsDir,
-            attachmentRelativePath(IMAGE_ATTACHMENT),
+            attachmentRelativePath(IMAGE_ATTACHMENT)!,
           );
           NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
           NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));

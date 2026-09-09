@@ -310,4 +310,34 @@ describe("commandInvariants", () => {
       assert.include(String(duplicate), "already exists");
     }),
   );
+
+  effectIt.effect(
+    "lets a draft retry re-create a thread id after its first attempt was deleted",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-1");
+        const firstAttempt = readModel.threads.find((thread) => thread.id === threadId)!;
+        const afterRollback: OrchestrationReadModel = {
+          ...readModel,
+          threads: readModel.threads.map((thread) =>
+            thread.id === threadId ? { ...thread, deletedAt: now, updatedAt: now } : thread,
+          ),
+        };
+        const retry: OrchestrationCommand = {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-retry"),
+          threadId,
+          projectId: firstAttempt.projectId,
+          title: firstAttempt.title,
+          modelSelection: firstAttempt.modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        };
+
+        yield* requireThreadAbsent({ readModel: afterRollback, command: retry, threadId });
+      }),
+  );
 });

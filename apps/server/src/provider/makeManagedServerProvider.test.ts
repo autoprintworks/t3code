@@ -331,6 +331,40 @@ describe("makeManagedServerProvider", () => {
     ),
   );
 
+  it.effect("keeps its snapshot through a settings change the driver calls immaterial", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settingsChanges = yield* PubSub.unbounded<TestSettings>();
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const enrichmentCalls = yield* Ref.make(0);
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.fromPubSub(settingsChanges),
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          isEnabled: () => true,
+          checkProviderOnSettingsChange: () => false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap(() => Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)),
+            Effect.as(refreshedSnapshot),
+          ),
+          enrichSnapshot: () => Ref.update(enrichmentCalls, (count) => count + 1),
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        yield* PubSub.publish(settingsChanges, { enabled: false });
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        assert.strictEqual(yield* Ref.get(enrichmentCalls), 2);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("streams supplemental snapshot updates after the base provider check completes", () =>
     Effect.scoped(
       Effect.gen(function* () {
