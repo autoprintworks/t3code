@@ -385,6 +385,12 @@ jobs:
           shopt -s nullglob
           mkdir -p release-publish
           for file in release/*.exe release/*.exe.blockmap release/*.yml; do
+            # electron-builder writes builder-debug.yml next to the channel file. It is a
+            # build log, not something the updater reads, and it makes the count below
+            # see two manifests.
+            if [ "$(basename "$file")" = "builder-debug.yml" ]; then
+              continue
+            fi
             cp "$file" release-publish/
           done
 
