@@ -121,7 +121,9 @@ describe("windowsExecutableSubsystem", () => {
   });
 
   it("finds a bare name on PATH", () => {
-    const environment = { PATH: fixtures, PATHEXT: ".EXE" };
+    // NTFS matches a PATHEXT suffix in any case. CI runs this suite on Linux, which does not,
+    // so take the suffix from the fixture rather than writing ".EXE" and relying on the host.
+    const environment = { PATH: fixtures, PATHEXT: NodePath.extname(consoleExe) };
     expect(windowsExecutableSubsystem("t3-console-fixture", undefined, environment)).toBe(
       "console",
     );
