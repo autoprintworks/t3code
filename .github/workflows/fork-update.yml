@@ -59,7 +59,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          persist-credentials: false
+          # No persist-credentials: false here. That makes checkout run its "Removing auth"
+          # step, which runs `git submodule foreach` over the index. .repos/alchemy-effect
+          # carries a gitlink with no .gitmodules entry, so that call exits 128 and fails the
+          # job. This job only has contents: read, so a persisted token cannot push anyway.
           sparse-checkout: |
             /*
             !/.repos/
