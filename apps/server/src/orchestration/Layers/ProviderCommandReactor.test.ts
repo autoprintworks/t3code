@@ -83,8 +83,11 @@ const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
  * millisecond.
  */
 let lastDispatchedMs = 0;
-const dispatchedAt = () => {
-  lastDispatchedMs = Math.max(Effect.runSync(Clock.currentTimeMillis), lastDispatchedMs + 1);
+const dispatchedAt = async (harness: {
+  readonly runEffect: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
+}) => {
+  const nowMs = await harness.runEffect(Clock.currentTimeMillis);
+  lastDispatchedMs = Math.max(nowMs, lastDispatchedMs + 1);
   return DateTime.formatIso(DateTime.makeUnsafe(lastDispatchedMs));
 };
 
@@ -730,7 +733,7 @@ describe("ProviderCommandReactor", () => {
 
   it("regenerates a thread title from the current conversation", async () => {
     const harness = await createHarness();
-    const now = dispatchedAt();
+    const now = await dispatchedAt(harness);
     harness.generateThreadTitle.mockReturnValue(
       Effect.succeed({ title: "Resolve stale reconnect state" }),
     );
@@ -766,7 +769,7 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("assistant-message-before-title-regeneration"),
         delta: "The remaining issue is stale reconnect state.",
-        createdAt: dispatchedAt(),
+        createdAt: await dispatchedAt(harness),
       }),
     );
     await harness.runEffect(
@@ -775,7 +778,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-assistant-complete-before-title-regeneration"),
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("assistant-message-before-title-regeneration"),
-        createdAt: dispatchedAt(),
+        createdAt: await dispatchedAt(harness),
       }),
     );
     await harness.runEffect(
@@ -809,7 +812,7 @@ describe("ProviderCommandReactor", () => {
 
   it("pins the first user message when regeneration context is truncated", async () => {
     const harness = await createHarness();
-    const now = dispatchedAt();
+    const now = await dispatchedAt(harness);
     const firstUserMessage = `Review subagent monitoring risks. ${"Opening context. ".repeat(200)}`;
     const recentUserMessage = `LATEST FINDING: ${"implementation detail ".repeat(320)}`;
     harness.generateThreadTitle.mockReturnValue(
@@ -869,7 +872,7 @@ describe("ProviderCommandReactor", () => {
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
-        createdAt: dispatchedAt(),
+        createdAt: await dispatchedAt(harness),
       }),
     );
     await harness.runEffect(
@@ -893,7 +896,7 @@ describe("ProviderCommandReactor", () => {
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
-        createdAt: dispatchedAt(),
+        createdAt: await dispatchedAt(harness),
       }),
     );
     await harness.runEffect(
@@ -1113,7 +1116,7 @@ describe("ProviderCommandReactor", () => {
 
   it("pins the first user context and attachment before the retained tail", async () => {
     const harness = await createHarness();
-    const now = dispatchedAt();
+    const now = await dispatchedAt(harness);
     const firstUserContext = "USER:\nOld visual issue\n[Attachments: old-issue.png]";
     const truncationMarker = "[Earlier content truncated]\n\n";
     const retainedContext = "x".repeat(
@@ -1159,7 +1162,7 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("assistant-truncated-regeneration-context"),
         delta: `content before retained tail${"x".repeat(8_100)}`,
-        createdAt: dispatchedAt(),
+        createdAt: await dispatchedAt(harness),
       }),
     );
     await harness.runEffect(
@@ -1168,7 +1171,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-assistant-truncated-regeneration-context-complete"),
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("assistant-truncated-regeneration-context"),
-        createdAt: dispatchedAt(),
+        createdAt: await dispatchedAt(harness),
       }),
     );
     await harness.runEffect(
