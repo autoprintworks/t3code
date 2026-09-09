@@ -23,14 +23,6 @@ on:
         required: false
         default: true
         type: boolean
-  # Temporary, removed once this workflow is on the default branch. GitHub only accepts a
-  # workflow_dispatch for a workflow that already sits on the default branch, even when the
-  # dispatch names another branch, so the proof runs #94 asks for cannot be dispatched from
-  # this pull request. This push trigger stands in for the dispatch. The ref it merges comes
-  # from the FORK_UPDATE_PROOF_REF repository variable. A push run is always a dry run.
-  push:
-    branches:
-      - fork/94-update-workflow
 
 concurrency:
   group: fork-update
@@ -72,7 +64,7 @@ jobs:
         id: resolve
         shell: bash
         env:
-          INPUT_UPSTREAM_REF: ${{ inputs.upstream_ref || vars.FORK_UPDATE_PROOF_REF }}
+          INPUT_UPSTREAM_REF: ${{ inputs.upstream_ref }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
