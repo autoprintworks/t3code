@@ -1,4 +1,8 @@
-import { pickableProviderSkills } from "@t3tools/client-runtime/providerSkills";
+import {
+  dedupeProviderSkillsByName,
+  getProviderSkillsForSlashMenu,
+  pickableProviderSkills,
+} from "@t3tools/client-runtime/providerSkills";
 import type {
   EnvironmentId,
   ProviderInstanceId,
@@ -152,7 +156,7 @@ export function useComposerCommandMenu({
         });
       }
 
-      const skillItems = (selectedProviderStatus?.skills ?? [])
+      const skillItems = getProviderSkillsForSlashMenu(selectedProviderStatus?.skills ?? [], true)
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
           id: `skill:${skill.name}`,
@@ -166,7 +170,11 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "skill") {
-      const pickableSkills = pickableProviderSkills(composerSkills.skills);
+      // Upstream dedupes by name; the fork answers skills per project and narrows
+      // to what a picker may offer (#104), so the dedupe runs over that set.
+      const pickableSkills = dedupeProviderSkillsByName(
+        pickableProviderSkills(composerSkills.skills),
+      );
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\$+/,
       });

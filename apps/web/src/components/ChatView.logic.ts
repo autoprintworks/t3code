@@ -52,16 +52,6 @@ export function codexArtifactTemplatePromptToAppend(
     ? null
     : codexArtifactTemplateUsePrompt(template);
 }
-export function shoulderTabReserve(overlay: HTMLElement): number {
-  if (overlay.querySelector(".chat-composer-tasks-tab")) return 0;
-  const tab = overlay.querySelector<HTMLElement>(".chat-composer-shoulder-tab");
-  const surface = overlay.querySelector<HTMLElement>('[data-chat-composer-main-surface="true"]');
-  if (!tab || !surface) return 0;
-  return Math.max(
-    0,
-    Math.round(surface.getBoundingClientRect().top - tab.getBoundingClientRect().top),
-  );
-}
 
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
@@ -120,13 +110,19 @@ export function resolveDraftHeroState(input: {
 
 export function resolveDraftPromotionNavigationTarget(input: {
   serverThreadRef: ScopedThreadRef | null;
-  serverThreadStarted: boolean;
+  serverThread: Pick<Thread, "latestTurn" | "session"> | null | undefined;
   backgroundSubmissionPending: boolean;
 }): ScopedThreadRef | null {
   if (input.backgroundSubmissionPending) {
     return null;
   }
-  return input.serverThreadStarted ? input.serverThreadRef : null;
+  const sessionStatus = input.serverThread?.session?.status;
+  const turnStarted = input.serverThread?.latestTurn?.startedAt != null;
+  const startupStopped =
+    sessionStatus === "error" || sessionStatus === "stopped" || sessionStatus === "interrupted";
+  // Keep local preparation feedback mounted until the server can render the
+  // running turn or its startup error on the canonical thread route.
+  return turnStarted || startupStopped ? input.serverThreadRef : null;
 }
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
