@@ -60,6 +60,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Resolve the upstream ref and the run mode
         id: resolve
@@ -260,6 +264,10 @@ jobs:
         with:
           ref: ${{ needs.gate.outputs.base_sha }}
           fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Merge upstream into the fork
         shell: bash
