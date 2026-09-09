@@ -155,14 +155,25 @@ dispatch of this workflow happens after it is merged to `main`.
 
 The workflow runs on a schedule at 06:00 UTC, and on `workflow_dispatch`. Dispatch takes two inputs:
 
-- `upstream_ref`. The ref to merge. Empty means the newest upstream nightly tag, found with
-  `git ls-remote --tags --refs https://github.com/pingdotgg/t3code 'v*-nightly.*' | sort -V | tail -n 1`.
+- `upstream_ref`. The ref to merge. Empty means the newest upstream stable release tag, found
+  with `git ls-remote --tags --refs https://github.com/pingdotgg/t3code 'v*'`, kept to tags matching
+  `^v[0-9]+\.[0-9]+\.[0-9]+$`, ordered by `sort -V`. The fork tracks upstream stable releases and
+  never nightlies, so a `-nightly` tag is never picked by default. An explicit `upstream_ref` still
+  takes any ref, which is how a nightly or a branch is merged on purpose.
 - `dry_run`. Default `true` on dispatch, `false` on the schedule. A dry run stops before push and
   before publish, and uploads the installer as a workflow artifact instead. Only an exact `false`
   pushes and publishes. An empty or missing value is a dry run, so a defect in the steps that
   resolve the input cannot publish by omission.
 
 A real run only starts from `main`. A dispatch from any other branch must be a dry run.
+
+Upstream cuts a stable release every few weeks, so on most mornings the newest one is already
+merged. The resolve step checks that with
+`git merge-base --is-ancestor <tag> refs/remotes/origin/main`, prints
+`Upstream <tag> is already on main. Nothing to do.` and stops. The gate steps and the whole release
+job are skipped, and the run is green. No issue is filed, because nothing is wrong. That check runs
+only when the tag was resolved by default, so an explicit `upstream_ref` can still rebuild a tag
+that is already merged.
 
 There are two jobs.
 
@@ -193,19 +204,25 @@ commits on top of upstream and lose the record of what this fork changed.
 
 ### The version scheme
 
-Take the upstream tag's base version, bump the patch, add `-ap.<n>`.
+`<upstream base version>-ap.<n>`. A fork release is named after the upstream release it contains.
 
-`v0.0.41-nightly.20260908.1414` gives base `0.0.41`, then `0.0.42-ap.1`.
+`v0.0.33` gives base `0.0.33`, then `0.0.33-ap.1`. That is the rule the `chore(release): prepare`
+commits on `main` already follow.
 
-`<n>` is one above the highest `-ap` suffix already used for that version, counting both the current
-`apps/desktop/package.json` version and any existing `v<version>-ap.*` tag. So a second run against
-the same upstream tag produces `0.0.42-ap.2`.
+`<n>` is one above the highest `-ap` suffix already used for that base version, counting both the
+current `apps/desktop/package.json` version and any existing `v<base>-ap.*` tag. So a second run
+against the same upstream tag produces `0.0.33-ap.2`.
 
-This sorts above three things at once: the installed fork build (`0.0.32-ap.7`), the upstream nightly
-the build took, and upstream's eventual stable `0.0.41`. semver ranks `0.0.42-ap.1` below a future
-`0.0.42`, so upstream can still overtake the fork on the next patch.
+A ref that carries no version, a branch, keeps the base the fork is already on and moves only
+`<n>`. A merge of `origin/main` at `0.0.33-ap.1` builds `0.0.33-ap.2`.
 
-`0.0.42-ap.1` does not match `/-nightly\.\d{8}\.\d+$/`, so `resolveDesktopUpdateChannel` returns
+The patch is not bumped. An earlier version of this workflow did bump it, so `v0.0.33` built
+`0.0.34-ap.1`. That names a version the build does not carry, and it collides with the `v0.0.34`
+upstream cuts next. The only thing a fork version has to sort above is the previous fork build,
+because `T3CODE_DESKTOP_UPDATE_REPOSITORY` points the installed app at the fork's own releases and
+nothing else is in that feed. `0.0.33-ap.2` sorts above `0.0.33-ap.1`, which is all that is needed.
+
+`0.0.33-ap.1` does not match `/-nightly\.\d{8}\.\d+$/`, so `resolveDesktopUpdateChannel` returns
 `latest` and the build writes `latest.yml`. The release carries the installer, the `.exe.blockmap`
 and `latest.yml`. It is published as a normal release, not a prerelease and not a draft, because the
 `latest` channel resolves the tag through GitHub's `/releases/latest`, which skips both.
@@ -255,21 +272,21 @@ on `main`, dispatch the workflow again against the same tag.
 
 ### The fork is behind upstream
 
-`main` last took upstream at `v0.0.33` (`464c76ccb`, merged in #114 under #109). Upstream is on
-`v0.0.41-nightly`, and the newest nightly still does not merge cleanly:
+`main` last took upstream at `v0.0.33` (`464c76ccb`, merged in #114 under #109). Upstream's newest
+stable release is `v0.0.40`, which is what the schedule resolves, and it does not merge cleanly:
 
-| upstream ref                    | conflicting files    |
-| ------------------------------- | -------------------- |
-| `v0.0.33`                       | 0, already on `main` |
-| `v0.0.41-nightly.20260908.1414` | 145                  |
+| upstream ref | conflicting files    |
+| ------------ | -------------------- |
+| `v0.0.33`    | 0, already on `main` |
+| `v0.0.40`    | 140                  |
 
 Measured on 2026-09-09 with `git merge-tree --write-tree --name-only main <ref>`, counting the
-conflicted paths it prints after the tree oid. The counts move as `main` moves and as upstream tags,
-so re-measure before planning the catch-up rather than trusting this table.
+conflicted paths it prints after the tree oid. The counts move as `main` moves and as upstream
+releases, so re-measure before planning the catch-up rather than trusting this table.
 
 So the first scheduled run will file a conflict issue, not a release. Someone has to walk the fork
-forward by hand first, one upstream tag at a time, before the pipeline can take the newest nightly on
-its own. That catch-up is not part of #94.
+forward by hand first, one upstream release at a time, before the pipeline can take the newest
+stable release on its own. That catch-up is not part of #94.
 
 ### The manual build as fallback
 
