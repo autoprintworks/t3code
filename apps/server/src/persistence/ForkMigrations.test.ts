@@ -35,6 +35,7 @@ const UPSTREAM_MIGRATIONS_FROM_38 = [
   { migration_id: 40, name: "ProjectionProjectFaviconPath" },
   { migration_id: 41, name: "AuthSessionClientConnection" },
   { migration_id: 42, name: "ProjectionThreadLinkedPullRequest" },
+  { migration_id: 43, name: "ProjectionThreadsUnsettledAt" },
 ];
 
 const EXPECTED_FORK_MIGRATIONS = [
