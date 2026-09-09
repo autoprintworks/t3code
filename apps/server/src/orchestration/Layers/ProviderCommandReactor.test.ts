@@ -721,14 +721,6 @@ describe("ProviderCommandReactor", () => {
 
     await harness.runEffect(
       harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-existing"),
-        threadId: ThreadId.make("thread-1"),
-        title: "Investigate reconnect regressions",
-      }),
-    );
-    await harness.runEffect(
-      harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-before-title-regeneration"),
         threadId: ThreadId.make("thread-1"),
@@ -760,6 +752,18 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("assistant-message-before-title-regeneration"),
         createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    // `thread.meta.update` carries no client stamp, so it lands on the server
+    // clock. Setting the title after the conversation keeps the thread's
+    // updatedAt behind the turn, so the turn-start clamp leaves the user
+    // message where the fixture put it and the transcript stays in time order.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-existing"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Investigate reconnect regressions",
       }),
     );
     await harness.runEffect(
@@ -800,14 +804,6 @@ describe("ProviderCommandReactor", () => {
       Effect.succeed({ title: "Review subagent monitoring risks" }),
     );
 
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-existing-long"),
-        threadId: ThreadId.make("thread-1"),
-        title: "Generic PR review",
-      }),
-    );
     await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
@@ -878,6 +874,18 @@ describe("ProviderCommandReactor", () => {
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    // `thread.meta.update` carries no client stamp, so it lands on the server
+    // clock. Setting the title after the conversation keeps the thread's
+    // updatedAt behind the turn, so the turn-start clamp leaves the user
+    // message where the fixture put it and the transcript stays in time order.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-existing-long"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Generic PR review",
       }),
     );
     await harness.runEffect(
@@ -1106,14 +1114,6 @@ describe("ProviderCommandReactor", () => {
 
     await harness.runEffect(
       harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-title-before-truncated-regeneration"),
-        threadId: ThreadId.make("thread-1"),
-        title: "Existing title",
-      }),
-    );
-    await harness.runEffect(
-      harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-before-truncated-regeneration"),
         threadId: ThreadId.make("thread-1"),
@@ -1153,6 +1153,18 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("assistant-truncated-regeneration-context"),
         createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    // `thread.meta.update` carries no client stamp, so it lands on the server
+    // clock. Setting the title after the conversation keeps the thread's
+    // updatedAt behind the turn, so the turn-start clamp leaves the user
+    // message where the fixture put it and the transcript stays in time order.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-before-truncated-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Existing title",
       }),
     );
     await harness.runEffect(

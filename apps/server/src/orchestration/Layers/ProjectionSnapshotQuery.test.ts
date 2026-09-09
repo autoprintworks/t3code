@@ -326,6 +326,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinOrderKey: "gm",
           titleRegeneration: null,
           readOnly: false,
+          fleetOwned: false,
           deletedAt: null,
           messages: [
             {
@@ -357,9 +358,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               summary: "provider started",
               payload: { stage: "start" },
               turnId: asTurnId("turn-1"),
-              // The insert above leaves the sequence column out, and fork migration 002 gives it
-              // a NOT NULL default of 0.
-              sequence: 0,
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
