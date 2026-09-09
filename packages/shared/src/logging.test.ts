@@ -27,6 +27,9 @@ const captureError = (run: () => unknown): unknown => {
   throw new Error("Expected operation to throw");
 };
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- a skip predicate is chosen before any Effect layer exists
+const isWindowsHost = process.platform === "win32";
+
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) {
     NodeFS.rmSync(directory, { recursive: true, force: true });
@@ -70,6 +73,21 @@ describe("RotatingFileSink", () => {
   });
 
   it("only treats a missing log file as an empty current size", () => {
+    const directory = makeTempDirectory();
+    // Windows only reports ENAMETOOLONG past its 32767-character path limit; a name that merely
+    // exceeds the 255-character POSIX component limit comes back as ENOENT there.
+    const filePath = NodePath.join(directory, "a".repeat(40_000));
+
+    const thrown = captureError(() => new RotatingFileSink({ filePath, maxBytes: 1, maxFiles: 1 }));
+
+    expect(thrown).toBeInstanceOf(RotatingFileSinkError);
+    expect(thrown).toMatchObject({ operation: "read", filePath });
+    expect((thrown as RotatingFileSinkError).cause).toMatchObject({ code: "ENAMETOOLONG" });
+  });
+
+  // The 255-byte component limit is the one a POSIX host actually enforces. Windows reports ENOENT
+  // for such a name, which the sink correctly reads as a missing file, so the case is POSIX only.
+  it.skipIf(isWindowsHost)("reports a component past the POSIX 255-byte limit", () => {
     const directory = makeTempDirectory();
     const filePath = NodePath.join(directory, "a".repeat(300));
 

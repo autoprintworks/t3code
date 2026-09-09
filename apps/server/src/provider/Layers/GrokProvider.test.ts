@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
+import { skipPosixShellStub } from "../../testUtils/hostPlatform.ts";
 import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -37,6 +38,8 @@ describe("buildInitialGrokProviderSnapshot", () => {
 });
 
 it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
+  // The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+  const posixOnly = it.effect.skipIf(skipPosixShellStub);
   it.effect("reports the binary as missing when the binary path does not resolve", () =>
     Effect.gen(function* () {
       const snapshot = yield* checkGrokProviderStatus(
@@ -52,7 +55,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
+  posixOnly("reports an installed CLI as unhealthy when --version exits non-zero", () =>
     Effect.gen(function* () {
       const secretStderr = "broken grok install: secret-token-value";
       const snapshot = yield* Effect.scoped(
@@ -81,7 +84,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
+  posixOnly("reports an error when ACP model discovery is unavailable", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {

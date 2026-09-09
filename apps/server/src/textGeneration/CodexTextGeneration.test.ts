@@ -13,6 +13,7 @@ import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { skipPosixShellStub } from "../testUtils/hostPlatform.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -205,7 +206,9 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
-  it.effect("generates and sanitizes commit messages without branch by default", () =>
+  // The provider CLI stub is a POSIX shell script, which Windows cannot execute.
+  const posixOnly = it.effect.skipIf(skipPosixShellStub);
+  posixOnly("generates and sanitizes commit messages without branch by default", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -233,7 +236,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect(
+  posixOnly(
     "forwards codex service tier and non-default reasoning effort into codex exec config",
     () =>
       withFakeCodexEnv(
@@ -260,7 +263,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
       ),
   );
 
-  it.effect("passes exec-safe launch args into codex exec", () =>
+  posixOnly("passes exec-safe launch args into codex exec", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -282,7 +285,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("uses T3CODE_CODEX_LAUNCH_ARGS for codex exec over settings", () =>
+  posixOnly("uses T3CODE_CODEX_LAUNCH_ARGS for codex exec over settings", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -305,7 +308,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("defaults git text generation codex effort to low", () =>
+  posixOnly("defaults git text generation codex effort to low", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -325,7 +328,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates commit message with branch when includeBranch is true", () =>
+  posixOnly("generates commit message with branch when includeBranch is true", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -352,7 +355,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates PR content and trims markdown body", () =>
+  posixOnly("generates PR content and trims markdown body", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -379,7 +382,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates branch names and normalizes branch fragments", () =>
+  posixOnly("generates branch names and normalizes branch fragments", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -400,7 +403,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates thread titles and trims them for sidebar use", () =>
+  posixOnly("generates thread titles and trims them for sidebar use", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -421,7 +424,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("falls back when thread title normalization becomes whitespace-only", () =>
+  posixOnly("falls back when thread title normalization becomes whitespace-only", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -441,7 +444,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("trims whitespace exposed after quote removal in thread titles", () =>
+  posixOnly("trims whitespace exposed after quote removal in thread titles", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -461,7 +464,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("omits attachment metadata section when no attachments are provided", () =>
+  posixOnly("omits attachment metadata section when no attachments are provided", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -482,7 +485,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("passes image attachments through as codex image inputs", () =>
+  posixOnly("passes image attachments through as codex image inputs", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -521,7 +524,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("resolves persisted attachment ids to files for codex image inputs", () =>
+  posixOnly("resolves persisted attachment ids to files for codex image inputs", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -570,7 +573,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("ignores missing attachment ids for codex image inputs", () =>
+  posixOnly("ignores missing attachment ids for codex image inputs", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -613,7 +616,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect(
+  posixOnly(
     "fails with typed TextGenerationError when codex returns wrong branch payload shape",
     () =>
       withFakeCodexEnv(
@@ -641,7 +644,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
       ),
   );
 
-  it.effect("returns typed TextGenerationError when codex exits non-zero", () =>
+  posixOnly("returns typed TextGenerationError when codex exits non-zero", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ subject: "ignored", body: "" }),

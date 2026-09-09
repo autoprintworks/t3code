@@ -10,9 +10,14 @@ import * as FileSystem from "effect/FileSystem";
 
 import { ServerConfig } from "../config.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
+import { skipPosixExecuteBit } from "../testUtils/hostPlatform.ts";
 
 describe("ResourceMonitorBinary", () => {
-  it.effect("resolves an executable override", () =>
+  // These two simulate a POSIX host against the real filesystem, and Windows cannot set the execute
+  // bit the resolver looks for there.
+  const posixOnly = it.effect.skipIf(skipPosixExecuteBit);
+
+  posixOnly("resolves an executable override", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -36,7 +41,7 @@ describe("ResourceMonitorBinary", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("resolves an executable override on an unsupported platform", () =>
+  posixOnly("resolves an executable override on an unsupported platform", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({

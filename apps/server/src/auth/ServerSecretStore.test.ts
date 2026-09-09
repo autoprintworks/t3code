@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -219,7 +221,10 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       yield* secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3]));
 
       assert.isTrue(
-        chmodCalls.some((call) => call.mode === 0o700 && call.path.endsWith("/secrets")),
+        // Compared by basename: the store joins this path with the host's separator.
+        chmodCalls.some(
+          (call) => call.mode === 0o700 && NodePath.basename(call.path) === "secrets",
+        ),
       );
       assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
     }).pipe(Effect.provide(NodeServices.layer)),

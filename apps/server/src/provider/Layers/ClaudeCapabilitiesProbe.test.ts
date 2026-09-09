@@ -76,6 +76,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "#!/usr/bin/env node",
           'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
           'import { createInterface } from "node:readline";',
+          'import { tmpdir } from "node:os";',
           "const args = process.argv.slice(2);",
           'const mcpConfigIndex = args.indexOf("--mcp-config");',
           "const rawMcpConfig = mcpConfigIndex >= 0 ? args[mcpConfigIndex + 1] : undefined;",
@@ -90,6 +91,9 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "  connectorEnv: process.env.ENABLE_CLAUDEAI_MCP_SERVERS,",
           "  mcpConfig,",
           "}));",
+          // Windows refuses to remove a directory that is a live process's working directory,
+          // and the SDK does not reap this stub. The cwd is recorded above, so step out of it.
+          "process.chdir(tmpdir());",
           "const lines = createInterface({ input: process.stdin });",
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
@@ -110,7 +114,10 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "    },",
           '  }) + "\\n");',
           "});",
-          "setInterval(() => {}, 1_000);",
+          // The SDK aborts by closing this pipe. Exiting on that close keeps the stub from
+          // outliving the test and holding its working directory open, which Windows refuses
+          // to remove.
+          'lines.on("close", () => process.exit(0));',
           "",
         ].join("\n"),
       );

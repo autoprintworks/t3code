@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -19,6 +21,9 @@ const TestLayer = Layer.empty.pipe(
   ),
   Layer.provideMerge(NodeServices.layer),
 );
+
+// resolvePath returns a host-native path, so expected suffixes carry the host separator.
+const nativePath = (relativePath: string) => relativePath.split("/").join(NodePath.sep);
 
 const makeTempDir = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -73,7 +78,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
-        expect(resolved).toContain("brand/mark.svg");
+        expect(resolved).toContain(nativePath("brand/mark.svg"));
       }),
     );
 
@@ -129,7 +134,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
-        expect(resolved).toContain("public/brand/logo.svg");
+        expect(resolved).toContain(nativePath("public/brand/logo.svg"));
       }),
     );
 
@@ -253,7 +258,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
-        expect(resolved).toContain("public/brand/logo.svg");
+        expect(resolved).toContain(nativePath("public/brand/logo.svg"));
       }),
     );
   });

@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import { isWindowsHost, skipBatchStubChildExit } from "../../testUtils/hostPlatform.ts";
 import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -33,10 +34,27 @@ const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = process.execPath;
 
+// The adapter spawns this wrapper through the configured binaryPath, so it has to be something
+// the host can execute: a shell script on POSIX, a batch file on Windows.
 async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
+  const entries = Object.entries(extraEnv ?? {});
+  if (isWindowsHost) {
+    // A Windows path can hold a backslash but never a quote, so plain quoting is enough and
+    // JSON.stringify would double every separator.
+    const quote = (value: string) => `"${value}"`;
+    const wrapperPath = NodePath.join(dir, "fake-grok.cmd");
+    const script = [
+      "@echo off",
+      ...entries.map(([key, value]) => `set ${quote(`${key}=${value}`)}`),
+      `${quote(mockAgentCommand)} ${quote(mockAgentPath)} %*`,
+      "",
+    ].join("\r\n");
+    await NodeFSP.writeFile(wrapperPath, script, "utf8");
+    return wrapperPath;
+  }
   const wrapperPath = NodePath.join(dir, "fake-grok.sh");
-  const envExports = Object.entries(extraEnv ?? {})
+  const envExports = entries
     .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
     .join("\n");
   const script = `#!/bin/sh
@@ -123,6 +141,8 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+  const itChildExit = it.effect.skipIf(skipBatchStubChildExit);
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");
@@ -188,7 +208,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
-  it.effect("closes the ACP child process when a session stops", () =>
+  itChildExit("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
       const tempDir = yield* Effect.promise(() =>
