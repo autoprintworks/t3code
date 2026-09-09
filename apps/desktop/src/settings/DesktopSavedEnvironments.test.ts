@@ -4,6 +4,7 @@ import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/co
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -112,7 +113,14 @@ function makeLayer(
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+      Layer.mergeAll(
+        // `Path.layer` is the POSIX implementation. The fixtures here are POSIX
+        // paths, so pin it over the host path service or the assertions read the
+        // separator of the machine running the suite.
+        NodeServices.layer,
+        DesktopConfig.layerTest({ T3CODE_HOME: baseDir }),
+        Path.layer,
+      ),
     ),
   );
 
@@ -127,6 +135,7 @@ function makeLayer(
     safeStorageLayer,
     NodeServices.layer,
     fileSystemLayer,
+    Path.layer,
   );
 
   return DesktopSavedEnvironments.layer.pipe(Layer.provideMerge(dependencies));

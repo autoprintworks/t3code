@@ -57,6 +57,7 @@ const projectRow = (input: {
       : identityFor(input.repositoryIdentityWorkspaceRoot),
   repositoryIdentityWorkspaceRoot: input.repositoryIdentityWorkspaceRoot,
   defaultModelSelection: null,
+  defaultThreadEnvMode: null,
   scripts: [],
   createdAt: now,
   updatedAt: now,

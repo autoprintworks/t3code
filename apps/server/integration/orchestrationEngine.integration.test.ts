@@ -50,8 +50,13 @@ type IntegrationProvider = ProviderDriverKind;
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_PROVIDER = ProviderDriverKind.make("claudeAgent");
 
+// The seeded thread and every command stamp must predate the provider fixture
+// events below, which all sit at 2026-02-24T10:xx. `thread.turn.start` clamps a
+// client timestamp up to the thread's last event, so a later stamp here would
+// push the user message past the assistant reply it precedes, and the messages
+// are ordered by time.
 function nowIso() {
-  return "2026-05-01T00:00:00.000Z";
+  return "2026-02-24T09:00:00.000Z";
 }
 
 class IntegrationWaitTimeoutError extends Schema.TaggedErrorClass<IntegrationWaitTimeoutError>()(

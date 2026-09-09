@@ -1,4 +1,5 @@
-import { describe, expect, it } from "@effect/vitest";
+import { it as effectIt } from "@effect/vitest";
+import { assert, describe, expect, it } from "vite-plus/test";
 import {
   MessageId,
   CommandId,
@@ -170,68 +171,65 @@ describe("issuedByFleet", () => {
 });
 
 describe("requireThreadPromptable", () => {
-  it.effect("lets the fleet prompt a read-only thread the fleet owns", () =>
-    Effect.gen(function* () {
-      const thread = yield* requireThreadPromptable({
+  it("lets the fleet prompt a read-only thread the fleet owns", async () => {
+    const thread = await Effect.runPromise(
+      requireThreadPromptable({
         readModel: readOnlyReadModel(true),
         command: fleetTurnStartCommand,
         threadId: ThreadId.make("thread-1"),
-      });
-      expect(thread.id).toBe(ThreadId.make("thread-1"));
-    }),
-  );
+      }),
+    );
+    expect(thread.id).toBe(ThreadId.make("thread-1"));
+  });
 
-  it.effect("refuses a user on that same thread", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
+  it("refuses a user on that same thread", async () => {
+    await expect(
+      Effect.runPromise(
         requireThreadPromptable({
           readModel: readOnlyReadModel(true),
           command: messageSendCommand,
           threadId: ThreadId.make("thread-1"),
         }),
-      );
-      expect(error.detail).toContain("is read-only");
-    }),
-  );
+      ),
+    ).rejects.toThrow("is read-only");
+  });
 
-  it.effect("refuses the fleet on a read-only thread the fleet does not own", () =>
+  it("refuses the fleet on a read-only thread the fleet does not own", async () => {
     // The ACP worker mirror. The stamp is genuine and buys nothing, because
     // ownership is the other half of the rule.
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
+    await expect(
+      Effect.runPromise(
         requireThreadPromptable({
           readModel: readOnlyReadModel(false),
           command: fleetTurnStartCommand,
           threadId: ThreadId.make("thread-1"),
         }),
-      );
-      expect(error.detail).toContain("is read-only");
-    }),
-  );
+      ),
+    ).rejects.toThrow("is read-only");
+  });
 
-  it.effect("refuses a checkpoint revert even on the fleet's own thread", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
+  it("refuses a checkpoint revert even on the fleet's own thread", async () => {
+    await expect(
+      Effect.runPromise(
         requireThreadPromptable({
           readModel: readOnlyReadModel(true),
           command: revertCommand,
           threadId: ThreadId.make("thread-1"),
         }),
-      );
-      expect(error.detail).toContain("is read-only");
-    }),
-  );
+      ),
+    ).rejects.toThrow("is read-only");
+  });
 
-  it.effect("lets anyone prompt an ordinary thread", () =>
-    Effect.gen(function* () {
-      const thread = yield* requireThreadPromptable({
+  it("lets anyone prompt an ordinary thread", async () => {
+    const thread = await Effect.runPromise(
+      requireThreadPromptable({
         readModel,
         command: messageSendCommand,
         threadId: ThreadId.make("thread-1"),
-      });
-      expect(thread.readOnly).toBeUndefined();
-    }),
-  );
+      }),
+    );
+    expect(thread.readOnly).toBeUndefined();
+  });
 });
 
 describe("commandInvariants", () => {
@@ -243,30 +241,30 @@ describe("commandInvariants", () => {
     ).toEqual([ThreadId.make("thread-2")]);
   });
 
-  it("requires existing thread", async () => {
-    const thread = await Effect.runPromise(
-      requireThread({
+  effectIt.effect("requires existing thread", () =>
+    Effect.gen(function* () {
+      const thread = yield* requireThread({
         readModel,
         command: messageSendCommand,
         threadId: ThreadId.make("thread-1"),
-      }),
-    );
-    expect(thread.id).toBe(ThreadId.make("thread-1"));
+      });
+      assert.equal(thread.id, ThreadId.make("thread-1"));
 
-    await expect(
-      Effect.runPromise(
+      const missing = yield* Effect.exit(
         requireThread({
           readModel,
           command: messageSendCommand,
           threadId: ThreadId.make("missing"),
         }),
-      ),
-    ).rejects.toThrow("does not exist");
-  });
+      );
+      assert.equal(missing._tag, "Failure");
+      assert.include(String(missing), "does not exist");
+    }),
+  );
 
-  it("requires missing thread for create flows", async () => {
-    await Effect.runPromise(
-      requireThreadAbsent({
+  effectIt.effect("requires missing thread for create flows", () =>
+    Effect.gen(function* () {
+      yield* requireThreadAbsent({
         readModel,
         command: {
           type: "thread.create",
@@ -285,11 +283,9 @@ describe("commandInvariants", () => {
           createdAt: now,
         },
         threadId: ThreadId.make("thread-3"),
-      }),
-    );
+      });
 
-    await expect(
-      Effect.runPromise(
+      const duplicate = yield* Effect.exit(
         requireThreadAbsent({
           readModel,
           command: {
@@ -310,27 +306,29 @@ describe("commandInvariants", () => {
           },
           threadId: ThreadId.make("thread-1"),
         }),
-      ),
-    ).rejects.toThrow("already exists");
-  });
+      );
+      assert.equal(duplicate._tag, "Failure");
+      assert.include(String(duplicate), "already exists");
+    }),
+  );
 
-  it("requires non-negative integers", async () => {
-    await Effect.runPromise(
-      requireNonNegativeInteger({
+  effectIt.effect("requires non-negative integers", () =>
+    Effect.gen(function* () {
+      yield* requireNonNegativeInteger({
         commandType: "thread.checkpoint.revert",
         field: "turnCount",
         value: 0,
-      }),
-    );
+      });
 
-    await expect(
-      Effect.runPromise(
+      const negative = yield* Effect.exit(
         requireNonNegativeInteger({
           commandType: "thread.checkpoint.revert",
           field: "turnCount",
           value: -1,
         }),
-      ),
-    ).rejects.toThrow("greater than or equal to 0");
-  });
+      );
+      assert.equal(negative._tag, "Failure");
+      assert.include(String(negative), "greater than or equal to 0");
+    }),
+  );
 });

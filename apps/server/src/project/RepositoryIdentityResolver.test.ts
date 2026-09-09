@@ -136,10 +136,9 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
-  // #72 made resolve cache the answer per workspace root, so a repeat asks git
-  // nothing. A remote change is seen after the reactor calls invalidate, which
-  // is what this covers now. The test before #72 expected a read on every call.
-  it.effect("serves the cached identity until the root is invalidated", () =>
+  // The answer is cached per workspace root, so a remote that changes under a
+  // resolved root is only visible after the reactor invalidates that root.
+  it.effect("re-reads the remote once the workspace root is invalidated", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({
