@@ -282,7 +282,8 @@ describe("AssetAccess", () => {
         projectFaviconPath: "brand/custom.svg",
       });
 
-      expect(result.sourcePath).toBe("brand/custom.svg");
+      // `sourcePath` carries the host separator, so join it the same way.
+      expect(result.sourcePath).toBe(path.join("brand", "custom.svg"));
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-custom\.svg$/);
     }).pipe(Effect.provide(testLayer)),
   );
@@ -303,7 +304,7 @@ describe("AssetAccess", () => {
         projectFaviconPath: "brand/saved.svg",
       });
 
-      expect(result.sourcePath).toBe("brand/saved.svg");
+      expect(result.sourcePath).toBe(path.join("brand", "saved.svg"));
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-saved\.svg$/);
     }).pipe(Effect.provide(testLayer)),
   );
