@@ -50,15 +50,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          # Whole tree and whole history, and no sparse-checkout, although ci.yml uses one to
+          # skip .repos/. Asking for a sparse checkout makes actions/checkout clone with
+          # --filter=blob:none, which leaves origin as the promisor for every blob. The merge
+          # below then asks origin for upstream's blobs, and origin only holds the ones the
+          # fork has already merged, so a new upstream tag dies with
+          # "upload-pack: not our ref". Run 34375854944 is that failure.
           fetch-depth: 0
           # No persist-credentials: false here. That makes checkout run its "Removing auth"
           # step, which runs `git submodule foreach` over the index. .repos/alchemy-effect
           # carries a gitlink with no .gitmodules entry, so that call exits 128 and fails the
           # job. This job only has contents: read, so a persisted token cannot push anyway.
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
 
       - name: Resolve the upstream ref and the run mode
         id: resolve
@@ -126,7 +128,16 @@ jobs:
             exit 0
           fi
 
+          # A conflict leaves unmerged paths behind. A merge that fails with none of them
+          # broke for another reason, and reporting that as a conflict would send a worker to
+          # resolve files that are not there.
           git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt"
+          if [ ! -s "$RUNNER_TEMP/conflicts.txt" ]; then
+            echo "The merge failed and left no conflicting files. Read the git output above." >&2
+            git merge --abort || true
+            exit 1
+          fi
+
           git merge --abort
           echo "conflict=true" >> "$GITHUB_OUTPUT"
           echo "The merge stopped on these files:"
@@ -260,11 +271,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.gate.outputs.base_sha }}
+          # No sparse-checkout, for the reason the gate's checkout gives: it would make this a
+          # partial clone and the merge below could not read upstream's blobs.
           fetch-depth: 0
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
 
       - name: Merge upstream into the fork
         shell: bash
