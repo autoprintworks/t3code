@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vite-plus/test";
+import { it as effectIt } from "@effect/vitest";
+import { assert, describe, expect, it } from "vite-plus/test";
 import {
   MessageId,
   CommandId,
@@ -240,30 +241,30 @@ describe("commandInvariants", () => {
     ).toEqual([ThreadId.make("thread-2")]);
   });
 
-  it("requires existing thread", async () => {
-    const thread = await Effect.runPromise(
-      requireThread({
+  effectIt.effect("requires existing thread", () =>
+    Effect.gen(function* () {
+      const thread = yield* requireThread({
         readModel,
         command: messageSendCommand,
         threadId: ThreadId.make("thread-1"),
-      }),
-    );
-    expect(thread.id).toBe(ThreadId.make("thread-1"));
+      });
+      assert.equal(thread.id, ThreadId.make("thread-1"));
 
-    await expect(
-      Effect.runPromise(
+      const missing = yield* Effect.exit(
         requireThread({
           readModel,
           command: messageSendCommand,
           threadId: ThreadId.make("missing"),
         }),
-      ),
-    ).rejects.toThrow("does not exist");
-  });
+      );
+      assert.equal(missing._tag, "Failure");
+      assert.include(String(missing), "does not exist");
+    }),
+  );
 
-  it("requires missing thread for create flows", async () => {
-    await Effect.runPromise(
-      requireThreadAbsent({
+  effectIt.effect("requires missing thread for create flows", () =>
+    Effect.gen(function* () {
+      yield* requireThreadAbsent({
         readModel,
         command: {
           type: "thread.create",
@@ -282,11 +283,9 @@ describe("commandInvariants", () => {
           createdAt: now,
         },
         threadId: ThreadId.make("thread-3"),
-      }),
-    );
+      });
 
-    await expect(
-      Effect.runPromise(
+      const duplicate = yield* Effect.exit(
         requireThreadAbsent({
           readModel,
           command: {
@@ -307,27 +306,29 @@ describe("commandInvariants", () => {
           },
           threadId: ThreadId.make("thread-1"),
         }),
-      ),
-    ).rejects.toThrow("already exists");
-  });
+      );
+      assert.equal(duplicate._tag, "Failure");
+      assert.include(String(duplicate), "already exists");
+    }),
+  );
 
-  it("requires non-negative integers", async () => {
-    await Effect.runPromise(
-      requireNonNegativeInteger({
+  effectIt.effect("requires non-negative integers", () =>
+    Effect.gen(function* () {
+      yield* requireNonNegativeInteger({
         commandType: "thread.checkpoint.revert",
         field: "turnCount",
         value: 0,
-      }),
-    );
+      });
 
-    await expect(
-      Effect.runPromise(
+      const negative = yield* Effect.exit(
         requireNonNegativeInteger({
           commandType: "thread.checkpoint.revert",
           field: "turnCount",
           value: -1,
         }),
-      ),
-    ).rejects.toThrow("greater than or equal to 0");
-  });
+      );
+      assert.equal(negative._tag, "Failure");
+      assert.include(String(negative), "greater than or equal to 0");
+    }),
+  );
 });
