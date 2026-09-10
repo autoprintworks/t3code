@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFS from "node:fs";
-
 import { EnvironmentThemeFile } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -17,6 +14,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { skipPosixNoFollow } from "./testUtils/hostPlatform.ts";
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
 
@@ -192,16 +190,13 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
 
   // A symlinked themes directory stays usable, but a symlinked file inside it
   // must not publish whatever it points at.
-  it.effect.skipIf(!symlinksSupported)("ignores a symlinked theme file", () =>
+  it.effect.skipIf(!symlinksSupported || skipPosixNoFollow)("ignores a symlinked theme file", () =>
     withEnvironmentThemes(
       {},
       Effect.gen(function* () {
         const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        // The guard is `O_NOFOLLOW`, which Windows does not define, so only a
-        // host that has the flag can be held to it.
-        if (NodeFS.constants.O_NOFOLLOW === undefined) return;
         const outside = path.join(environmentThemesDir, "..", "outside.json");
         yield* fs.writeFileString(outside, encodeThemeFile(NIGHTFALL_THEME));
         yield* fs.symlink(outside, path.join(environmentThemesDir, "nightfall.json"));

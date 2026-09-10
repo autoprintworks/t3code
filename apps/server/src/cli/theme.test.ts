@@ -14,11 +14,7 @@ import { Command } from "effect/unstable/cli";
 
 import { cli } from "../bin.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-
-// These force a failure with chmod, which Windows ignores for directories and
-// cannot use to make a file unreadable, so the failure never happens there.
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+import { skipPosixDirectoryMode } from "../testUtils/hostPlatform.ts";
 
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(
@@ -28,11 +24,6 @@ const runCli = (args: ReadonlyArray<string>) =>
 const makeBaseDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-theme-cli-"));
 
 const settingsPathFor = (baseDir: string) => NodePath.join(baseDir, "userdata", "settings.json");
-
-// Windows ignores the POSIX permission bits, so a denial staged with
-// `chmod` never happens there and the failure under test cannot be reached.
-// oxlint-disable-next-line t3code/no-global-process-runtime -- the skip decision needs the real host platform, outside any Effect runtime.
-const DENIES_ACCESS_BY_MODE = NodeOS.platform() !== "win32";
 
 const NIGHTFALL_THEME_JSON = `${JSON.stringify({
   name: "Nightfall",
@@ -171,28 +162,29 @@ describe("t3 theme", () => {
   // rolled back rather than left mutating the environment's theme set. The
   // userdata directory is made read-only while themes stays writable, so the
   // failure lands after the publish -- the case the rollback exists for.
-  it.effect.skipIf(windowsHost)("rolls back a publish when the default cannot be written", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      writeSettings(baseDir, {});
-      const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
-      const themesDir = NodePath.join(userdataDir, "themes");
-      NodeFS.mkdirSync(themesDir, { recursive: true });
-      const themeFile = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+  it.effect.skipIf(skipPosixDirectoryMode)(
+    "rolls back a publish when the default cannot be written",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = makeBaseDir();
+        writeSettings(baseDir, {});
+        const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
+        const themesDir = NodePath.join(userdataDir, "themes");
+        NodeFS.mkdirSync(themesDir, { recursive: true });
+        const themeFile = NodePath.join(baseDir, "nightfall.json");
+        NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
-      if (!DENIES_ACCESS_BY_MODE) return;
-      NodeFS.chmodSync(userdataDir, 0o555);
-      try {
-        const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
-          Effect.flip,
-        );
-        assert.include(String(failure), "Could not write");
-        assert.equal(NodeFS.existsSync(NodePath.join(themesDir, "nightfall.json")), false);
-      } finally {
-        NodeFS.chmodSync(userdataDir, 0o755);
-      }
-    }),
+        NodeFS.chmodSync(userdataDir, 0o555);
+        try {
+          const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
+            Effect.flip,
+          );
+          assert.include(String(failure), "Could not write");
+          assert.equal(NodeFS.existsSync(NodePath.join(themesDir, "nightfall.json")), false);
+        } finally {
+          NodeFS.chmodSync(userdataDir, 0o755);
+        }
+      }),
   );
 
   // A symlink is a normal way to hand this command a theme -- desktop hooks
@@ -240,7 +232,7 @@ describe("t3 theme", () => {
   // Rollback moves the previous directory entry aside and back, so even an
   // entry the watcher would never publish -- here a symlink -- comes back
   // exactly as it was when the set fails.
-  it.effect.skipIf(!symlinksSupported || windowsHost)(
+  it.effect.skipIf(!symlinksSupported || skipPosixDirectoryMode)(
     "restores a non-theme destination entry when the set fails",
     () =>
       Effect.gen(function* () {
@@ -266,29 +258,30 @@ describe("t3 theme", () => {
       }),
   );
 
-  it.effect.skipIf(windowsHost)("restores the previous theme when a re-publish fails to set", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      writeSettings(baseDir, {});
-      const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
-      const themesDir = NodePath.join(userdataDir, "themes");
-      NodeFS.mkdirSync(themesDir, { recursive: true });
-      const publishedPath = NodePath.join(themesDir, "nightfall.json");
-      const previous =
-        '{ "name": "Old Nightfall", "appearance": "dark", "canvas": "#000000", "accent": "#ffffff" }\n';
-      NodeFS.writeFileSync(publishedPath, previous);
-      const themeFile = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+  it.effect.skipIf(skipPosixDirectoryMode)(
+    "restores the previous theme when a re-publish fails to set",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = makeBaseDir();
+        writeSettings(baseDir, {});
+        const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
+        const themesDir = NodePath.join(userdataDir, "themes");
+        NodeFS.mkdirSync(themesDir, { recursive: true });
+        const publishedPath = NodePath.join(themesDir, "nightfall.json");
+        const previous =
+          '{ "name": "Old Nightfall", "appearance": "dark", "canvas": "#000000", "accent": "#ffffff" }\n';
+        NodeFS.writeFileSync(publishedPath, previous);
+        const themeFile = NodePath.join(baseDir, "nightfall.json");
+        NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
-      if (!DENIES_ACCESS_BY_MODE) return;
-      NodeFS.chmodSync(userdataDir, 0o555);
-      try {
-        yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
-        assert.equal(NodeFS.readFileSync(publishedPath, "utf8"), previous);
-      } finally {
-        NodeFS.chmodSync(userdataDir, 0o755);
-      }
-    }),
+        NodeFS.chmodSync(userdataDir, 0o555);
+        try {
+          yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
+          assert.equal(NodeFS.readFileSync(publishedPath, "utf8"), previous);
+        } finally {
+          NodeFS.chmodSync(userdataDir, 0o755);
+        }
+      }),
   );
 
   // A typo'd id written as the theme would silently never resolve anywhere;
@@ -364,22 +357,23 @@ describe("t3 theme", () => {
 
   // An unreadable settings file must never read as "no settings": writing a
   // fresh sparse file over it would discard every key the user had.
-  it.effect.skipIf(windowsHost)("refuses to write when the settings file cannot be read", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      writeSettings(baseDir, { enableProviderUpdateChecks: false });
-      if (!DENIES_ACCESS_BY_MODE) return;
-      NodeFS.chmodSync(settingsPathFor(baseDir), 0o000);
+  it.effect.skipIf(skipPosixDirectoryMode)(
+    "refuses to write when the settings file cannot be read",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = makeBaseDir();
+        writeSettings(baseDir, { enableProviderUpdateChecks: false });
+        NodeFS.chmodSync(settingsPathFor(baseDir), 0o000);
 
-      const failure = yield* runCli(["theme", "set", "ocean", "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
+        const failure = yield* runCli(["theme", "set", "ocean", "--base-dir", baseDir]).pipe(
+          Effect.flip,
+        );
 
-      NodeFS.chmodSync(settingsPathFor(baseDir), 0o644);
-      assert.include(String(failure), "Could not read");
-      assert.equal(readSettings(baseDir).enableProviderUpdateChecks, false);
-      assert.equal(Object.hasOwn(readSettings(baseDir), "defaultTheme"), false);
-    }),
+        NodeFS.chmodSync(settingsPathFor(baseDir), 0o644);
+        assert.include(String(failure), "Could not read");
+        assert.equal(readSettings(baseDir).enableProviderUpdateChecks, false);
+        assert.equal(Object.hasOwn(readSettings(baseDir), "defaultTheme"), false);
+      }),
   );
 
   // A typo is syntactically a valid id, so shape validation alone would write

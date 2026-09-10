@@ -8,7 +8,6 @@ import {
   ProviderInstanceId,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,12 +22,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
-
-// A Windows NTFS file id is larger than a safe integer, so the scanner's
-// inode identity is unavailable there and it falls back to a case-folded
-// path key. Two case variants of one directory are the same directory on a
-// Windows volume anyway.
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+import { skipUnsafeFileIds } from "../testUtils/hostPlatform.ts";
 
 const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => ({
   id: ProjectId.make("project-1"),
@@ -520,7 +514,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect.skipIf(windowsHost)(
+    it.effect.skipIf(skipUnsafeFileIds)(
       "keeps case variants distinct when the filesystem identities differ",
       () =>
         Effect.gen(function* () {
