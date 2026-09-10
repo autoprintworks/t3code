@@ -42,11 +42,11 @@ function withUsageLimits(
  * probe is allowed to run.
  *
  * A probe spawns the provider's CLI, so it only ever runs for a provider the
- * user enabled. `isEnabled` reads the instance's own enabled flag, the one the
- * registry resolved from settings and handed to `ProviderDriver.create`. It
- * takes no settings on purpose: the driver config's own `enabled` field must
- * never reach this decision, and a flag flip is a rebuilt instance, not a
- * settings change this provider sees.
+ * user enabled. `isEnabled` reads the instance's own enabled flag, the one
+ * `resolveEntryEnabled` in the registry computed from the envelope flag and the
+ * decoded driver config, then handed to `ProviderDriver.create`. It takes no
+ * settings on purpose: a flag flip is a rebuilt instance, not a settings change
+ * this provider sees, so re-reading settings here could only answer stale.
  *
  * A disabled instance answers every refresh, the interval one included, with
  * `initialSnapshot`, which every driver builds without touching the CLI.
