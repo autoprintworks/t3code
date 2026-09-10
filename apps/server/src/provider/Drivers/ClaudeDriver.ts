@@ -217,8 +217,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-        // Probe gate: the instance enabled flag the registry resolved, never the
-        // driver config's own `enabled` field.
+        // Probe gate: the instance enabled flag the registry resolved through
+        // `resolveEntryEnabled`. That is the most restrictive of the envelope flag and the driver
+        // config's own `enabled`, so an off flag on either side means no probe.
         isEnabled: () => enabled,
         initialSnapshot: (settings) =>
           modelManifest.current.pipe(

@@ -245,8 +245,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     getSettings: Effect.succeed(settings),
     streamSettings: Stream.empty,
     haveSettingsChanged: () => false,
-    // Probe gate: the instance enabled flag the registry resolved, never the
-    // driver config's own `enabled` field.
+    // Probe gate: the instance enabled flag the registry resolved through `resolveEntryEnabled`.
+    // That is the most restrictive of the envelope flag and the driver config's own `enabled`, so
+    // an off flag on either side means no probe.
     isEnabled: () => settings.enabled,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
