@@ -66,6 +66,11 @@ const makeProjectionLayer = (
   archived: ReadonlyArray<OrchestrationThreadShell>,
 ) =>
   Layer.succeed(ProjectionSnapshotQuery, {
+    getUserInputActivity: () => Effect.die("unused"),
+    getEventReplayStats: () => Effect.die("unused"),
+    getImportedAgentSessionSources: () => Effect.die("unused"),
+    getThreadRuntimeContext: () => Effect.die("unused"),
+    getTurnStartMessage: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.succeed(makeSnapshot(live)),

@@ -43,6 +43,13 @@ export class ElectronApp extends Context.Service<
   {
     readonly metadata: Effect.Effect<ElectronAppMetadata, ElectronAppMetadataReadError>;
     readonly name: Effect.Effect<string>;
+    /**
+     * The OS locale, read from the operating system rather than from Chromium's
+     * resolved application locale — the packaged app ships only the `en-US`
+     * locale pak, so `app.getLocale()` and the renderer's `Intl` default are
+     * pinned to `en-US` however the machine is configured.
+     */
+    readonly systemLocale: Effect.Effect<string>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;
     readonly quit: Effect.Effect<void>;
     readonly exit: (code: number) => Effect.Effect<void>;
@@ -91,6 +98,7 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronApp.of({
   metadata: Effect.gen(function* () {
     const appVersion = yield* Effect.try({
@@ -119,6 +127,10 @@ export const make = ElectronApp.of({
     };
   }),
   name: Effect.sync(() => Electron.app.name),
+  // macOS derives this from NSLocale, which uses POSIX-style identifiers
+  // (`en_GB`). `Intl` rejects those outright rather than normalizing them, so
+  // the tag is normalized here rather than in the renderer that consumes it.
+  systemLocale: Effect.sync(() => Electron.app.getSystemLocale().replace(/_/g, "-")),
   whenReady: Effect.gen(function* () {
     const isPackaged = Electron.app.isPackaged;
     yield* Effect.tryPromise({

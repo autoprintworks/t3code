@@ -19,8 +19,10 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   defaultInstanceIdForDriver,
+  type UsageLimitSourceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -43,6 +45,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
@@ -62,11 +65,60 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+/**
+ * Fold the legacy in-config `enabled` flag into the envelope-level
+ * `ProviderInstanceConfig.enabled` and strip it from the config blob, so
+ * explicit provider instances carry exactly one enabled flag. Old settings
+ * files can hold both flags with conflicting values; an explicit false on
+ * either side wins so a user's disable is never silently undone. Runs on
+ * every load and update — the file converges on the next write.
+ */
+const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSettings => {
+  let changed = false;
+  const providerInstances: Record<string, ProviderInstanceConfig> = {};
+  for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
+    const config = instance.config;
+    // Only fold boolean flags: a malformed `enabled` (e.g. `"false"`) must
+    // stay in the blob so driver schema validation flags it instead of the
+    // fold silently repairing the config.
+    if (
+      config === null ||
+      typeof config !== "object" ||
+      Array.isArray(config) ||
+      typeof (config as { readonly enabled?: unknown }).enabled !== "boolean"
+    ) {
+      providerInstances[instanceId] = instance;
+      continue;
+    }
+    const { enabled: configEnabled, ...restConfig } = config as Record<string, unknown> & {
+      readonly enabled: boolean;
+    };
+    const resolved =
+      instance.enabled === false || configEnabled === false
+        ? false
+        : (instance.enabled ?? configEnabled);
+    changed = true;
+    providerInstances[instanceId] = {
+      ...instance,
+      enabled: resolved,
+      config: restConfig,
+    } satisfies ProviderInstanceConfig;
+  }
+  if (!changed) {
+    return settings;
+  }
+  return {
+    ...settings,
+    providerInstances: providerInstances as ServerSettings["providerInstances"],
+  };
+};
+
 const normalizeServerSettings = (
   settings: ServerSettings,
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
+    Effect.map(foldProviderInstanceEnabledFlags),
     Effect.mapError(
       (cause) =>
         new ServerSettingsError({
@@ -82,6 +134,17 @@ function providerEnvironmentSecretName(input: {
   readonly name: string;
 }): string {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
+}
+
+/**
+ * On disk the hub key is replaced by this marker and the real value lives in
+ * the secret store, mirroring provider environment secrets. A client that
+ * sends the marker back means "keep what you have".
+ */
+const USAGE_LIMIT_SOURCE_KEY_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+
+export function usageLimitSourceSecretName(sourceId: string): string {
+  return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
 function redactProviderEnvironmentVariable(
@@ -110,7 +173,17 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  // The hub key is a bearer secret; clients only need to know one is set.
+  const usageLimitSources = Object.fromEntries(
+    Object.entries(settings.usageLimitSources).map(([id, source]) => [
+      id,
+      {
+        ...source,
+        managementKey: source.managementKey.length > 0 ? USAGE_LIMIT_SOURCE_KEY_REDACTED : "",
+      },
+    ]),
+  );
+  return { ...settings, providerInstances, usageLimitSources };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -147,12 +220,16 @@ export class ServerSettingsService extends Context.Service<
 
 const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Effect.gen(function* () {
-    const { automaticGitFetchInterval, ...overridesForMerge } = overrides;
+    const { automaticGitFetchInterval, providerHealthRefreshInterval, ...overridesForMerge } =
+      overrides;
     const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
     const initialSettings = yield* normalizeServerSettings({
       ...merged,
       ...(automaticGitFetchInterval !== undefined
         ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
+        : {}),
+      ...(providerHealthRefreshInterval !== undefined
+        ? { providerHealthRefreshInterval: providerHealthRefreshInterval as Duration.Duration }
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
@@ -178,6 +255,66 @@ export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
+const PersistedOptionalProviderSettings = Schema.Struct({
+  providers: Schema.optionalKey(
+    Schema.Struct({
+      cursor: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+    }),
+  ),
+});
+const decodePersistedOptionalProviderSettingsJsonExit = Schema.decodeUnknownExit(
+  fromLenientJson(PersistedOptionalProviderSettings),
+);
+
+function restoreUsedProviders(
+  settings: ServerSettings,
+  persisted: typeof PersistedOptionalProviderSettings.Type,
+  providerHistory: ReadonlyArray<{
+    readonly providerName: string;
+    readonly providerInstanceId: string | null;
+  }>,
+): ServerSettings {
+  const usedProviders = new Set(providerHistory.map(({ providerName }) => providerName));
+  const usedProviderInstances = new Set(
+    providerHistory.map(
+      ({ providerName, providerInstanceId }) => providerInstanceId ?? providerName,
+    ),
+  );
+  const providerInstances = Object.fromEntries(
+    Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
+      instanceId,
+      instance.enabled === undefined &&
+      (instance.driver === "cursor" ||
+        instance.driver === "grok" ||
+        instance.driver === "opencode") &&
+      usedProviderInstances.has(instanceId)
+        ? { ...instance, enabled: true }
+        : instance,
+    ]),
+  );
+
+  return {
+    ...settings,
+    providers: {
+      ...settings.providers,
+      cursor: {
+        ...settings.providers.cursor,
+        enabled: persisted.providers?.cursor?.enabled ?? usedProviders.has("cursor"),
+      },
+      grok: {
+        ...settings.providers.grok,
+        enabled: persisted.providers?.grok?.enabled ?? usedProviders.has("grok"),
+      },
+      opencode: {
+        ...settings.providers.opencode,
+        enabled: persisted.providers?.opencode?.enabled ?? usedProviders.has("opencode"),
+      },
+    },
+    providerInstances,
+  };
+}
 
 /**
  * `ServerSettings.providers` is a closed struct, and the whole settings file is
@@ -243,7 +380,13 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
+  // Same precedence as isModelSelectionProviderEnabled: an explicit provider
+  // instance wins over the legacy providers map, which decodes to defaults
+  // (codex enabled) when the Providers UI has only written providerInstances.
+  const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
+    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
+    return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
+  });
   const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
   if (!fallback) {
     return settings;
@@ -265,9 +408,21 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "backgroundActivity",
   "automaticGitFetchInterval",
+  "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
 ]);
+
+// Preserve both enabled states because provider history cannot recover a new opt-in.
+const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
+  ...DEFAULT_SERVER_SETTINGS,
+  providers: {
+    ...DEFAULT_SERVER_SETTINGS.providers,
+    cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: undefined },
+    grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
+    opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
+  },
+};
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
@@ -308,6 +463,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
@@ -342,21 +498,62 @@ const make = Effect.gen(function* () {
   );
 
   const loadSettingsFromDisk = Effect.gen(function* () {
-    if (!(yield* readConfigExists)) {
-      return DEFAULT_SERVER_SETTINGS;
+    let settings = DEFAULT_SERVER_SETTINGS;
+    let persisted: typeof PersistedOptionalProviderSettings.Type = {};
+
+    if (yield* readConfigExists) {
+      const raw = yield* readRawConfig;
+      const decoded = decodeServerSettingsJsonExit(raw);
+      const persistedSettings = decodePersistedOptionalProviderSettingsJsonExit(raw);
+      if (persistedSettings._tag === "Success") {
+        persisted = persistedSettings.value;
+      }
+      if (decoded._tag === "Failure" || persistedSettings._tag === "Failure") {
+        const failure = decoded._tag === "Failure" ? decoded : persistedSettings;
+        if (failure._tag === "Failure") {
+          yield* Effect.logWarning("failed to parse settings.json, using defaults", {
+            path: settingsPath,
+            issues: Cause.pretty(failure.cause),
+            cause: failure.cause,
+          });
+        }
+      } else {
+        // A settings.json written before the fork's configurable ACP driver
+        // keeps its agents in a legacy `providers` block; lift them into
+        // `providerInstances` before anything downstream reads them.
+        settings = rescueUnnamedLegacyProviders(raw, decoded.value);
+      }
     }
 
-    const raw = yield* readRawConfig;
-    const decoded = decodeServerSettingsJsonExit(raw);
-    if (decoded._tag === "Failure") {
-      yield* Effect.logWarning("failed to parse settings.json, using defaults", {
-        path: settingsPath,
-        issues: Cause.pretty(decoded.cause),
-        cause: decoded.cause,
-      });
-      return DEFAULT_SERVER_SETTINGS;
-    }
-    return rescueUnnamedLegacyProviders(raw, decoded.value);
+    const providerHistory = yield* sql<{
+      readonly providerName: string;
+      readonly providerInstanceId: string | null;
+    }>`
+      SELECT DISTINCT
+        provider_name AS "providerName",
+        provider_instance_id AS "providerInstanceId"
+      FROM projection_thread_sessions
+      WHERE provider_name IN ('cursor', 'grok', 'opencode')
+      UNION
+      SELECT DISTINCT
+        provider_name AS "providerName",
+        provider_instance_id AS "providerInstanceId"
+      FROM provider_session_runtime
+      WHERE provider_name IN ('cursor', 'grok', 'opencode')
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "read-provider-history",
+            cause,
+          }),
+      ),
+    );
+
+    return foldProviderInstanceEnabledFlags(
+      restoreUsedProviders(settings, persisted, providerHistory),
+    );
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
@@ -405,9 +602,28 @@ const make = Effect.gen(function* () {
           environment,
         } satisfies ProviderInstanceConfig;
       }
+      const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
+      for (const [sourceId, source] of Object.entries(settings.usageLimitSources)) {
+        if (source.managementKey !== USAGE_LIMIT_SOURCE_KEY_REDACTED) {
+          usageLimitSources[sourceId] = source;
+          continue;
+        }
+        const secret = yield* secretStore
+          .get(usageLimitSourceSecretName(sourceId))
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        usageLimitSources[sourceId] = {
+          ...source,
+          managementKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        };
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
+        usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
       };
     });
 
@@ -461,9 +677,20 @@ const make = Effect.gen(function* () {
           }
 
           nextSecretKeys.add(secretName);
-          if (!variable.valueRedacted) {
-            if (variable.value.length > 0) {
-              yield* secretStore.set(secretName, textEncoder.encode(variable.value)).pipe(
+          // Match the provider environment's last-value-wins behavior for duplicate names.
+          const previous = variable.valueRedacted
+            ? current.providerInstances[ProviderInstanceId.make(instanceId)]?.environment?.findLast(
+                (entry) => entry.name === variable.name,
+              )
+            : undefined;
+          const inlineValue =
+            previous?.sensitive && !previous.valueRedacted && previous.value.length > 0
+              ? previous.value
+              : undefined;
+          const value = inlineValue ?? variable.value;
+          if (!variable.valueRedacted || inlineValue !== undefined) {
+            if (value.length > 0) {
+              yield* secretStore.set(secretName, textEncoder.encode(value)).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ServerSettingsError({
@@ -523,16 +750,59 @@ const make = Effect.gen(function* () {
         }
       }
 
+      const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
+      for (const [sourceId, source] of Object.entries(next.usageLimitSources)) {
+        const secretName = usageLimitSourceSecretName(sourceId);
+        if (source.managementKey === USAGE_LIMIT_SOURCE_KEY_REDACTED) {
+          // Unchanged from the client's point of view; the store already has it.
+          usageLimitSources[sourceId] = source;
+          continue;
+        }
+        if (source.managementKey.length === 0) {
+          yield* secretStore
+            .remove(secretName)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({ settingsPath, operation: "remove-secret", cause }),
+              ),
+            );
+          usageLimitSources[sourceId] = source;
+          continue;
+        }
+        yield* secretStore
+          .set(secretName, textEncoder.encode(source.managementKey))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({ settingsPath, operation: "write-secret", cause }),
+            ),
+          );
+        usageLimitSources[sourceId] = { ...source, managementKey: USAGE_LIMIT_SOURCE_KEY_REDACTED };
+      }
+      for (const sourceId of Object.keys(current.usageLimitSources)) {
+        if (sourceId in next.usageLimitSources) continue;
+        yield* secretStore
+          .remove(usageLimitSourceSecretName(sourceId))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({ settingsPath, operation: "remove-stale-secret", cause }),
+            ),
+          );
+      }
+
       return {
         ...next,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
+        usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
       };
     });
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {},
+        stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
       );
 
       return yield* writeFileStringAtomically({

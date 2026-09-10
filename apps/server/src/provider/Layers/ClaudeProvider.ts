@@ -1,40 +1,31 @@
 import {
-  isProviderSkillUserInvocable,
   type ClaudeSettings,
   type ModelCapabilities,
-  type ModelSelection,
-  type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import {
-  createModelCapabilities,
-  getModelSelectionStringOptionValue,
-  getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
   type SlashCommand as ClaudeSlashCommand,
+  type SDKControlGetUsageResponse,
   type SDKUserMessage,
   type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
-  buildBooleanOptionDescriptor,
-  buildSelectOptionDescriptor,
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -45,6 +36,18 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import {
+  type ClaudeScopedLimitNames,
+  claudeUsageResponseToLimits,
+  recordClaudeUsageResponse,
+} from "./claudeUsageLimits.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+  formatClaudeVersionUpgradeMessage,
+  resolveClaudeModelsForVersion,
+} from "../ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -54,413 +57,6 @@ const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
 } as const;
-const MINIMUM_CLAUDE_OPUS_5_VERSION = "2.1.219";
-const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.169";
-const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.154";
-const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
-
-const CURRENT_CLAUDE_MODELS = new Set(["claude-fable-5", "claude-opus-5", "claude-sonnet-5"]);
-
-export function isLegacyClaudeModel(model: string): boolean {
-  return !CURRENT_CLAUDE_MODELS.has(model);
-}
-
-const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
-  {
-    slug: "claude-fable-5",
-    name: "Claude Fable 5",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "xhigh", label: "Extra High" },
-            { value: "max", label: "Max" },
-            { value: "ultracode", label: "Ultracode" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          options: [
-            { value: "200k", label: "200k" },
-            { value: "1m", label: "1M", isDefault: true },
-          ],
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-opus-5",
-    name: "Claude Opus 5",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "xhigh", label: "Extra High" },
-            { value: "max", label: "Max" },
-            { value: "ultracode", label: "Ultracode" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          // Claude Code selects the 1M variant explicitly (`claude-opus-5[1m]`).
-          options: [
-            { value: "200k", label: "200k" },
-            { value: "1m", label: "1M", isDefault: true },
-          ],
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-opus-4-8",
-    name: "Claude Opus 4.8",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "xhigh", label: "Extra High" },
-            { value: "max", label: "Max" },
-            { value: "ultracode", label: "Ultracode" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-opus-4-7",
-    name: "Claude Opus 4.7",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High" },
-            { value: "xhigh", label: "Extra High", isDefault: true },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-opus-4-6",
-    name: "Claude Opus 4.6",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          options: [
-            { value: "200k", label: "200k" },
-            { value: "1m", label: "1M", isDefault: true },
-          ],
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-opus-4-5",
-    name: "Claude Opus 4.5",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-          ],
-        }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-sonnet-5",
-    name: "Claude Sonnet 5",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "xhigh", label: "Extra High" },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          // Sonnet is 200k-default in Claude Code (1M is opt-in there too).
-          options: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-sonnet-4-6",
-    name: "Claude Sonnet 4.6",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          // Sonnet is 200k-default in Claude Code (1M is opt-in there too).
-          options: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-haiku-4-5",
-    name: "Claude Haiku 4.5",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildBooleanOptionDescriptor({
-          id: "thinking",
-          label: "Thinking",
-        }),
-      ],
-    }),
-  },
-];
-
-const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = CLAUDE_MODEL_CATALOG.map((model) =>
-  isLegacyClaudeModel(model.slug) ? { ...model, isLegacy: true } : model,
-);
-
-function supportsClaudeOpus5(version: string | null | undefined): boolean {
-  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_5_VERSION) >= 0 : false;
-}
-
-function supportsClaudeFable5(version: string | null | undefined): boolean {
-  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_FABLE_5_VERSION) >= 0 : false;
-}
-
-function supportsClaudeOpus48(version: string | null | undefined): boolean {
-  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_8_VERSION) >= 0 : false;
-}
-
-function supportsClaudeOpus47(version: string | null | undefined): boolean {
-  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
-}
-
-function getBuiltInClaudeModelsForVersion(
-  version: string | null | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  return BUILT_IN_MODELS.filter((model) => {
-    if (model.slug === "claude-opus-5") {
-      return supportsClaudeOpus5(version);
-    }
-    if (model.slug === "claude-fable-5") {
-      return supportsClaudeFable5(version);
-    }
-    if (model.slug === "claude-opus-4-8") {
-      return supportsClaudeOpus48(version);
-    }
-    if (model.slug === "claude-opus-4-7") {
-      return supportsClaudeOpus47(version);
-    }
-    return true;
-  });
-}
-
-function formatClaudeOpus5UpgradeMessage(version: string | null): string {
-  const versionLabel = version ? `v${version}` : "the installed version";
-  return `Claude Code ${versionLabel} is too old for Claude Opus 5. Upgrade to v${MINIMUM_CLAUDE_OPUS_5_VERSION} or newer to access it.`;
-}
-
-function formatClaudeFable5UpgradeMessage(version: string | null): string {
-  const versionLabel = version ? `v${version}` : "the installed version";
-  return `Claude Code ${versionLabel} is too old for Claude Fable 5. Upgrade to v${MINIMUM_CLAUDE_FABLE_5_VERSION} or newer to access it.`;
-}
-
-function formatClaudeOpus48UpgradeMessage(version: string | null): string {
-  const versionLabel = version ? `v${version}` : "the installed version";
-  return `Claude Code ${versionLabel} is too old for Claude Opus 4.8. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_8_VERSION} or newer to access it.`;
-}
-
-function formatClaudeOpus47UpgradeMessage(version: string | null): string {
-  const versionLabel = version ? `v${version}` : "the installed version";
-  return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
-}
-
-export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
-  const slug = model?.trim();
-  return (
-    BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES
-  );
-}
-
-export function resolveClaudeEffort(
-  caps: ModelCapabilities,
-  raw: string | null | undefined,
-): string | undefined {
-  const descriptors = getProviderOptionDescriptors({
-    caps,
-    ...(raw ? { selections: [{ id: "effort", value: raw }] } : {}),
-  });
-  const effortDescriptor = descriptors.find((descriptor) => descriptor.id === "effort");
-  const value = getProviderOptionCurrentValue(effortDescriptor);
-  return typeof value === "string" ? value : undefined;
-}
-
-/**
- * Normalize a resolved Claude effort value into one suitable for the Claude
- * CLI's `--effort` flag.
- *
- * Mirrors the mapping used when invoking the Claude Agent SDK
- * ({@link getEffectiveClaudeAgentEffort} in ClaudeAdapter): `ultracode` is a
- * Claude Code setting that pairs with `xhigh`, `ultrathink` is filtered out
- * because it is a prompt-prefix mode, and older model compatibility mappings
- * are preserved for current Claude Code behavior.
- */
-export function normalizeClaudeCliEffort(
-  effort: string | null | undefined,
-  model: string | null | undefined,
-): string | undefined {
-  if (!effort || effort === "ultrathink") {
-    return undefined;
-  }
-  if (effort === "ultracode") {
-    return "xhigh";
-  }
-  if (
-    effort === "xhigh" &&
-    model !== "claude-fable-5" &&
-    model !== "claude-opus-5" &&
-    model !== "claude-opus-4-8" &&
-    model !== "claude-sonnet-5"
-  ) {
-    return "max";
-  }
-  if (effort === "max" && model === "claude-sonnet-4-6") {
-    return "high";
-  }
-  return effort;
-}
-
-export function isClaudeUltracodeEffort(effort: string | null | undefined): boolean {
-  return effort === "ultracode";
-}
-
-export function resolveClaudeContextWindow(
-  modelSelection: ModelSelection | undefined,
-): string | undefined {
-  const caps = getClaudeModelCapabilities(modelSelection?.model);
-  const raw = getModelSelectionStringOptionValue(modelSelection, "contextWindow");
-  const descriptors = getProviderOptionDescriptors({
-    caps,
-    ...(raw ? { selections: [{ id: "contextWindow", value: raw }] } : {}),
-  });
-  const descriptor = descriptors.find((candidate) => candidate.id === "contextWindow");
-  const value = getProviderOptionCurrentValue(descriptor);
-  return typeof value === "string" ? value : undefined;
-}
-
-export function resolveClaudeApiModelId(modelSelection: ModelSelection): string {
-  switch (resolveClaudeContextWindow(modelSelection)) {
-    case "1m":
-      return `${modelSelection.model}[1m]`;
-    default:
-      return modelSelection.model;
-  }
-}
-
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -576,8 +172,8 @@ function apiProviderAuthMetadata(
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 
 /**
- * Keep workspace-scoped command discovery intact while isolating the status
- * probe from configured MCP servers.
+ * Keep workspace-scoped command discovery intact while isolating the periodic
+ * health check from configured MCP servers.
  */
 export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "user",
@@ -585,7 +181,7 @@ export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
-/** Build the exact SDK options used by the Claude capability probe. */
+/** Build the exact SDK options used by the periodic Claude capability probe. */
 export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly executablePath: string;
   readonly abortController: AbortController;
@@ -597,6 +193,10 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
+    // The probe keeps filesystem setting sources for slash-command discovery,
+    // but must not run the user's hooks: it fires every few minutes, so
+    // SessionStart hooks would run on every health check.
+    settings: { disableAllHooks: true },
     allowedTools: [],
     // Ignore MCP definitions from every filesystem setting source above. The
     // SDK combines this empty explicit map with --strict-mcp-config.
@@ -607,6 +207,12 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       // Connected claude.ai MCP servers are discovered outside filesystem
       // config; disable them independently for this health check.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+      // This is a noninteractive health check, so IDE discovery cannot add any
+      // useful capability data. Skipping it also avoids Claude spawning a
+      // Windows `tasklist | findstr` process tree on every periodic refresh.
+      FORCE_CODE_TERMINAL: undefined,
+      CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
+      CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
     },
     ...(input.cwd ? { cwd: input.cwd } : {}),
     stderr: () => {},
@@ -629,25 +235,13 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /**
+   * Subscription windows from the SDK's `get_usage` control request, or
+   * `undefined` when the request itself failed. Absent windows on an
+   * otherwise successful response mean the account has none (API key).
+   */
+  readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
 };
-
-/**
- * Distinct outcomes of {@link probeClaudeCapabilities}. Earlier revisions
- * collapsed every non-success case (timeout, spawn failure, thrown
- * initialization error) into `undefined`, so the only user-visible signal
- * was a fixed "could not verify authentication" warning that misreported a
- * slow machine as an auth problem. Keeping the reason lets
- * `checkClaudeProviderStatus` say what actually happened and lets us log it.
- */
-export type ClaudeCapabilitiesProbeOutcome =
-  | { readonly _tag: "Succeeded"; readonly probe: ClaudeCapabilitiesProbe }
-  /** Initialization returned, but the SDK's `AccountInfo` block was absent. */
-  | { readonly _tag: "NoAccountInfo"; readonly probe: ClaudeCapabilitiesProbe }
-  | { readonly _tag: "TimedOut" }
-  /** Failed before the subprocess could be queried: env or executable resolution. */
-  | { readonly _tag: "SetupFailed"; readonly cause: unknown }
-  /** The query threw or rejected while spawning or reading initialization data. */
-  | { readonly _tag: "InitializationFailed"; readonly cause: unknown };
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -678,8 +272,8 @@ function parseClaudeInitializationCommands(
  *
  * Claude Code surfaces every discovered skill as `/<name>`, so an agent-only
  * skill would otherwise reach the `/` menu through the back door after the
- * skill picker had already hidden it. Filtering here keeps one answer to
- * "may a user start this", the same one `isProviderSkillUserInvocable` gives.
+ * skill picker had already hidden it. The composer's own filter only removes
+ * commands that duplicate a visible skill, so the hidden ones need this.
  */
 export function withoutAgentOnlySkillCommands(
   commands: ReadonlyArray<ServerProviderSlashCommand>,
@@ -687,7 +281,7 @@ export function withoutAgentOnlySkillCommands(
 ): ReadonlyArray<ServerProviderSlashCommand> {
   const hiddenSkillNames = new Set(
     skills
-      .filter((skill) => !isProviderSkillUserInvocable(skill))
+      .filter((skill) => !(skill.enabled && skill.userInvocable !== false))
       .map((skill) => skill.name.toLowerCase()),
   );
   if (hiddenSkillNames.size === 0) {
@@ -757,73 +351,66 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
  */
-type ClaudeCapabilitiesProbeAttemptFailure =
-  | { readonly _tag: "SetupFailed"; readonly cause: unknown }
-  | { readonly _tag: "InitializationFailed"; readonly cause: unknown };
-
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
 ) => {
   const abort = new AbortController();
-
-  const setup = Effect.gen(function* () {
+  return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
-    return { claudeEnvironment, executablePath };
-  }).pipe(
-    // makeClaudeEnvironment/resolveClaudeSdkExecutablePath are typed as
-    // never-failing today, but catch defects too so a future change to
-    // either can't silently reintroduce the old blanket discard.
-    Effect.catchCause((cause: unknown) =>
-      Effect.fail<ClaudeCapabilitiesProbeAttemptFailure>({ _tag: "SetupFailed", cause }),
-    ),
-  );
-
-  const attempt = setup.pipe(
-    Effect.flatMap(({ claudeEnvironment, executablePath }) =>
-      Effect.tryPromise({
-        try: async () => {
-          const q = claudeQuery({
-            // Never yield — we only need initialization data, not a conversation.
-            // This prevents any prompt from reaching the Anthropic API.
-            // oxlint-disable-next-line require-yield
-            prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
-              await waitForAbortSignal(abort.signal);
-            })(),
-            options: buildClaudeCapabilitiesProbeQueryOptions({
-              executablePath,
-              abortController: abort,
-              environment: claudeEnvironment,
-              cwd,
-            }),
-          });
-          const init = await q.initializationResult();
-          const account = init.account as
-            | {
-                readonly email?: string;
-                readonly subscriptionType?: string;
-                readonly tokenSource?: string;
-                readonly apiProvider?: string;
-              }
-            | undefined;
-          const probe: ClaudeCapabilitiesProbe = {
-            email: account?.email,
-            subscriptionType: account?.subscriptionType,
-            tokenSource: account?.tokenSource,
-            apiProvider: account?.apiProvider,
-            slashCommands: parseClaudeInitializationCommands(init.commands),
-          };
-          return { probe, hasAccount: account !== undefined };
-        },
-        catch: (cause): ClaudeCapabilitiesProbeAttemptFailure => ({
-          _tag: "InitializationFailed",
-          cause,
+    return yield* Effect.tryPromise(async () => {
+      const q = claudeQuery({
+        // Never yield — we only need initialization data, not a conversation.
+        // This prevents any prompt from reaching the Anthropic API.
+        // oxlint-disable-next-line require-yield
+        prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
+          await waitForAbortSignal(abort.signal);
+        })(),
+        options: buildClaudeCapabilitiesProbeQueryOptions({
+          executablePath,
+          abortController: abort,
+          environment: claudeEnvironment,
+          cwd,
         }),
+      });
+      const init = await q.initializationResult();
+      return { q, init };
+    });
+  }).pipe(
+    Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
+    Effect.flatMap(({ q, init }) =>
+      Effect.gen(function* () {
+        // Usage has its own deadline so a slow optional request cannot discard initialization.
+        const usageResult = yield* Effect.tryPromise(() =>
+          q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+        ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result);
+        const usage = Result.isSuccess(usageResult)
+          ? {
+              rate_limits_available: usageResult.success.rate_limits_available,
+              rate_limits: usageResult.success.rate_limits,
+            }
+          : undefined;
+        const account = init.account as
+          | {
+              readonly email?: string;
+              readonly subscriptionType?: string;
+              readonly tokenSource?: string;
+              readonly apiProvider?: string;
+            }
+          | undefined;
+        return {
+          email: account?.email,
+          subscriptionType: account?.subscriptionType,
+          tokenSource: account?.tokenSource,
+          apiProvider: account?.apiProvider,
+          slashCommands: parseClaudeInitializationCommands(init.commands),
+          ...(usage ? { usage } : {}),
+        } satisfies ClaudeCapabilitiesProbe;
       }),
     ),
     Effect.ensuring(
@@ -831,37 +418,8 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
-  );
-
-  return Effect.timed(attempt).pipe(
-    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
     Effect.result,
-    Effect.flatMap((result) => {
-      if (Result.isFailure(result)) {
-        const failure = result.failure;
-        const message =
-          failure._tag === "SetupFailed"
-            ? "Claude capabilities probe failed before it could query the Claude Agent CLI."
-            : "Claude capabilities probe failed while querying the Claude Agent CLI for initialization data.";
-        return Effect.logWarning(message, { reason: failure._tag, cause: failure.cause }).pipe(
-          Effect.as(failure),
-        );
-      }
-      if (Option.isNone(result.success)) {
-        return Effect.logWarning(
-          "Claude capabilities probe timed out waiting for Claude Agent CLI initialization data.",
-          { timeoutMs: CAPABILITIES_PROBE_TIMEOUT_MS },
-        ).pipe(Effect.as<ClaudeCapabilitiesProbeOutcome>({ _tag: "TimedOut" }));
-      }
-      const [elapsed, { probe, hasAccount }] = result.success.value;
-      if (!hasAccount) {
-        return Effect.logWarning(
-          "Claude capabilities probe returned initialization data without an account block.",
-          { elapsedMs: Duration.toMillis(elapsed) },
-        ).pipe(Effect.as<ClaudeCapabilitiesProbeOutcome>({ _tag: "NoAccountInfo", probe }));
-      }
-      return Effect.succeed<ClaudeCapabilitiesProbeOutcome>({ _tag: "Succeeded", probe });
-    }),
+    Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
   );
 };
 
@@ -881,34 +439,16 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
-/**
- * User-visible warning for every non-`Succeeded` capabilities probe outcome.
- * A timeout is not an authentication failure, so it gets its own wording;
- * the original "could not verify" message is kept only for the case it
- * genuinely describes (`NoAccountInfo`) rather than any discarded failure.
- */
-function claudeCapabilitiesWarningMessage(
-  outcome: Exclude<ClaudeCapabilitiesProbeOutcome, { readonly _tag: "Succeeded" }>,
-): string {
-  switch (outcome._tag) {
-    case "TimedOut":
-      return "Claude authentication check timed out; authentication status was not determined.";
-    case "SetupFailed":
-      return "Claude authentication check could not run: failed to prepare the Claude Agent CLI.";
-    case "InitializationFailed":
-      return "Claude authentication check could not run: the Claude Agent CLI initialization probe failed.";
-    case "NoAccountInfo":
-      return "Could not verify Claude authentication status from initialization result.";
-  }
-}
-
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
     claudeSettings: ClaudeSettings,
-  ) => Effect.Effect<ClaudeCapabilitiesProbeOutcome>,
+  ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
+  /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
+  scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -917,7 +457,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    modelCatalog.models.map((entry) => entry.model),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -960,7 +500,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "error",
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
-          ? "Claude Agent CLI (`claude`) is not installed or not on PATH."
+          ? "Claude Agent CLI (`claude`) was not found on PATH."
           : "Failed to execute Claude Agent CLI health check.",
       },
     });
@@ -1007,44 +547,23 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
+    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
-  const versionUpgradeMessage = supportsClaudeOpus5(parsedVersion)
-    ? undefined
-    : supportsClaudeFable5(parsedVersion)
-      ? formatClaudeOpus5UpgradeMessage(parsedVersion)
-      : supportsClaudeOpus48(parsedVersion)
-        ? formatClaudeFable5UpgradeMessage(parsedVersion)
-        : supportsClaudeOpus47(parsedVersion)
-          ? formatClaudeOpus48UpgradeMessage(parsedVersion)
-          : formatClaudeOpus47UpgradeMessage(parsedVersion);
+  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
-  const capabilitiesOutcome: ClaudeCapabilitiesProbeOutcome = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(
-        Effect.orElseSucceed(
-          (): ClaudeCapabilitiesProbeOutcome => ({
-            _tag: "InitializationFailed",
-            cause: "resolveCapabilities effect failed",
-          }),
-        ),
-      )
-    : { _tag: "InitializationFailed", cause: "no capabilities resolver configured" };
-  // Any outcome that carries a probe (Succeeded or NoAccountInfo) still ran
-  // initialization successfully, so its slash commands are real data.
-  const probe =
-    capabilitiesOutcome._tag === "Succeeded" || capabilitiesOutcome._tag === "NoAccountInfo"
-      ? capabilitiesOutcome.probe
-      : undefined;
+  const capabilities = resolveCapabilities
+    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+    : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = withoutAgentOnlySkillCommands(
-    dedupeSlashCommands(probe?.slashCommands ?? []),
+    dedupeSlashCommands(slashCommands),
     skills,
   );
 
-  if (capabilitiesOutcome._tag !== "Succeeded") {
-    const message = claudeCapabilitiesWarningMessage(capabilitiesOutcome);
+  if (!capabilities) {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -1057,17 +576,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
-        message,
+        message: "Could not verify Claude authentication status from initialization result.",
       },
     });
   }
 
-  const capabilities = capabilitiesOutcome.probe;
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const usageLimits = !capabilities.usage
+    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+    : scopedLimitNames
+      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+          response: capabilities.usage,
+          checkedAt,
+        })
+      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -1085,6 +611,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
+      usageLimits,
     },
   });
 });
@@ -1093,11 +620,12 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const makePendingClaudeProvider = (
   claudeSettings: ClaudeSettings,
+  modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
-      BUILT_IN_MODELS,
+      modelCatalog.models.map((entry) => entry.model),
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );

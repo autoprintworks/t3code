@@ -1,6 +1,8 @@
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -56,8 +58,6 @@ export class ElectronWindowCreateError extends Schema.TaggedErrorClass<ElectronW
   }
 }
 
-export const isElectronWindowCreateError = Schema.is(ElectronWindowCreateError);
-
 export class ElectronWindowOperationError extends Schema.TaggedErrorClass<ElectronWindowOperationError>()(
   "ElectronWindowOperationError",
   {
@@ -95,6 +95,7 @@ export class ElectronWindow extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronWindow") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
@@ -257,18 +258,27 @@ export const make = Effect.gen(function* () {
         }
       }),
     destroyAll: Effect.gen(function* () {
+      let firstFailure: Cause.Cause<never> | undefined;
       for (const window of yield* listWindows) {
-        yield* Effect.try({
-          try: () => window.destroy(),
-          catch: (cause) =>
-            new ElectronWindowOperationError({
-              operation: "destroy-window",
-              platform,
-              windowId: window.id,
-              channel: null,
-              cause,
-            }),
-        }).pipe(Effect.orDie);
+        const exit = yield* Effect.exit(
+          Effect.try({
+            try: () => window.destroy(),
+            catch: (cause) =>
+              new ElectronWindowOperationError({
+                operation: "destroy-window",
+                platform,
+                windowId: window.id,
+                channel: null,
+                cause,
+              }),
+          }).pipe(Effect.orDie),
+        );
+        if (Exit.isFailure(exit)) {
+          firstFailure ??= exit.cause;
+        }
+      }
+      if (firstFailure !== undefined) {
+        return yield* Effect.failCause(firstFailure);
       }
     }),
     syncAllAppearance: Effect.fn("desktop.electron.window.syncAllAppearance")(function* <E, R>(

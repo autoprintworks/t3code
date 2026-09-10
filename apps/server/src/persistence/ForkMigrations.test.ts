@@ -5,7 +5,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "./Migrations.ts";
 import { retireLegacyOrderingMigrationRow, runForkMigrations } from "./ForkMigrations.ts";
-import * as NodeSqliteClient from "./NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 // `it.layer` builds its layer once per describe block (a `beforeAll`), so
 // tests sharing one `it.layer` call share one in-memory database. Each test
@@ -23,6 +23,26 @@ const forkMigrationRows = (sql: SqlClient.SqlClient) =>
   sql<{ readonly migration_id: number; readonly name: string }>`
     SELECT migration_id, name FROM fork_sql_migrations ORDER BY migration_id
   `;
+
+/**
+ * Every upstream migration from 38 up, in order. The fork's own ids live in
+ * `fork_sql_migrations`, so upstream's table must read exactly as upstream
+ * wrote it. Extend this list whenever an upstream release adds a migration.
+ */
+const UPSTREAM_MIGRATIONS_FROM_38 = [
+  { migration_id: 38, name: "ProjectionThreadsPinOrderKey" },
+  { migration_id: 39, name: "ProjectionProjectsDefaultThreadEnvMode" },
+  { migration_id: 40, name: "ProjectionProjectFaviconPath" },
+  { migration_id: 41, name: "AuthSessionClientConnection" },
+  { migration_id: 42, name: "ProjectionThreadLinkedPullRequest" },
+  { migration_id: 43, name: "ProjectionThreadsUnsettledAt" },
+  { migration_id: 44, name: "ClearAutomaticProjectModelDefaults" },
+  { migration_id: 45, name: "ProjectionProjectsAutoPull" },
+  { migration_id: 46, name: "RepairAutomaticSettlementTimestamps" },
+  { migration_id: 47, name: "ProjectionProjectIcon" },
+  { migration_id: 48, name: "ProjectionThreadBranchPullRequest" },
+  { migration_id: 49, name: "ProjectionThreadsActiveOrderKey" },
+];
 
 const EXPECTED_FORK_MIGRATIONS = [
   { migration_id: 3, name: "ProjectionProjectRepositoryIdentity" },
@@ -146,8 +166,8 @@ isolatedLayer()("ForkMigrations - fresh database", (it) => {
 });
 
 // State 2: a database the current upstream release has migrated. Its
-// migrations 38-40 are upstream's own and must survive untouched, and the fork
-// must add nothing to `effect_sql_migrations` that could collide with them.
+// migrations from 38 up are upstream's own and must survive untouched, and the
+// fork must add nothing to `effect_sql_migrations` that could collide with them.
 isolatedLayer()("ForkMigrations - upstream-migrated database", (it) => {
   it.effect("opens without a collision and keeps upstream's migration rows", () =>
     Effect.gen(function* () {
@@ -172,11 +192,7 @@ isolatedLayer()("ForkMigrations - upstream-migrated database", (it) => {
         SELECT migration_id, name FROM effect_sql_migrations
         WHERE migration_id >= 38 ORDER BY migration_id
       `;
-      assert.deepStrictEqual(upstreamRows, [
-        { migration_id: 38, name: "ProjectionThreadsPinOrderKey" },
-        { migration_id: 39, name: "ProjectionProjectsDefaultThreadEnvMode" },
-        { migration_id: 40, name: "ProjectionProjectFaviconPath" },
-      ]);
+      assert.deepStrictEqual(upstreamRows, UPSTREAM_MIGRATIONS_FROM_38);
     }),
   );
 });
@@ -215,8 +231,8 @@ isolatedLayer()("ForkMigrations - database carrying the retired ordering column"
       assert.deepStrictEqual(activities, [{ activity_id: "activity-1", sequence: null }]);
 
       // Slot 38 is upstream's again, so upstream's own migration 38 is not
-      // skipped by the migrator's highest-id-wins bookkeeping. Ids 38 to 40
-      // arrived in v0.0.33 and all three run on top of the freed slot.
+      // skipped by the migrator's highest-id-wins bookkeeping. Every upstream
+      // id from 38 up runs on top of the freed slot.
       const legacyRows = yield* sql<{
         readonly migration_id: number;
         readonly name: string;
@@ -224,11 +240,7 @@ isolatedLayer()("ForkMigrations - database carrying the retired ordering column"
         SELECT migration_id, name FROM effect_sql_migrations
         WHERE migration_id >= 38 ORDER BY migration_id
       `;
-      assert.deepStrictEqual(legacyRows, [
-        { migration_id: 38, name: "ProjectionThreadsPinOrderKey" },
-        { migration_id: 39, name: "ProjectionProjectsDefaultThreadEnvMode" },
-        { migration_id: 40, name: "ProjectionProjectFaviconPath" },
-      ]);
+      assert.deepStrictEqual(legacyRows, UPSTREAM_MIGRATIONS_FROM_38);
     }),
   );
 });

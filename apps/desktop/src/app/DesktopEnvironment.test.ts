@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -28,10 +29,9 @@ const makeEnvironmentLayer = (
     ...defaultInput,
     ...overrides,
   }).pipe(
-    // `Path.layer` is the POSIX implementation. The fixtures below are POSIX
-    // paths, so pin it over the host path service or every assertion reads the
-    // separator of the machine running the suite.
-    Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest(env), Path.layer)),
+    Layer.provide(
+      Layer.mergeAll(NodeServices.layer, NodePath.layerPosix, DesktopConfig.layerTest(env)),
+    ),
   );
 
 const makeEnvironment = (
@@ -72,6 +72,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.rootDir, "/repo");
       assert.equal(environment.appRoot, "/repo");
+      assert.equal(environment.serverRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
       // The fork's own app user model id. See DesktopEnvironment.ts and #59.
@@ -104,6 +105,24 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+    }),
+  );
+
+  it.effect("uses the packaged Windows server sidecar as the backend root", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        platform: "win32",
+        isPackaged: true,
+        appPath: "/install/resources/app.asar",
+        resourcesPath: "/install/resources",
+      });
+
+      assert.equal(environment.appRoot, "/install/resources/app.asar");
+      assert.equal(environment.serverRoot, "/install/resources/server.asar");
+      assert.equal(
+        environment.backendEntryPath,
+        "/install/resources/server.asar/apps/server/dist/bin.mjs",
+      );
     }),
   );
 

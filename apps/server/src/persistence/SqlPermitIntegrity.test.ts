@@ -4,7 +4,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as SqliteClient from "./NodeSqliteClient.ts";
+import * as SqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
   SqlPermitOverBudgetError,
   assertSqlPermitIntegrity,

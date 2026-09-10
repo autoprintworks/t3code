@@ -45,6 +45,10 @@ export const discovery = {
   executable: "az",
   versionArgs: ["--version"],
   authArgs: ["account", "show", "--query", "user.name", "-o", "tsv"],
+  // `az` boots a fresh Python interpreter on every invocation, so even `az --version`
+  // takes ~6s on Windows and overruns the default budget, leaving the provider reported
+  // as missing on machines where it is installed. `gh` and `glab` answer in ~0.3s.
+  probeTimeoutMs: 20_000,
   parseAuth: parseAzureAuth,
   installHint:
     "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
@@ -57,6 +61,9 @@ function toChangeRequest(summary: {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt: ChangeRequest["updatedAt"];
 }): ChangeRequest {
   return {
@@ -67,6 +74,9 @@ function toChangeRequest(summary: {
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state,
+    ...(summary.isDraft === true ? { isDraft: true } : {}),
+    closedAt: summary.closedAt ?? null,
+    mergedAt: summary.mergedAt ?? null,
     updatedAt: summary.updatedAt,
     isCrossRepository: false,
   };

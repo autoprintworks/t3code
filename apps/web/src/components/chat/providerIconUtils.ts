@@ -16,7 +16,6 @@ import {
   TerminalPromptIcon,
   TraeIcon,
 } from "../Icons";
-import { PROVIDER_OPTIONS } from "../../session-logic";
 
 /**
  * Artwork for every icon key the contract names.
@@ -62,23 +61,16 @@ export function providerInstanceIcon(input: {
   return key === undefined ? null : (PROVIDER_ICON_BY_ICON_KEY[key] ?? null);
 }
 
-function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
-  value: ProviderDriverKind;
-  label: string;
-  available: true;
-  pickerSidebarBadge?: "new" | "soon";
-} {
-  return option.available;
-}
-
-export const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
-
 export type ModelEsque = {
   slug: string;
   name: string;
   shortName?: string | undefined;
   subProvider?: string | undefined;
+  aliases?: ReadonlyArray<string> | undefined;
+  isDefault?: boolean | undefined;
+  badge?: "new" | undefined;
   isLegacy?: boolean | undefined;
+  isUnavailable?: boolean | undefined;
 };
 
 function escapeRegExp(value: string): string {

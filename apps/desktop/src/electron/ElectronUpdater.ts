@@ -54,7 +54,6 @@ export const ElectronUpdaterError = Schema.Union([
   ElectronUpdaterQuitAndInstallError,
 ]);
 export type ElectronUpdaterError = typeof ElectronUpdaterError.Type;
-export const isElectronUpdaterError = Schema.is(ElectronUpdaterError);
 
 export class ElectronUpdater extends Context.Service<
   ElectronUpdater,
@@ -81,6 +80,7 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronUpdater.of({
   setFeedURL: (options) =>
     Effect.suspend(() => {

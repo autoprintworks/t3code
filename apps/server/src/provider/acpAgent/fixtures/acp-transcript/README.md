@@ -19,12 +19,8 @@ The driver has to work against any ACP agent, so the fixtures describe the proto
   "why": "what breaks in the world if this recording stops matching",
   "session": "the session id the recording uses",
   "awaits_interrupt": true, // optional; see below
-  "host": [
-    /* what a client sends, in order */
-  ],
-  "agent": [
-    /* what the agent answers, in order */
-  ],
+  "host": [/* what a client sends, in order */],
+  "agent": [/* what the agent answers, in order */],
 }
 ```
 

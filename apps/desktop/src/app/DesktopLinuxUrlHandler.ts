@@ -23,7 +23,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // Distinct from upstream's "t3code-url-handler.desktop": this file lands in the
 // shared ~/.local/share/applications directory, so an official T3 Code install
 // using the same name would have its handler entry silently overwritten.
-export const URL_HANDLER_DESKTOP_ENTRY_NAME = "t3code-fork-url-handler.desktop";
+const URL_HANDLER_DESKTOP_ENTRY_NAME = "t3code-fork-url-handler.desktop";
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
@@ -95,6 +95,7 @@ export class DesktopLinuxUrlHandler extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopLinuxUrlHandler") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

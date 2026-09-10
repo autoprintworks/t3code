@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -38,11 +39,7 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
-import {
-  makeManualOnlyProviderMaintenanceCapabilities,
-  makeStaticProviderMaintenanceResolver,
-  resolveProviderMaintenanceCapabilitiesEffect,
-} from "../providerMaintenance.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -60,16 +57,15 @@ import { makeAcpAgentTextGeneration } from "./AcpAgentTextGeneration.ts";
 const decodeAcpAgentSettings = Schema.decodeSync(AcpAgentSettings);
 
 const DRIVER_KIND = ACP_AGENT_DRIVER_KIND;
-const UPDATE = makeStaticProviderMaintenanceResolver(
-  makeManualOnlyProviderMaintenanceCapabilities({
-    provider: DRIVER_KIND,
-    // The agent is whatever the user pointed us at. T3 Code has no idea where
-    // it came from, so it has nothing to offer to update.
-    packageName: null,
-  }),
-);
+const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
+  provider: DRIVER_KIND,
+  // The agent is whatever the user pointed us at. T3 Code has no idea where
+  // it came from, so it has nothing to offer to update.
+  packageName: null,
+});
 
 export type AcpAgentDriverEnv =
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -138,10 +134,6 @@ export const AcpAgentDriver: ProviderDriver<AcpAgentSettings, AcpAgentDriverEnv>
         iconKey: resolveConfiguredIconKey(effectiveConfig.icon),
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-        binaryPath: effectiveConfig.command,
-        env: processEnv,
-      });
 
       const adapter = yield* makeAcpAgentAdapter(effectiveConfig, {
         environment: processEnv,
@@ -159,12 +151,13 @@ export const AcpAgentDriver: ProviderDriver<AcpAgentSettings, AcpAgentDriverEnv>
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<AcpAgentSettings>>(
         {
-          maintenanceCapabilities,
+          resolveMaintenance: () => Effect.succeed(MAINTENANCE_CAPABILITIES),
           getSettings: snapshotSettings.getSettings,
           streamSettings: snapshotSettings.streamSettings,
           haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-          // Probe gate: the instance enabled flag the registry resolved, never the
-          // driver config's own `enabled` field.
+          // Probe gate: the instance enabled flag the registry resolved through
+          // `resolveEntryEnabled`. That is the most restrictive of the envelope flag and the driver
+          // config's own `enabled`, so an off flag on either side means no probe.
           isEnabled: () => enabled,
           initialSnapshot: (settings) =>
             buildInitialAcpAgentProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
@@ -172,7 +165,7 @@ export const AcpAgentDriver: ProviderDriver<AcpAgentSettings, AcpAgentDriverEnv>
           enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
             enrichAcpAgentSnapshot({
               snapshot: currentSnapshot,
-              maintenanceCapabilities,
+              maintenanceCapabilities: MAINTENANCE_CAPABILITIES,
               enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
               publishSnapshot,
               httpClient,

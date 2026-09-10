@@ -1,8 +1,10 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
@@ -21,13 +23,63 @@ const environmentLayer = DesktopEnvironment.layer({
   resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
   runningUnderArm64Translation: false,
 }).pipe(
-  // `Path.layer` is the POSIX implementation. The fixtures here are POSIX
-  // paths, so pin it over the host path service or the assertions read the
-  // separator of the machine running the suite.
-  Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}), Path.layer)),
+  Layer.provide(
+    Layer.mergeAll(NodeServices.layer, NodePath.layerPosix, DesktopConfig.layerTest({})),
+  ),
 );
 
 describe("DesktopAssets", () => {
+  it.effect("uses canonical source-tree icons for unpackaged development", () =>
+    Effect.gen(function* () {
+      // The layer under test is pinned to `NodePath.layerPosix`, so the
+      // expectations here need POSIX separators, not the host's.
+      const path = yield* Effect.provide(Path.Path, NodePath.layerPosix);
+      const developmentEnvironmentLayer = DesktopEnvironment.layer({
+        dirname: "/repo/apps/desktop/dist-electron",
+        homeDirectory: "/Users/alice",
+        platform: "linux",
+        processArch: "x64",
+        appVersion: "1.2.3",
+        appPath: "/repo",
+        isPackaged: false,
+        resourcesPath: "/repo/apps/desktop/resources",
+        runningUnderArm64Translation: false,
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodePath.layerPosix,
+            DesktopConfig.layerTest({ VITE_DEV_SERVER_URL: "http://localhost:5733" }),
+          ),
+        ),
+      );
+      // Candidates are joined with the POSIX separator, so match on that.
+      const developmentAssetsSegment = path.join("assets", "dev") + path.sep;
+      const fileSystemLayer = FileSystem.layerNoop({
+        exists: (candidate) => Effect.succeed(String(candidate).includes(developmentAssetsSegment)),
+      });
+      const assets = yield* DesktopAssets.DesktopAssets.pipe(
+        Effect.provide(
+          DesktopAssets.layer.pipe(
+            Layer.provide(Layer.merge(fileSystemLayer, developmentEnvironmentLayer)),
+          ),
+        ),
+      );
+
+      const icons = yield* assets.iconPaths;
+
+      assert.ok(
+        Option.getOrThrow(icons.ico).endsWith(path.join("assets", "dev", "blueprint-windows.ico")),
+      );
+      assert.ok(
+        Option.getOrThrow(icons.png).endsWith(
+          path.join("assets", "dev", "blueprint-universal-1024.png"),
+        ),
+      );
+      assert.isTrue(Option.isNone(icons.icns));
+    }),
+  );
+
   it.effect("preserves the failed asset candidate and filesystem cause", () =>
     Effect.gen(function* () {
       const fileName = "custom.bin";

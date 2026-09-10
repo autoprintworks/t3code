@@ -1,4 +1,5 @@
 import {
+  AntigravitySettings,
   ACP_AGENT_DRIVER_KIND,
   AcpAgentSettings,
   ClaudeSettings,
@@ -10,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 import {
+  AntigravityIcon,
   ACPRegistryIcon,
   ClaudeAI,
   CursorIcon,
@@ -44,7 +46,7 @@ export interface ProviderClientDefinition {
   readonly badgeLabel?: string;
 }
 
-export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
+const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
   {
     value: ProviderDriverKind.make("codex"),
     label: "Codex",
@@ -77,6 +79,12 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
   },
+  {
+    value: ProviderDriverKind.make("antigravity"),
+    label: "Antigravity",
+    icon: AntigravityIcon,
+    settingsSchema: AntigravitySettings,
+  },
   // Without this entry the settings panel falls back to the generic card and
   // never renders `command` / `args` / `workingDirectory`, so there would be no
   // way to say which agent an instance runs.
@@ -88,7 +96,7 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
   },
 ];
 
-export const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
+const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
   Record<ProviderDriverKind, ProviderClientDefinition>
 > = Object.fromEntries(
   PROVIDER_CLIENT_DEFINITIONS.map((definition) => [definition.value, definition]),

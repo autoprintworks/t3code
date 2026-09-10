@@ -6,7 +6,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import { CodeView, type CodeViewHandle, type CodeViewProps } from "@pierre/diffs/react";
+import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
 
@@ -18,8 +18,9 @@ import {
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
 
-import { LocalCommentAnnotation } from "../files/LocalCommentAnnotation";
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
+import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
+import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
 
 interface DiffCommentAnnotationEntry {
   id: string;
@@ -76,14 +77,16 @@ interface AnnotatableCodeViewProps {
     fileDiff: FileDiffMetadata;
     filePath: string;
     fileKey: string;
+    fileVersion: number;
     collapsed: boolean;
   }>;
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
-  options: NonNullable<CodeViewProps<DiffCommentAnnotationGroup>["options"]>;
+  options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   className?: string;
+  renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
     fileKey: string,
@@ -104,6 +107,7 @@ export function AnnotatableCodeView({
   options,
   viewerRef,
   className,
+  renderHeaderFilenameSuffix,
   renderHeaderPrefix,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
@@ -124,7 +128,7 @@ export function AnnotatableCodeView({
   const filesByKey = useMemo(() => new Map(files.map((file) => [file.fileKey, file])), [files]);
   const items = useMemo<CodeViewDiffItem<DiffCommentAnnotationGroup>[]>(
     () =>
-      files.map(({ fileDiff, filePath, fileKey, collapsed }) => {
+      files.map(({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
         const persisted = reviewComments
           .filter(
             (comment) =>
@@ -152,7 +156,7 @@ export function AnnotatableCodeView({
           annotations,
           collapsed,
           version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+            `${fileVersion}:${collapsed ? "1" : "0"}:${annotations
               .flatMap((annotation) =>
                 annotation.metadata.entries.map(
                   (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
@@ -237,9 +241,9 @@ export function AnnotatableCodeView({
 
   const hasOpenComment = draft !== null;
   return (
-    <CodeView<DiffCommentAnnotationGroup>
+    <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
-      {...(viewerRef ? { ref: viewerRef } : {})}
+      {...(viewerRef ? { viewerRef } : {})}
       {...(className ? { className } : {})}
       items={items}
       selectedLines={selectedLines}
@@ -250,6 +254,9 @@ export function AnnotatableCodeView({
         enableLineSelection: !hasOpenComment,
         onGutterUtilityClick: beginComment,
       }}
+      renderHeaderFilenameSuffix={(item) =>
+        item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
+      }
       renderHeaderPrefix={(item) =>
         item.type === "diff"
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
@@ -262,7 +269,7 @@ export function AnnotatableCodeView({
             className={hasDraft ? "py-1" : "divide-y divide-border/30 border-y border-border/30"}
           >
             {annotation.metadata.entries.map((entry) => (
-              <LocalCommentAnnotation
+              <DiffCommentAnnotation
                 key={entry.id}
                 kind={entry.kind}
                 rangeLabel={entry.rangeLabel}

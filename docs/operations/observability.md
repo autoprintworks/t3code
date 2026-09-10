@@ -107,6 +107,11 @@ Client spans only reach the trace file when the client exports them; see `Client
 layer into their connection runtime, and the exporter posts to whichever environment the socket
 opened against, so both halves of a connection trace land in that environment's trace file on every
 surface.
+DPoP proof failures include the safe `environment.dpop.failure_code` span
+attribute. A `time_window` failure means that a signed proof was too old or too
+far in the future for the environment server's allowed window. It can point to
+a date or time problem on either device, but it can also result from a delayed
+request.
 
 ### Metrics
 

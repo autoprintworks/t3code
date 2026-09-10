@@ -19,7 +19,7 @@ type Loader = {
 };
 const defaultSqliteClientLoaders = {
   bun: () => import("@effect/sql-sqlite-bun/SqliteClient"),
-  node: () => import("../NodeSqliteClient.ts"),
+  node: () => import("@t3tools/shared/nodeSqliteClient"),
 } satisfies Record<string, () => Promise<Loader>>;
 
 const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
@@ -34,6 +34,8 @@ const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
+    yield* sql`PRAGMA busy_timeout = 5000;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
     // Before upstream's migrator reads the table, so the id an older fork build

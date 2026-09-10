@@ -13,14 +13,14 @@ export const DESKTOP_HOST = "app";
 // protocol handler (app.setAsDefaultProtocolClient), so sharing the scheme with an
 // official T3 Code install would let whichever app registered most recently steal
 // the other's t3code:// links.
-export const DESKTOP_PRODUCTION_SCHEME = "t3code-fork";
+const DESKTOP_PRODUCTION_SCHEME = "t3code-fork";
 export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-fork-dev";
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
 }
 
-export function getDesktopOrigin(isDevelopment: boolean): string {
+function getDesktopOrigin(isDevelopment: boolean): string {
   return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
 }
 
@@ -91,6 +91,7 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     `script-src ${scriptSources.join(" ")}`,
     `connect-src ${connectSources.join(" ")}`,
     `img-src 'self' ${input.scheme}: blob: data: http: https:`,
+    `media-src 'self' ${input.scheme}: blob: http: https:`,
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
@@ -112,7 +113,7 @@ function withContentSecurityPolicy(response: Response, policy: string): Response
 /**
  * Must run synchronously during process bootstrap, before Electron emits `ready`.
  */
-export function registerDesktopSchemePrivilegesSync(): void {
+function registerDesktopSchemePrivilegesSync(): void {
   Electron.protocol.registerSchemesAsPrivileged([
     {
       scheme: DESKTOP_PRODUCTION_SCHEME,
@@ -121,6 +122,7 @@ export function registerDesktopSchemePrivilegesSync(): void {
         secure: true,
         supportFetchAPI: true,
         corsEnabled: true,
+        stream: true,
       },
     },
     {
@@ -130,6 +132,7 @@ export function registerDesktopSchemePrivilegesSync(): void {
         secure: true,
         supportFetchAPI: true,
         corsEnabled: true,
+        stream: true,
       },
     },
   ]);
@@ -206,6 +209,7 @@ async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<
   throw lastError;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
 

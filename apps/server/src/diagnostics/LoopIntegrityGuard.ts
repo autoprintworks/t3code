@@ -37,7 +37,7 @@ import {
   formatSqlPermitHold,
   watchSqlPermits,
 } from "../persistence/SqlPermitIntegrity.ts";
-import type { SqlPermitHold } from "../persistence/NodeSqliteClient.ts";
+import type { SqlPermitHold } from "@t3tools/shared/nodeSqliteClient";
 
 export type LoopIntegrityMode = "off" | "sample" | "attribute";
 

@@ -17,7 +17,7 @@ export interface DesktopPreReadyCommandLineReader {
   readonly getSwitchValue: (switchName: string) => string;
 }
 
-export function readCommandLineSwitchValue(
+function readCommandLineSwitchValue(
   commandLine: DesktopPreReadyCommandLineReader,
   switchName: string,
 ): string | null {
@@ -46,6 +46,7 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {

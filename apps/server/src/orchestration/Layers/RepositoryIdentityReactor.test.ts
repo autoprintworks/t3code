@@ -58,6 +58,7 @@ const projectRow = (input: {
   repositoryIdentityWorkspaceRoot: input.repositoryIdentityWorkspaceRoot,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,
+  autoPull: false,
   scripts: [],
   createdAt: now,
   updatedAt: now,
@@ -104,16 +105,17 @@ const makeHarness = (input: {
     });
 
     const resolverLayer = Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
-      resolve: (cwd: string) =>
+      // Upstream folded the old `invalidate` into `resolve`, so a cache bypass
+      // is now a `refresh: true` resolve rather than a separate call.
+      resolve: (cwd: string, options?: { readonly refresh?: boolean }) =>
         Effect.suspend(() => {
           resolveCalls.push(cwd);
+          if (options?.refresh === true) {
+            invalidateCalls.push(cwd);
+          }
           return input.failingRoots?.has(cwd) === true
             ? Effect.die(new Error(`git failed for ${cwd}`))
             : Effect.succeed(identityFor(cwd));
-        }),
-      invalidate: (cwd: string) =>
-        Effect.sync(() => {
-          invalidateCalls.push(cwd);
         }),
     });
 

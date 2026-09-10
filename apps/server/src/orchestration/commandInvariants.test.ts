@@ -13,10 +13,8 @@ import {
 import * as Effect from "effect/Effect";
 
 import {
-  findThreadById,
   issuedByFleet,
   listThreadsByProjectId,
-  requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
   requireThreadPromptable,
@@ -233,9 +231,7 @@ describe("requireThreadPromptable", () => {
 });
 
 describe("commandInvariants", () => {
-  it("finds threads by id and project", () => {
-    expect(findThreadById(readModel, ThreadId.make("thread-1"))?.projectId).toBe("project-a");
-    expect(findThreadById(readModel, ThreadId.make("missing"))).toBeUndefined();
+  it("lists threads by project", () => {
     expect(
       listThreadsByProjectId(readModel, ProjectId.make("project-b")).map((thread) => thread.id),
     ).toEqual([ThreadId.make("thread-2")]);
@@ -312,23 +308,38 @@ describe("commandInvariants", () => {
     }),
   );
 
-  effectIt.effect("requires non-negative integers", () =>
-    Effect.gen(function* () {
-      yield* requireNonNegativeInteger({
-        commandType: "thread.checkpoint.revert",
-        field: "turnCount",
-        value: 0,
-      });
+  effectIt.effect(
+    "lets a draft retry re-create a thread id after its first attempt was deleted",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-1");
+        const firstAttempt = readModel.threads.find((thread) => thread.id === threadId)!;
+        const afterRollback: OrchestrationReadModel = {
+          ...readModel,
+          threads: readModel.threads.map((thread) =>
+            thread.id === threadId ? { ...thread, deletedAt: now, updatedAt: now } : thread,
+          ),
+        };
+        const retry: OrchestrationCommand = {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-retry"),
+          threadId,
+          projectId: firstAttempt.projectId,
+          title: firstAttempt.title,
+          modelSelection: firstAttempt.modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        };
 
-      const negative = yield* Effect.exit(
-        requireNonNegativeInteger({
-          commandType: "thread.checkpoint.revert",
-          field: "turnCount",
-          value: -1,
-        }),
-      );
-      assert.equal(negative._tag, "Failure");
-      assert.include(String(negative), "greater than or equal to 0");
-    }),
+        // The invariant answers void when the thread is absent. Upstream asserted that,
+        // and a retry path that started returning something would be a change worth
+        // seeing here.
+        assert.isUndefined(
+          yield* requireThreadAbsent({ readModel: afterRollback, command: retry, threadId }),
+        );
+      }),
   );
 });

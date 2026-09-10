@@ -56,6 +56,23 @@ it("exports provider-compatible object schemas with described parameters", () =>
   }
 });
 
+it("exports exact object result schemas for preview actions", () => {
+  const actionNames = [
+    "preview_click",
+    "preview_type",
+    "preview_press",
+    "preview_scroll",
+    "preview_wait_for",
+  ] as const;
+  for (const name of actionNames) {
+    expect(Tool.getJsonSchemaFromSchema(PreviewToolkit.tools[name].successSchema)).toEqual({
+      type: "object",
+      additionalProperties: false,
+      description: "The preview action completed successfully.",
+    });
+  }
+});
+
 // The preview toolkit's declared surface is frozen. A second toolkit now sits
 // beside it, so this locks preview's tool names and parameter fields and fails
 // if a later change adds, drops, or renames any of them.
@@ -70,7 +87,7 @@ const PREVIEW_DECLARED_SURFACE: Readonly<Record<string, ReadonlyArray<string>>> 
   preview_resize: ["height", "mode", "orientation", "preset", "tabId", "timeoutMs", "width"],
   preview_scroll: ["deltaX", "deltaY", "locator", "selector", "tabId"],
   preview_set_appearance: ["colorScheme", "tabId"],
-  preview_snapshot: ["tabId"],
+  preview_snapshot: ["includeImage", "tabId"],
   preview_status: ["tabId"],
   preview_type: ["clear", "locator", "selector", "tabId", "text", "timeoutMs"],
   preview_wait_for: ["locator", "selector", "tabId", "text", "timeoutMs", "urlIncludes"],

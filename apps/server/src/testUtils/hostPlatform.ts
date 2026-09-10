@@ -42,3 +42,13 @@ export const skipPosixDirectoryMode = isWindowsHost;
 
 /** Windows forbids a newline in a path component, so such a directory cannot be created. */
 export const skipNewlineInPath = isWindowsHost;
+
+/** Windows does not define `O_NOFOLLOW`, so a guard that opens with that flag cannot be set. */
+export const skipPosixNoFollow = isWindowsHost;
+
+/**
+ * A Windows NTFS file id is larger than a safe integer, so a scanner that keys on the
+ * filesystem identity falls back to a case-folded path there and cannot hold two case variants
+ * of one directory apart. They are the same directory on a Windows volume anyway.
+ */
+export const skipUnsafeFileIds = isWindowsHost;

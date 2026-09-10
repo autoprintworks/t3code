@@ -14,7 +14,7 @@ const THEME_PAINT_KIND_ORDER: ReadonlyArray<ThemePaintKind> = [
   "foreground",
 ];
 
-export const THEME_INSPECTOR_MATCH_ATTRIBUTE = "data-theme-inspector-match";
+const THEME_INSPECTOR_MATCH_ATTRIBUTE = "data-theme-inspector-match";
 
 const THEME_TOKEN_PROBE_ATTRIBUTE = "data-theme-token-probe";
 const THEME_TOKEN_PROBE_COLOR = "#01fea7";
@@ -38,7 +38,7 @@ const THEME_UTILITY_ROLES: Readonly<Partial<Record<string, ThemeColorRole>>> = {
   secondary: "secondary",
   "secondary-foreground": "secondaryForeground",
   muted: "muted",
-  "muted-foreground": "textMuted",
+  "muted-foreground": "mutedForeground",
   placeholder: "placeholder",
   "secondary-label": "secondaryLabel",
   "icon-muted": "iconMuted",

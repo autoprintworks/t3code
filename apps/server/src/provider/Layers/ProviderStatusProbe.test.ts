@@ -31,27 +31,35 @@ import {
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AcpAgentDriver } from "../acpAgent/AcpAgentDriver.ts";
+import { AntigravityInstallation } from "../AntigravityInstallation.ts";
+import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
+import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import type { AnyProviderDriver } from "../ProviderDriver.ts";
 import type { ProviderInstanceRegistryShape } from "../Services/ProviderInstanceRegistry.ts";
+import * as CodexResetCredit from "./codexResetCredit.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
-const DRIVERS = [
+const DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
   CodexDriver,
   ClaudeDriver,
   CursorDriver,
@@ -130,17 +138,58 @@ const makeHttpClientLayer = (log: ProbeLog) =>
 // `OpenCodeDriver.create` yields `OpenCodeRuntime`, which needs the spawner,
 // so the recording spawner has to be in place beneath it. `Layer.merge` lets
 // the recording spawner win over the one `NodeServices.layer` ships.
+const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
+
+/**
+ * These tests ask which providers get probed, not when the background policy
+ * lets work run, so the policy always says yes.
+ */
+const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+  reportClientActivity: () => Effect.void,
+  removeRpcClient: () => Effect.void,
+  reportHostPowerState: () => Effect.void,
+  snapshot: Effect.succeed({
+    hostPower: {
+      source: "unknown",
+      idle: "unknown",
+      idleSeconds: null,
+      locked: "unknown",
+      suspended: false,
+      onBattery: "unknown",
+      lowPowerMode: "unknown",
+      thermalState: "unknown",
+      stale: true,
+      updatedAt: TEST_EPOCH,
+    },
+    leases: [],
+    activeForegroundLeaseCount: 0,
+    activeScopeKeys: [],
+    shouldRunOpportunisticWork: true,
+    updatedAt: TEST_EPOCH,
+  }),
+  streamChanges: Stream.empty,
+  hasDemand: () => Effect.succeed(true),
+  shouldRunScopeWork: () => Effect.succeed(true),
+  shouldRunOpportunisticWork: Effect.succeed(true),
+});
+
 const makeTestLayer = (log: ProbeLog) => {
   const infraLayer = OpenCodeRuntimeLive.pipe(
     Layer.provideMerge(Layer.merge(NodeServices.layer, makeSpawnerLayer(log))),
   );
-  return ServerConfig.layerTest(process.cwd(), {
-    prefix: "provider-status-probe-test",
-  }).pipe(
+  return AntigravityInstallation.layer.pipe(
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "provider-status-probe-test",
+      }),
+    ),
     Layer.provideMerge(infraLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(makeHttpClientLayer(log)),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+    Layer.provideMerge(CodexResetCredit.layerTest),
   );
 };
 
@@ -160,6 +209,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   homePath: "",
   customModels: [],
   launchArgs: "",
+  autoCompactWindow: "",
   ...overrides,
 });
 
@@ -202,14 +252,14 @@ const makeAcpAgentConfig = (overrides: Partial<AcpAgentSettings>): AcpAgentSetti
  * One instance of every shipped driver.
  *
  * `outerEnabled` is the envelope flag the settings UI toggles.
- * `innerEnabled` is the driver config's own flag, which must never decide
- * whether a probe runs.
+ * `innerEnabled` is the driver config's own flag. Upstream takes the most
+ * restrictive of the two, so an off flag on either side means no probe.
  */
 const makeConfigMap = (input: {
   readonly outerEnabled: ReadonlyArray<ProviderInstanceId>;
   readonly innerEnabled?: boolean;
 }): ProviderInstanceConfigMap => {
-  const innerEnabled = input.innerEnabled ?? false;
+  const innerEnabled = input.innerEnabled ?? true;
   const outer = (instanceId: ProviderInstanceId) => input.outerEnabled.includes(instanceId);
   return {
     [CODEX_ID]: {
@@ -296,9 +346,7 @@ describe("provider status probes honour the enabled flag", () => {
     return Effect.gen(function* () {
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers: DRIVERS,
-        // Codex is on at the envelope while its driver config says `enabled:
-        // false`, so a probe here also proves the inner flag does not gate.
-        configMap: makeConfigMap({ outerEnabled: [CODEX_ID], innerEnabled: false }),
+        configMap: makeConfigMap({ outerEnabled: [CODEX_ID] }),
       });
 
       yield* awaitFirstSpawn(log);
@@ -344,7 +392,7 @@ describe("provider status probes honour the enabled flag", () => {
     return Effect.gen(function* () {
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers: DRIVERS,
-        configMap: makeConfigMap({ outerEnabled: [ACP_AGENT_ID], innerEnabled: false }),
+        configMap: makeConfigMap({ outerEnabled: [ACP_AGENT_ID] }),
       });
 
       yield* awaitFirstSpawn(log);

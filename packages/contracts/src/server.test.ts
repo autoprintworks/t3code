@@ -1,15 +1,16 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
-  isProviderSkillModelInvocable,
-  isProviderSkillUserInvocable,
+  resolveEnvironmentMachineKind,
   ServerConfig,
   ServerProvider,
   ServerProviderSkill,
   ServerProviders,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import { ServerSettings } from "./settings.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
@@ -159,6 +160,74 @@ describe("server config forward compatibility", () => {
 
     expect(parsed).toEqual([decodedBase]);
   });
+
+  it("drops usage windows this build cannot decode instead of failing the provider", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [
+          { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+          { id: "future", kind: "some-future-kind", label: "Future", usedPercent: 1 },
+          { id: "bad", kind: "weekly", label: "Weekly", usedPercent: 120 },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.windows).toEqual([
+      { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+    ]);
+  });
+});
+
+describe("resolveEnvironmentMachineKind", () => {
+  const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
+  const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
+  const descriptor = (platform: Record<string, unknown>) =>
+    decodeDescriptor({
+      environmentId: "env-1",
+      label: "Box",
+      platform: { os: "linux", arch: "x64", ...platform },
+      serverVersion: "1.0.0",
+      capabilities: {},
+    });
+
+  it("prefers the user's pick over what the server detected", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({ machine: "mac-mini" }),
+        settings: decodeSettings({ environmentIcon: "laptop" }),
+      }),
+    ).toBe("laptop");
+  });
+
+  it("uses detection when nothing is picked", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({ machine: "mac-mini" }),
+        settings: decodeSettings({}),
+      }),
+    ).toBe("mac-mini");
+  });
+
+  it("falls back to a server for older servers and before connect", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({}),
+        settings: decodeSettings({}),
+      }),
+    ).toBe("server");
+    expect(resolveEnvironmentMachineKind(null)).toBe("server");
+  });
+
+  it("drops a machine kind this build does not know instead of failing the descriptor", () => {
+    const parsed = descriptor({ machine: "toaster" });
+
+    expect(parsed.platform.machine).toBeUndefined();
+    expect(
+      resolveEnvironmentMachineKind({ environment: parsed, settings: decodeSettings({}) }),
+    ).toBe("server");
+  });
 });
 
 describe("ServerProviderSkill invocability", () => {
@@ -168,16 +237,14 @@ describe("ServerProviderSkill invocability", () => {
       path: "/skills/harness-adapters/SKILL.md",
       enabled: true,
       userInvocable: false,
-      modelInvocable: false,
+      userInvocationOnly: true,
     };
 
     const parsed = decodeProviderSkill(wire);
 
     expect(parsed.userInvocable).toBe(false);
-    expect(parsed.modelInvocable).toBe(false);
+    expect(parsed.userInvocationOnly).toBe(true);
     expect(encodeProviderSkill(parsed)).toEqual(wire);
-    expect(isProviderSkillUserInvocable(parsed)).toBe(false);
-    expect(isProviderSkillModelInvocable(parsed)).toBe(false);
   });
 
   it("treats absent invocability as invocable by both a user and the agent", () => {
@@ -188,8 +255,6 @@ describe("ServerProviderSkill invocability", () => {
     });
 
     expect(parsed.userInvocable).toBeUndefined();
-    expect(parsed.modelInvocable).toBeUndefined();
-    expect(isProviderSkillUserInvocable(parsed)).toBe(true);
-    expect(isProviderSkillModelInvocable(parsed)).toBe(true);
+    expect(parsed.userInvocationOnly).toBeUndefined();
   });
 });

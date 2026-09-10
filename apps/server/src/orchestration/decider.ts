@@ -1,15 +1,31 @@
 import {
   EventId,
+  MAX_SCRIPT_ID_LENGTH,
+  SCRIPT_RUN_COMMAND_PATTERN,
+  MessageId,
+  ThreadLinkedPullRequest,
+  UserInputRequestedPayload,
+  isImportedAgentSessionMessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
+  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import type * as PlatformError from "effect/PlatformError";
 
-import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import {
+  OrchestrationCommandInvariantError,
+  OrchestrationThreadSettleBlockedError,
+  type OrchestrationCommandRejection,
+} from "./Errors.ts";
 import {
   listThreadsByProjectId,
   requireActiveProjectWorkspaceRootAbsent,
@@ -22,8 +38,13 @@ import {
   requireThreadPromptable,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
+
+const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
+const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
 /**
  * Clamps a client-supplied timestamp into the range the server can vouch for:
@@ -59,11 +80,6 @@ function clampToServerClock(input: {
   return notBeforeMs <= serverNowMs ? input.notBefore : input.serverNow;
 }
 
-// Session adoption takes seconds; a user message still unadopted after this
-// window is a failed/stale start, not pending work. Mirrors the client's
-// QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
-const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
-
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
  * approval or user-input request with no later resolution for the same
@@ -89,16 +105,10 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
 }
 
 // Scans the read model's activities, which the projector caps at the most
-// recent 500. That bound is safe here: an OPEN approval/user-input request
-// blocks its turn, so the thread cannot accumulate hundreds of later
-// activities while one is outstanding — a request that has scrolled out of
-// the window is one whose turn kept running, i.e. it was resolved or went
-// stale. (The projection pipeline's pendingApprovalCount reads the same
-// capped stream and stays consistent with this view.)
-function hasOpenBlockingRequest(thread: {
-  readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
-}): boolean {
-  const openRequestIds = new Set<string>();
+// recent 500 plus pending async questions. Async questions remain actionable
+// while the agent works, so they must not expire with the activity window.
+function openRequests(thread: Pick<OrchestrationThread, "activities">) {
+  const requests = new Map<string, OrchestrationThreadActivity>();
   for (const activity of thread.activities) {
     const payload =
       typeof activity.payload === "object" && activity.payload !== null
@@ -107,73 +117,42 @@ function hasOpenBlockingRequest(thread: {
     const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
     if (requestId === null) continue;
     if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
-      openRequestIds.add(requestId);
+      requests.set(requestId, activity);
     } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
-      openRequestIds.delete(requestId);
+      requests.delete(requestId);
     } else if (
       (activity.kind === "provider.approval.respond.failed" ||
         activity.kind === "provider.user-input.respond.failed") &&
       isStaleRequestFailureDetail(payload)
     ) {
-      openRequestIds.delete(requestId);
+      requests.delete(requestId);
     }
   }
-  return openRequestIds.size > 0;
+  return requests;
 }
 
-/**
- * A queued turn start — a user message no turn has picked up yet — is work
- * in flight even though session is still null (turn.start emits
- * message-sent + turn-start-requested; the session arrives later). Detection
- * mirrors the client's hasQueuedTurnStart: the newest user message is
- * strictly newer than every latestTurn timestamp (adoption stamps the new
- * turn's requestedAt with the message time, clearing this), and only within
- * the adoption grace window — historical threads whose last user message
- * postdates their turn timestamps (older-server data, mid-turn messages)
- * must not be blocked forever. A failed session start (status "error")
- * clears the block immediately.
- *
- * The age check is bounded on BOTH sides: message timestamps are
- * client-supplied, so a client clock ahead of the server yields a negative
- * age. Without the lower bound that negative age satisfies `<= grace` for
- * as long as the skew lasts, extending the block far past the intended two
- * minutes.
- */
-function threadHasQueuedTurnStart(
-  thread: {
-    readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
-    readonly latestTurn: {
-      readonly requestedAt: string;
-      readonly startedAt: string | null;
-      readonly completedAt: string | null;
-    } | null;
-    readonly session: { readonly status: string } | null;
-  },
-  occurredAt: string,
+/** Apply the shared shell-level rule to the detailed command read model. */
+function hasQueuedTurnStartForThread(
+  thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">,
+  now: string,
 ): boolean {
-  const latestUserMessageAtMs = thread.messages.reduce(
-    (latest, message) =>
-      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-    Number.NEGATIVE_INFINITY,
-  );
-  const latestTurnAtMs =
-    thread.latestTurn === null
-      ? Number.NEGATIVE_INFINITY
-      : Math.max(
-          ...[
-            thread.latestTurn.requestedAt,
-            thread.latestTurn.startedAt,
-            thread.latestTurn.completedAt,
-          ].map((candidate) =>
-            candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
-          ),
-        );
-  const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-  return (
-    thread.session?.status !== "error" &&
-    Number.isFinite(latestUserMessageAtMs) &&
-    latestUserMessageAtMs > latestTurnAtMs &&
-    Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
+  let latestUserMessageAt: string | null = null;
+  let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
+  for (const message of thread.messages) {
+    if (message.role !== "user" || isImportedAgentSessionMessageId(message.id)) continue;
+    const messageAtMs = Date.parse(message.createdAt);
+    latestUserMessageAtMs = Math.max(latestUserMessageAtMs, messageAtMs);
+    if (messageAtMs === latestUserMessageAtMs) {
+      latestUserMessageAt = message.createdAt;
+    }
+  }
+  return threadHasQueuedTurnStart(
+    {
+      latestUserMessageAt: Number.isFinite(latestUserMessageAtMs) ? latestUserMessageAt : null,
+      latestTurn: thread.latestTurn,
+      session: thread.session,
+    },
+    now,
   );
 }
 
@@ -221,7 +200,7 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   readonly readModel: OrchestrationReadModel;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
-  OrchestrationCommandInvariantError | PlatformError.PlatformError,
+  OrchestrationCommandRejection | PlatformError.PlatformError,
   Crypto.Crypto
 > {
   let nextReadModel = readModel;
@@ -250,12 +229,14 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  userInputActivity,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
+  readonly userInputActivity?: OrchestrationThreadActivity;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
-  OrchestrationCommandInvariantError | PlatformError.PlatformError,
+  OrchestrationCommandRejection | PlatformError.PlatformError,
   Crypto.Crypto
 > {
   switch (command.type) {
@@ -284,8 +265,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
-          defaultModelSelection: command.defaultModelSelection ?? null,
+          // Project creation has no user model choice. Older clients sent an
+          // automatic seed here, but only a metadata update records an
+          // explicit project default.
+          defaultModelSelection: null,
           faviconPath: null,
+          projectIcon: null,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -294,11 +279,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
       });
+      if (command.scripts !== undefined) {
+        // Persisted IDs predate shortcut validation. Let users edit or remove them
+        // without allowing another invalid ID to enter the project.
+        const existingIds = new Set(project.scripts.map((script) => script.id));
+        for (const script of command.scripts) {
+          if (!existingIds.has(script.id) && !isScriptRunCommand(`script.${script.id}.run`)) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `Script ID '${script.id}' must be 1-${MAX_SCRIPT_ID_LENGTH} lowercase letters, digits or hyphens, starting with a letter or digit.`,
+            });
+          }
+        }
+      }
       if (command.workspaceRoot !== undefined) {
         yield* requireActiveProjectWorkspaceRootAbsent({
           readModel,
@@ -326,7 +324,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.defaultThreadEnvMode !== undefined
             ? { defaultThreadEnvMode: command.defaultThreadEnvMode }
             : {}),
+          ...(command.autoPull !== undefined ? { autoPull: command.autoPull } : {}),
           ...(command.faviconPath !== undefined ? { faviconPath: command.faviconPath } : {}),
+          ...(command.projectIcon !== undefined ? { projectIcon: command.projectIcon } : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },
@@ -430,6 +430,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
+          ...(command.historyImport === true ? { metadata: { historyImport: true } } : {}),
         })),
         type: "thread.created",
         payload: {
@@ -486,7 +487,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Archiving inside the adoption window would strand a turn the decider
       // already accepted: the provider reactor cannot resolve an archived
       // thread, so the turn would be dropped with no trace.
-      if (threadHasQueuedTurnStart(thread, occurredAt)) {
+      if (hasQueuedTurnStartForThread(thread, occurredAt)) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -532,43 +533,44 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
-    case "thread.settle": {
+    case "thread.settle":
+    case "thread.auto-settle": {
       const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
-      // Server-side twin of the client's canSettle session check: a stale
-      // or raced client must not settle a thread whose session is coming
-      // alive or working.
-      if (thread.session?.status === "starting" || thread.session?.status === "running") {
+      if (command.type === "thread.auto-settle" && thread.settledOverride !== null) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
-            detail: `thread ${command.threadId} has an active session and cannot be settled`,
+            detail: `thread ${command.threadId} changed before automatic settlement`,
           }),
         );
       }
-      // Pending approval / user-input requests are blocked-on-you work: a
-      // raced or stale client must not park them behind a settled override
-      // that would surface only after the request resolves.
-      if (hasOpenBlockingRequest(thread)) {
-        return yield* Effect.fail(
-          new OrchestrationCommandInvariantError({
-            commandType: command.type,
-            detail: `thread ${command.threadId} has a pending approval or user-input request and cannot be settled`,
-          }),
-        );
+      // The server owns settle eligibility. A stale command must not settle
+      // a thread whose session is coming alive or working.
+      if (thread.session?.status === "starting" || thread.session?.status === "running") {
+        return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
+      }
+      const pendingRequests = openRequests(thread);
+      // Manual settlement dismisses async questions without answering them.
+      // Native callbacks and approvals still need a response or interruption.
+      if (
+        Array.from(pendingRequests.values()).some(
+          (activity) =>
+            command.type === "thread.auto-settle" ||
+            activity.kind !== "user-input.requested" ||
+            !Predicate.isObject(activity.payload) ||
+            activity.payload.responseMode !== "message",
+        )
+      ) {
+        return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
       const occurredAt = yield* nowIso;
       // Settling inside the adoption window would hide just-requested work.
-      if (threadHasQueuedTurnStart(thread, occurredAt)) {
-        return yield* Effect.fail(
-          new OrchestrationCommandInvariantError({
-            commandType: command.type,
-            detail: `thread ${command.threadId} has a queued turn start and cannot be settled`,
-          }),
-        );
+      if (hasQueuedTurnStartForThread(thread, occurredAt)) {
+        return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
       // Settling an already-settled thread re-emits with the original
       // settledAt: the engine rejects zero-event commands, and bulk-settle /
@@ -584,23 +586,45 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.settled" as const,
         payload: {
           threadId: command.threadId,
-          settledAt: alreadySettled ? thread.settledAt : occurredAt,
+          settledAt: alreadySettled
+            ? thread.settledAt
+            : command.type === "thread.auto-settle"
+              ? command.settledAt
+              : occurredAt,
           // A re-emission is a projected no-op: keep the existing updatedAt
           // so duplicate settles neither rewind nor churn ordering. A fresh
           // settle stamps the command time.
           updatedAt: alreadySettled ? thread.updatedAt : occurredAt,
         },
       };
-      // Settling is "I'm done with this": it clears a pin the same way it
-      // parks the thread. Without this, settling a pinned thread would only
-      // stamp invisible state — the pin would hold the card in place until
-      // a separate unpin.
-      if (thread.pinnedAt == null) {
-        return settledEvent;
+      // Settling is "I'm done with this": clear states that would keep the
+      // row pinned or snoozed instead of showing the new settled state.
+      const companionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      for (const [requestId, request] of pendingRequests) {
+        companionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: command.threadId,
+            activity: {
+              id: EventId.make(`settle:${command.commandId}:${requestId}`),
+              kind: "user-input.resolved",
+              summary: "User input dismissed",
+              tone: "info",
+              turnId: request.turnId,
+              createdAt: occurredAt,
+              payload: { requestId, responseMode: "message" },
+            },
+          },
+        });
       }
-      return [
-        settledEvent,
-        {
+      if (thread.pinnedAt != null) {
+        companionEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "thread",
             aggregateId: command.threadId,
@@ -612,8 +636,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             threadId: command.threadId,
             updatedAt: occurredAt,
           },
-        },
-      ];
+        });
+      }
+      if (thread.snoozedUntil != null) {
+        companionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "user",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      return companionEvents.length > 0 ? [settledEvent, ...companionEvents] : settledEvent;
     }
 
     case "thread.unsettle": {
@@ -668,7 +709,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // user-input request is the agent waiting on the user, and hiding it
       // defeats the request. (A running session IS snoozable — snooze only
       // affects visibility, never the agent.)
-      if (hasOpenBlockingRequest(thread)) {
+      if (openRequests(thread).size > 0) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -680,7 +721,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // invisible pending work: no session, no pending flags. Snoozing in
       // that window would hide a just-requested turn exactly the way settle
       // would.
-      if (threadHasQueuedTurnStart(thread, occurredAt)) {
+      if (hasQueuedTurnStartForThread(thread, occurredAt)) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -875,6 +916,42 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.active.reorder": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // Snooze retains this slot. Changing it cannot wake the thread, and
+      // accepting it handles races with snooze and retained wake timestamps.
+      if (
+        thread.deletedAt !== null ||
+        thread.pinnedAt != null ||
+        thread.settledOverride === "settled"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} is not active and cannot be reordered`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          activeOrderKey: command.orderKey,
+          // Arranging the list is not thread activity or a lifecycle transition.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       const thread = yield* requireThread({
         readModel,
@@ -917,7 +994,67 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.linkedPullRequest !== undefined
+            ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
           updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.pull-request.sync": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} was deleted before pull request discovery`,
+        });
+      }
+      if (
+        thread.projectId !== command.projectId ||
+        thread.branch !== command.expected.branch ||
+        thread.worktreePath !== command.expected.worktreePath ||
+        !threadPullRequestLinksEqual(
+          thread.linkedPullRequest ?? null,
+          command.expected.linkedPullRequest,
+        ) ||
+        !threadPullRequestLinksEqual(
+          thread.branchPullRequest ?? null,
+          command.expected.branchPullRequest,
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} changed before pull request discovery`,
+        });
+      }
+      const project = yield* requireProject({ readModel, command, projectId: command.projectId });
+      if (project.deletedAt !== null || project.workspaceRoot !== command.expected.workspaceRoot) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `project ${command.projectId} changed before pull request discovery`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          branchPullRequest: command.branchPullRequest,
+          ...(command.linkedPullRequest !== undefined
+            ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
+          updatedAt: thread.updatedAt,
         },
       };
     }
@@ -994,6 +1131,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
+      if (isImportedAgentSessionMessageId(command.message.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.message.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       // Archive is the one lifecycle state a turn does not clear: unlike a
       // settle or a snooze, it is deliberate, so a stale client sending into
       // an archived thread is refused here rather than persisting a user
@@ -1172,11 +1315,76 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.user-input.respond": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const request = userInputActivity;
+      if (
+        request &&
+        Predicate.isObject(request.payload) &&
+        request.payload.responseMode === "message"
+      ) {
+        const payload = decodeUserInputRequestedPayload(request.payload);
+        if (request.kind !== "user-input.requested" || Option.isNone(payload)) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "This question has already been answered.",
+          });
+        }
+        const replies: string[] = [];
+        for (const question of payload.value.questions) {
+          const answer = command.answers[question.id];
+          if (typeof answer !== "string" || answer.trim().length === 0) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "Answer each question before sending.",
+            });
+          }
+          replies.push(`${question.question}\n${answer.trim()}`);
+        }
+        // Commit the answer and its message together. The normal turn path
+        // steers a running agent or resumes an idle session.
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [
+            {
+              type: "thread.activity.append",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              createdAt: command.createdAt,
+              activity: {
+                id: EventId.make(`async-answer:${command.requestId}`),
+                kind: "user-input.resolved",
+                summary: "User input submitted",
+                tone: "info",
+                turnId: request.turnId,
+                createdAt: command.createdAt,
+                payload: {
+                  requestId: command.requestId,
+                  responseMode: "message",
+                  answers: command.answers,
+                },
+              },
+            },
+            {
+              type: "thread.turn.start",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              createdAt: command.createdAt,
+              runtimeMode: thread.runtimeMode,
+              interactionMode: thread.interactionMode,
+              message: {
+                messageId: MessageId.make(`async-answer:${command.requestId}`),
+                role: "user",
+                text: replies.join("\n\n"),
+                attachments: [],
+              },
+            },
+          ],
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1193,6 +1401,51 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           requestId: command.requestId,
           answers: command.answers,
           createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.user-input.dismiss": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const request = userInputActivity;
+      if (request === undefined || request.kind !== "user-input.requested") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This question has already been answered.",
+        });
+      }
+      // Only async questions can be dropped silently. A native callback
+      // question leaves the provider blocked until it gets a reply, so it
+      // still needs an answer or an interrupted turn.
+      if (!Predicate.isObject(request.payload) || request.payload.responseMode !== "message") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This question needs an answer. Answer it or stop the turn.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: command.threadId,
+          activity: {
+            id: EventId.make(`async-dismiss:${command.requestId}`),
+            kind: "user-input.resolved",
+            summary: "User input dismissed",
+            tone: "info",
+            turnId: request.turnId,
+            createdAt: command.createdAt,
+            payload: { requestId: command.requestId, responseMode: "message" },
+          },
         },
       };
     }
@@ -1238,7 +1491,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         if (
           thread.settledOverride !== "settled" ||
           sessionComingAlive ||
-          threadHasQueuedTurnStart(thread, command.createdAt)
+          hasQueuedTurnStartForThread(thread, command.createdAt)
         ) {
           return yield* Effect.fail(
             new OrchestrationCommandInvariantError({
@@ -1315,6 +1568,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.delta": {
+      if (isImportedAgentSessionMessageId(command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,
@@ -1342,6 +1601,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.complete": {
+      if (isImportedAgentSessionMessageId(command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,
@@ -1366,6 +1631,79 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.history.import": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (
+        thread.deletedAt !== null ||
+        thread.archivedAt !== null ||
+        thread.messages.length > 0 ||
+        thread.latestTurn !== null ||
+        thread.session !== null ||
+        openRequests(thread).size > 0
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' must be active and empty before history can be imported.`,
+        });
+      }
+      const firstMessage = command.messages[0];
+      if (firstMessage === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Thread history imports require at least one message.",
+        });
+      }
+
+      const events: Array<PlannedOrchestrationEvent> = [];
+      for (const message of command.messages) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: message.createdAt,
+            commandId: command.commandId,
+            metadata: { historyImport: true },
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: message.messageId,
+            role: message.role,
+            text: message.text,
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.createdAt,
+          },
+        });
+      }
+      const settledAt = command.messages.reduce(
+        (latest, message) =>
+          compareDateTimeStrings(message.createdAt, latest) > 0 ? message.createdAt : latest,
+        firstMessage.createdAt,
+      );
+      events.push({
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: settledAt,
+          commandId: command.commandId,
+          metadata: { historyImport: true },
+        })),
+        type: "thread.settled",
+        payload: {
+          threadId: command.threadId,
+          settledAt,
+          updatedAt: settledAt,
+        },
+      });
+      return events;
     }
 
     case "thread.proposed-plan.upsert": {
