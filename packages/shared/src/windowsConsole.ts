@@ -110,6 +110,8 @@ const IMAGE_SUBSYSTEM_WINDOWS_CUI = 3;
 const CONSOLE_EXTENSIONS = new Set([".bat", ".cmd", ".com"]);
 
 const DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+/** Windows' own `PATH` separator. `NodePath.delimiter` is the host's, which is ":" on Linux. */
+const WINDOWS_PATH_DELIMITER = ";";
 
 /**
  * Reads the PE optional header's `Subsystem` field.
@@ -181,7 +183,10 @@ const resolveExecutable = (
   }
 
   // Windows searches the working directory before `PATH`.
-  for (const directory of [cwd ?? ".", ...(environment["PATH"] ?? "").split(NodePath.delimiter)]) {
+  for (const directory of [
+    cwd ?? ".",
+    ...(environment["PATH"] ?? "").split(WINDOWS_PATH_DELIMITER),
+  ]) {
     if (directory === "") continue;
     for (const candidate of candidates) {
       const resolved = NodePath.resolve(directory, candidate);
