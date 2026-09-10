@@ -167,6 +167,7 @@ export function applyServerSettingsPatch(
   const selectionPatch = patch.textGenerationModelSelection;
   const {
     automaticGitFetchInterval,
+    providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
     // Merged per entry below; its `null` removals must not reach deepMerge.
@@ -182,15 +183,20 @@ export function applyServerSettingsPatch(
       ? {
           schemaVersion: 1 as const,
           profile:
-            automaticGitFetchInterval !== undefined
+            automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
               ? ("custom" as const)
               : backgroundActivityProfile,
-          ...(automaticGitFetchInterval !== undefined
+          ...(automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
             ? { baseProfile: backgroundActivityProfile }
             : {}),
-          overrides: automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {},
+          overrides: {
+            ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+            ...(providerHealthRefreshInterval !== undefined
+              ? { providerHealthRefreshInterval }
+              : {}),
+          },
         }
-      : automaticGitFetchInterval !== undefined
+      : automaticGitFetchInterval !== undefined || providerHealthRefreshInterval !== undefined
         ? {
             schemaVersion: 1 as const,
             profile: "custom" as const,
@@ -200,6 +206,9 @@ export function applyServerSettingsPatch(
                 ? currentBackgroundActivity.overrides
                 : {}),
               ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+              ...(providerHealthRefreshInterval !== undefined
+                ? { providerHealthRefreshInterval }
+                : {}),
             },
           }
         : undefined;
@@ -272,6 +281,7 @@ export function applyServerSettingsPatch(
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
+    ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };
   const normalizedBackgroundActivity = normalizeBackgroundActivitySettings(
     nextWithReplacementsBase.backgroundActivity,
@@ -283,6 +293,7 @@ export function applyServerSettingsPatch(
     ...nextWithReplacementsBase,
     backgroundActivity: normalizedBackgroundActivity,
     automaticGitFetchInterval: resolvedBackgroundActivity.automaticGitFetchInterval,
+    providerHealthRefreshInterval: resolvedBackgroundActivity.providerHealthRefreshInterval,
     backgroundActivityProfile: resolvedBackgroundActivity.profile,
   };
   if (!selectionPatch) {

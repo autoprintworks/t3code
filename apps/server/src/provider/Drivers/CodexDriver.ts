@@ -31,6 +31,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -103,6 +104,7 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
  * registered driver and the runtime satisfies them once.
  */
 export type CodexDriverEnv =
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | CodexResetCreditCoordinator
   | Crypto.Crypto

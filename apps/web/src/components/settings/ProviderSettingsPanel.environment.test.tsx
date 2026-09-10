@@ -286,6 +286,21 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
   });
 
+  it("keeps Advanced visible when search targets the provider health interval", () => {
+    let panel = renderPanel();
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
+    ).not.toBeNull();
+
+    settingsSearchState.targetId = "provider-health-check-interval";
+    panel = renderPanel();
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
+    ).not.toBeNull();
+  });
+
   it("deletes and resets provider configuration without erasing shared preferences", () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,

@@ -40,6 +40,15 @@ describe("background activity settings restore", () => {
         backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
         backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
         automaticGitFetchInterval: Duration.seconds(45),
+        providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
+      }),
+    ).toBe(true);
+    expect(
+      hasChangedBackgroundActivitySettings({
+        backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+        backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+        automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+        providerHealthRefreshInterval: Duration.minutes(7),
       }),
     ).toBe(true);
     expect(hasChangedBackgroundActivitySettings(DEFAULT_UNIFIED_SETTINGS)).toBe(false);
@@ -62,6 +71,7 @@ describe("background activity settings restore", () => {
         backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
         backgroundActivityProfile: "performance",
         automaticGitFetchInterval: performance.automaticGitFetchInterval,
+        providerHealthRefreshInterval: performance.providerHealthRefreshInterval,
       }),
     ).toBe("performance");
 
@@ -71,6 +81,7 @@ describe("background activity settings restore", () => {
         backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
         backgroundActivityProfile: "performance",
         automaticGitFetchInterval: Duration.seconds(45),
+        providerHealthRefreshInterval: Duration.minutes(7),
       }),
     ).toBe("advanced");
   });

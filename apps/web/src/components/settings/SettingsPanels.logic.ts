@@ -55,7 +55,10 @@ export function rememberEnabledProjectGroupingMode(mode: SidebarProjectGroupingM
 export function hasChangedBackgroundActivitySettings(
   settings: Pick<
     UnifiedSettings,
-    "backgroundActivity" | "backgroundActivityProfile" | "automaticGitFetchInterval"
+    | "backgroundActivity"
+    | "backgroundActivityProfile"
+    | "automaticGitFetchInterval"
+    | "providerHealthRefreshInterval"
   >,
 ): boolean {
   return (
@@ -64,6 +67,10 @@ export function hasChangedBackgroundActivitySettings(
     !Equal.equals(
       settings.automaticGitFetchInterval,
       DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+    ) ||
+    !Equal.equals(
+      settings.providerHealthRefreshInterval,
+      DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
     )
   );
 }
@@ -169,6 +176,7 @@ export function resolveBackgroundActivityProfileOption(
     baseProfile: resolved.profile,
     overrides: {
       automaticGitFetchInterval: resolved.automaticGitFetchInterval,
+      providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
       hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
       hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
       idleClientTtl: resolved.idleClientTtl,
@@ -278,7 +286,10 @@ export function buildProviderInstanceUpdatePatch(input: {
 }
 
 // ── Background-activity interval helpers ─────────────────────────────
-// Shared by the General panel's interval rows.
+// Shared by the General panel's interval rows and the Providers panel's
+// health-check row.
+
+export const PROVIDER_HEALTH_INTERVAL_STEP_SECONDS = 30;
 
 type BackgroundActivityOverridePatch = Partial<{
   [K in keyof BackgroundActivitySettings["overrides"]]:
@@ -304,6 +315,7 @@ export function backgroundActivityOverrideSettings(
 ) {
   const nextOverrides: BackgroundActivityOverridePatch = {
     automaticGitFetchInterval: resolved.automaticGitFetchInterval,
+    providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
     hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
     hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
     idleClientTtl: resolved.idleClientTtl,
