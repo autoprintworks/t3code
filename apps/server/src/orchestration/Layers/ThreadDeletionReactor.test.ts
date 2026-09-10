@@ -263,19 +263,20 @@ describe("ThreadDeletionReactor drain", () => {
       } as unknown as TerminalManager.TerminalManager["Service"];
       // The fork sweeps checkpoint refs on deletion (#24), so the reactor also
       // needs these two. A thread with no workspace root skips the sweep, which
-      // keeps this test about drain ordering alone.
-      const projection = {
+      // keeps this test about drain ordering alone. `Layer.mock` dies on any
+      // other method, so a reactor that grew a new call would say so.
+      const projectionLayer = Layer.mock(ProjectionSnapshotQuery)({
         getThreadWorkspaceRoot: () => Effect.succeed(Option.none<string>()),
-      } as unknown as ProjectionSnapshotQuery["Service"];
-      const checkpointStore = {
+      });
+      const checkpointStoreLayer = Layer.mock(CheckpointStore.CheckpointStore)({
         isGitRepository: () => Effect.die("unused"),
-      } as unknown as CheckpointStore.CheckpointStore["Service"];
+      });
       const layer = ThreadDeletionReactorLive.pipe(
         Layer.provide(Layer.succeed(ProviderService, providerService)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
-        Layer.provide(Layer.succeed(ProjectionSnapshotQuery, projection)),
-        Layer.provide(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
+        Layer.provide(projectionLayer),
+        Layer.provide(checkpointStoreLayer),
       );
 
       yield* Effect.scoped(

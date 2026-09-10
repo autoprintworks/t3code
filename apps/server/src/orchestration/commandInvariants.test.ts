@@ -334,7 +334,12 @@ describe("commandInvariants", () => {
           createdAt: now,
         };
 
-        yield* requireThreadAbsent({ readModel: afterRollback, command: retry, threadId });
+        // The invariant answers void when the thread is absent. Upstream asserted that,
+        // and a retry path that started returning something would be a change worth
+        // seeing here.
+        assert.isUndefined(
+          yield* requireThreadAbsent({ readModel: afterRollback, command: retry, threadId }),
+        );
       }),
   );
 });
