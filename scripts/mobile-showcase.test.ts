@@ -1,6 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - joins expected paths with the host separator.
-import { assert, it } from "@effect/vitest";
+// @effect-diagnostics nodeBuiltinImport:off - expectations mirror the host path joins the script under test performs.
 import * as NodePath from "node:path";
+import { assert, it } from "@effect/vitest";
 import { PNG } from "pngjs";
 
 import showcaseConfig, {
@@ -128,17 +128,14 @@ it("selects an explicit CI Android ABI without changing the local default", () =
   assert.throws(() => resolveShowcaseAndroidAbi("mips"), /Unsupported T3_SHOWCASE_ANDROID_ABI/u);
 });
 
-// The root is composed with the host's path separator, so build the expected
-// value the same way. A literal POSIX string would assert the machine running
-// the suite instead of the platform branch under test.
 it("uses platform-correct default Android SDK roots", () => {
   assert.equal(
     resolveAndroidSdkRoot({ HOME: "/Users/showcase" }, "darwin"),
-    NodePath.join("/Users/showcase", "Library/Android/sdk"),
+    "/Users/showcase/Library/Android/sdk",
   );
   assert.equal(
     resolveAndroidSdkRoot({ HOME: "/home/showcase" }, "linux"),
-    NodePath.join("/home/showcase", "Android/Sdk"),
+    "/home/showcase/Android/Sdk",
   );
   assert.equal(
     resolveAndroidSdkRoot(
@@ -174,11 +171,11 @@ it("expands both appearances into independent upload-ready directories", () => {
     [
       {
         appearance: "light",
-        directory: NodePath.join("/captures/apple/iphone-test", "light", "t3-code"),
+        directory: NodePath.join("/captures", "apple", "iphone-test", "light", "t3-code"),
       },
       {
         appearance: "dark",
-        directory: NodePath.join("/captures/apple/iphone-test", "dark", "t3-code"),
+        directory: NodePath.join("/captures", "apple", "iphone-test", "dark", "t3-code"),
       },
     ],
   );
@@ -203,10 +200,10 @@ it("expands themes into independent upload-ready directories per appearance", ()
       showcaseCaptureDirectory("/captures", capture),
     ),
     [
-      NodePath.join("/captures/apple/iphone-test", "light", "ocean"),
-      NodePath.join("/captures/apple/iphone-test", "light", "ember"),
-      NodePath.join("/captures/apple/iphone-test", "dark", "ocean"),
-      NodePath.join("/captures/apple/iphone-test", "dark", "ember"),
+      NodePath.join("/captures", "apple", "iphone-test", "light", "ocean"),
+      NodePath.join("/captures", "apple", "iphone-test", "light", "ember"),
+      NodePath.join("/captures", "apple", "iphone-test", "dark", "ocean"),
+      NodePath.join("/captures", "apple", "iphone-test", "dark", "ember"),
     ],
   );
 });

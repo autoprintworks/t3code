@@ -2,7 +2,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 import {
   dedupeProviderSkillsByName,
   formatProviderSkillDisplayName,
-  pickableProviderSkills,
+  isProviderSkillUserInvocable,
 } from "@t3tools/client-runtime/providerSkills";
 import {
   insertRankedSearchResult,
@@ -74,9 +74,7 @@ export function searchProviderSkills(
   query: string,
   limit = Number.POSITIVE_INFINITY,
 ): ServerProviderSkill[] {
-  // Upstream dedupes by name; the fork narrows first to what a picker may offer
-  // (#104), so the dedupe runs over the pickable set.
-  const pickableSkills = dedupeProviderSkillsByName(pickableProviderSkills(skills));
+  const pickableSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\$+/ });
 
   if (!normalizedQuery) {

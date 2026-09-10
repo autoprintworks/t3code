@@ -97,6 +97,11 @@ describe("sweepThreadCheckpointRefs", () => {
 
   const makeProjectionLayer = (workspaceRoot: Option.Option<string>) =>
     Layer.succeed(ProjectionSnapshotQuery, {
+      getUserInputActivity: () => Effect.die("unused"),
+      getEventReplayStats: () => Effect.die("unused"),
+      getImportedAgentSessionSources: () => Effect.die("unused"),
+      getThreadRuntimeContext: () => Effect.die("unused"),
+      getTurnStartMessage: () => Effect.die("unused"),
       getCommandReadModel: () => Effect.die("unused"),
       getSnapshot: () => Effect.die("unused"),
       getShellSnapshot: () => Effect.die("unused"),
@@ -124,7 +129,9 @@ describe("sweepThreadCheckpointRefs", () => {
     },
   ) =>
     Layer.succeed(CheckpointStore.CheckpointStore, {
-      isGitRepository: () => Effect.die("unused"),
+      // The sweep asks the store whether the workspace is a repository, so the
+      // mock answers from the same `.git` directory the fixture created.
+      isGitRepository: (cwd) => Effect.sync(() => NodeFS.existsSync(NodePath.join(cwd, ".git"))),
       captureCheckpoint: () => Effect.die("unused"),
       hasCheckpointRef: () => Effect.die("unused"),
       restoreCheckpoint: () => Effect.die("unused"),

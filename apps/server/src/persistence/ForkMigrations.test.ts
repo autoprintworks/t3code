@@ -5,7 +5,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "./Migrations.ts";
 import { retireLegacyOrderingMigrationRow, runForkMigrations } from "./ForkMigrations.ts";
-import * as NodeSqliteClient from "./NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 // `it.layer` builds its layer once per describe block (a `beforeAll`), so
 // tests sharing one `it.layer` call share one in-memory database. Each test
@@ -36,6 +36,12 @@ const UPSTREAM_MIGRATIONS_FROM_38 = [
   { migration_id: 41, name: "AuthSessionClientConnection" },
   { migration_id: 42, name: "ProjectionThreadLinkedPullRequest" },
   { migration_id: 43, name: "ProjectionThreadsUnsettledAt" },
+  { migration_id: 44, name: "ClearAutomaticProjectModelDefaults" },
+  { migration_id: 45, name: "ProjectionProjectsAutoPull" },
+  { migration_id: 46, name: "RepairAutomaticSettlementTimestamps" },
+  { migration_id: 47, name: "ProjectionProjectIcon" },
+  { migration_id: 48, name: "ProjectionThreadBranchPullRequest" },
+  { migration_id: 49, name: "ProjectionThreadsActiveOrderKey" },
 ];
 
 const EXPECTED_FORK_MIGRATIONS = [

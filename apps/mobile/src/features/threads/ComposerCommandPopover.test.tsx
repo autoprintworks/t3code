@@ -104,7 +104,7 @@ describe("ComposerCommandPopover skill rows", () => {
   it("marks a skill the agent cannot start as manual", () => {
     const rendered = renderSkillRows([
       skill({ name: "deploy", description: "Deploy the app." }),
-      skill({ name: "to-tickets", description: "Split a spec.", modelInvocable: false }),
+      skill({ name: "to-tickets", description: "Split a spec.", userInvocationOnly: true }),
     ]);
 
     expect(rendered.match(/Manual/g) ?? []).toHaveLength(1);

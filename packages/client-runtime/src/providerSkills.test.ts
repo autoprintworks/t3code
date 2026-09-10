@@ -1,3 +1,4 @@
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -8,8 +9,32 @@ import {
   formatProviderSkillScopeLabel,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
+  resolveProviderSkillsForCwd,
+  resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
 } from "./providerSkills.ts";
+
+const provider = {
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: [],
+  slashCommands: [{ name: "global" }],
+  skills: [{ name: "global", path: "/global/SKILL.md", enabled: true }],
+  workspaceSnapshots: [
+    {
+      cwd: "/workspace/project-a",
+      checkedAt: "2026-01-01T00:01:00.000Z",
+      slashCommands: [{ name: "project" }],
+      skills: [{ name: "project", path: "/workspace/project-a/SKILL.md", enabled: true }],
+    },
+  ],
+} satisfies ServerProvider;
 
 describe("formatProviderSkillDisplayName", () => {
   it("prefers the provider display name", () => {
@@ -108,6 +133,30 @@ describe("getProviderSkillsForSlashMenu", () => {
     ];
 
     expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
+  });
+});
+
+describe("getProviderSkillsForSlashMenu", () => {
+  it("drops a skill the provider reserves for the agent", () => {
+    const skills = [
+      {
+        name: "legacy-system-context",
+        path: "/Users/matt/.claude/skills/legacy-system-context/SKILL.md",
+        enabled: true,
+        userInvocable: false,
+      },
+      {
+        name: "deploy",
+        path: "/Users/matt/.claude/skills/deploy/SKILL.md",
+        enabled: true,
+        // Reserved for the user, not the agent: still a valid pick.
+        userInvocationOnly: true,
+      },
+    ];
+
+    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
+      "deploy",
+    ]);
   });
 });
 
@@ -256,11 +305,27 @@ describe("formatProviderSkillScopeLabel", () => {
 
 describe("formatProviderSkillInvocationLabel", () => {
   it("marks a skill the agent may not start", () => {
-    expect(formatProviderSkillInvocationLabel({ modelInvocable: false })).toBe("Manual");
+    expect(formatProviderSkillInvocationLabel({ userInvocationOnly: true })).toBe("Manual");
   });
 
   it("leaves ordinary skills unmarked", () => {
     expect(formatProviderSkillInvocationLabel({})).toBeNull();
-    expect(formatProviderSkillInvocationLabel({ modelInvocable: true })).toBeNull();
+    expect(formatProviderSkillInvocationLabel({ userInvocationOnly: false })).toBeNull();
+  });
+});
+
+describe("workspace provider snapshots", () => {
+  it("uses the cwd snapshot after a provider session has populated it", () => {
+    expect(resolveProviderSkillsForCwd(provider, "/workspace/project-a")).toEqual([
+      { name: "project", path: "/workspace/project-a/SKILL.md", enabled: true },
+    ]);
+    expect(resolveProviderSlashCommandsForCwd(provider, "/workspace/project-a")).toEqual([
+      { name: "project" },
+    ]);
+  });
+
+  it("keeps the machine snapshot before this cwd has a provider snapshot", () => {
+    expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual(provider.skills);
+    expect(resolveProviderSlashCommandsForCwd(provider, null)).toEqual(provider.slashCommands);
   });
 });

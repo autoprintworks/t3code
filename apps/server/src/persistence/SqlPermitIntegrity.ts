@@ -13,7 +13,7 @@ import {
   observeSqlPermits,
   type SqlPermitHold,
   type SqlPermitObserver,
-} from "./NodeSqliteClient.ts";
+} from "@t3tools/shared/nodeSqliteClient";
 
 /**
  * Budget for one transaction permit hold, in milliseconds.
@@ -166,7 +166,7 @@ const formatOrigin = (hold: SqlPermitHold): string => {
     .map((line) => line.trim())
     .filter((line) => line.startsWith("at "));
   const interesting = frames.filter(
-    (line) => !line.includes("NodeSqliteClient.ts") && !line.includes("/effect/dist/"),
+    (line) => !line.includes("nodeSqliteClient.ts") && !line.includes("/effect/dist/"),
   );
   return (interesting.length > 0 ? interesting : frames)
     .slice(0, 12)

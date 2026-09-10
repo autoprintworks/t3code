@@ -1,16 +1,15 @@
 import {
-  isProviderSkillUserInvocable,
   type ClaudeSettings,
   type ModelCapabilities,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -19,12 +18,14 @@ import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
   type SlashCommand as ClaudeSlashCommand,
+  type SDKControlGetUsageResponse,
   type SDKUserMessage,
   type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -35,6 +36,12 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import {
+  type ClaudeScopedLimitNames,
+  claudeUsageResponseToLimits,
+  recordClaudeUsageResponse,
+} from "./claudeUsageLimits.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
@@ -165,8 +172,8 @@ function apiProviderAuthMetadata(
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 
 /**
- * Keep workspace-scoped command discovery intact while isolating the status
- * probe from configured MCP servers.
+ * Keep workspace-scoped command discovery intact while isolating the periodic
+ * health check from configured MCP servers.
  */
 export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "user",
@@ -174,7 +181,7 @@ export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
-/** Build the exact SDK options used by the Claude capability probe. */
+/** Build the exact SDK options used by the periodic Claude capability probe. */
 export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly executablePath: string;
   readonly abortController: AbortController;
@@ -228,25 +235,13 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /**
+   * Subscription windows from the SDK's `get_usage` control request, or
+   * `undefined` when the request itself failed. Absent windows on an
+   * otherwise successful response mean the account has none (API key).
+   */
+  readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
 };
-
-/**
- * Distinct outcomes of {@link probeClaudeCapabilities}. Earlier revisions
- * collapsed every non-success case (timeout, spawn failure, thrown
- * initialization error) into `undefined`, so the only user-visible signal
- * was a fixed "could not verify authentication" warning that misreported a
- * slow machine as an auth problem. Keeping the reason lets
- * `checkClaudeProviderStatus` say what actually happened and lets us log it.
- */
-export type ClaudeCapabilitiesProbeOutcome =
-  | { readonly _tag: "Succeeded"; readonly probe: ClaudeCapabilitiesProbe }
-  /** Initialization returned, but the SDK's `AccountInfo` block was absent. */
-  | { readonly _tag: "NoAccountInfo"; readonly probe: ClaudeCapabilitiesProbe }
-  | { readonly _tag: "TimedOut" }
-  /** Failed before the subprocess could be queried: env or executable resolution. */
-  | { readonly _tag: "SetupFailed"; readonly cause: unknown }
-  /** The query threw or rejected while spawning or reading initialization data. */
-  | { readonly _tag: "InitializationFailed"; readonly cause: unknown };
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -277,8 +272,8 @@ function parseClaudeInitializationCommands(
  *
  * Claude Code surfaces every discovered skill as `/<name>`, so an agent-only
  * skill would otherwise reach the `/` menu through the back door after the
- * skill picker had already hidden it. Filtering here keeps one answer to
- * "may a user start this", the same one `isProviderSkillUserInvocable` gives.
+ * skill picker had already hidden it. The composer's own filter only removes
+ * commands that duplicate a visible skill, so the hidden ones need this.
  */
 export function withoutAgentOnlySkillCommands(
   commands: ReadonlyArray<ServerProviderSlashCommand>,
@@ -286,7 +281,7 @@ export function withoutAgentOnlySkillCommands(
 ): ReadonlyArray<ServerProviderSlashCommand> {
   const hiddenSkillNames = new Set(
     skills
-      .filter((skill) => !isProviderSkillUserInvocable(skill))
+      .filter((skill) => !(skill.enabled && skill.userInvocable !== false))
       .map((skill) => skill.name.toLowerCase()),
   );
   if (hiddenSkillNames.size === 0) {
@@ -356,73 +351,66 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
  */
-type ClaudeCapabilitiesProbeAttemptFailure =
-  | { readonly _tag: "SetupFailed"; readonly cause: unknown }
-  | { readonly _tag: "InitializationFailed"; readonly cause: unknown };
-
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
 ) => {
   const abort = new AbortController();
-
-  const setup = Effect.gen(function* () {
+  return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
-    return { claudeEnvironment, executablePath };
-  }).pipe(
-    // makeClaudeEnvironment/resolveClaudeSdkExecutablePath are typed as
-    // never-failing today, but catch defects too so a future change to
-    // either can't silently reintroduce the old blanket discard.
-    Effect.catchCause((cause: unknown) =>
-      Effect.fail<ClaudeCapabilitiesProbeAttemptFailure>({ _tag: "SetupFailed", cause }),
-    ),
-  );
-
-  const attempt = setup.pipe(
-    Effect.flatMap(({ claudeEnvironment, executablePath }) =>
-      Effect.tryPromise({
-        try: async () => {
-          const q = claudeQuery({
-            // Never yield — we only need initialization data, not a conversation.
-            // This prevents any prompt from reaching the Anthropic API.
-            // oxlint-disable-next-line require-yield
-            prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
-              await waitForAbortSignal(abort.signal);
-            })(),
-            options: buildClaudeCapabilitiesProbeQueryOptions({
-              executablePath,
-              abortController: abort,
-              environment: claudeEnvironment,
-              cwd,
-            }),
-          });
-          const init = await q.initializationResult();
-          const account = init.account as
-            | {
-                readonly email?: string;
-                readonly subscriptionType?: string;
-                readonly tokenSource?: string;
-                readonly apiProvider?: string;
-              }
-            | undefined;
-          const probe: ClaudeCapabilitiesProbe = {
-            email: account?.email,
-            subscriptionType: account?.subscriptionType,
-            tokenSource: account?.tokenSource,
-            apiProvider: account?.apiProvider,
-            slashCommands: parseClaudeInitializationCommands(init.commands),
-          };
-          return { probe, hasAccount: account !== undefined };
-        },
-        catch: (cause): ClaudeCapabilitiesProbeAttemptFailure => ({
-          _tag: "InitializationFailed",
-          cause,
+    return yield* Effect.tryPromise(async () => {
+      const q = claudeQuery({
+        // Never yield — we only need initialization data, not a conversation.
+        // This prevents any prompt from reaching the Anthropic API.
+        // oxlint-disable-next-line require-yield
+        prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
+          await waitForAbortSignal(abort.signal);
+        })(),
+        options: buildClaudeCapabilitiesProbeQueryOptions({
+          executablePath,
+          abortController: abort,
+          environment: claudeEnvironment,
+          cwd,
         }),
+      });
+      const init = await q.initializationResult();
+      return { q, init };
+    });
+  }).pipe(
+    Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
+    Effect.flatMap(({ q, init }) =>
+      Effect.gen(function* () {
+        // Usage has its own deadline so a slow optional request cannot discard initialization.
+        const usageResult = yield* Effect.tryPromise(() =>
+          q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+        ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result);
+        const usage = Result.isSuccess(usageResult)
+          ? {
+              rate_limits_available: usageResult.success.rate_limits_available,
+              rate_limits: usageResult.success.rate_limits,
+            }
+          : undefined;
+        const account = init.account as
+          | {
+              readonly email?: string;
+              readonly subscriptionType?: string;
+              readonly tokenSource?: string;
+              readonly apiProvider?: string;
+            }
+          | undefined;
+        return {
+          email: account?.email,
+          subscriptionType: account?.subscriptionType,
+          tokenSource: account?.tokenSource,
+          apiProvider: account?.apiProvider,
+          slashCommands: parseClaudeInitializationCommands(init.commands),
+          ...(usage ? { usage } : {}),
+        } satisfies ClaudeCapabilitiesProbe;
       }),
     ),
     Effect.ensuring(
@@ -430,37 +418,8 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
-  );
-
-  return Effect.timed(attempt).pipe(
-    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
     Effect.result,
-    Effect.flatMap((result) => {
-      if (Result.isFailure(result)) {
-        const failure = result.failure;
-        const message =
-          failure._tag === "SetupFailed"
-            ? "Claude capabilities probe failed before it could query the Claude Agent CLI."
-            : "Claude capabilities probe failed while querying the Claude Agent CLI for initialization data.";
-        return Effect.logWarning(message, { reason: failure._tag, cause: failure.cause }).pipe(
-          Effect.as(failure),
-        );
-      }
-      if (Option.isNone(result.success)) {
-        return Effect.logWarning(
-          "Claude capabilities probe timed out waiting for Claude Agent CLI initialization data.",
-          { timeoutMs: CAPABILITIES_PROBE_TIMEOUT_MS },
-        ).pipe(Effect.as<ClaudeCapabilitiesProbeOutcome>({ _tag: "TimedOut" }));
-      }
-      const [elapsed, { probe, hasAccount }] = result.success.value;
-      if (!hasAccount) {
-        return Effect.logWarning(
-          "Claude capabilities probe returned initialization data without an account block.",
-          { elapsedMs: Duration.toMillis(elapsed) },
-        ).pipe(Effect.as<ClaudeCapabilitiesProbeOutcome>({ _tag: "NoAccountInfo", probe }));
-      }
-      return Effect.succeed<ClaudeCapabilitiesProbeOutcome>({ _tag: "Succeeded", probe });
-    }),
+    Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
   );
 };
 
@@ -480,35 +439,16 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
-/**
- * User-visible warning for every non-`Succeeded` capabilities probe outcome.
- * A timeout is not an authentication failure, so it gets its own wording;
- * the original "could not verify" message is kept only for the case it
- * genuinely describes (`NoAccountInfo`) rather than any discarded failure.
- */
-function claudeCapabilitiesWarningMessage(
-  outcome: Exclude<ClaudeCapabilitiesProbeOutcome, { readonly _tag: "Succeeded" }>,
-): string {
-  switch (outcome._tag) {
-    case "TimedOut":
-      return "Claude authentication check timed out; authentication status was not determined.";
-    case "SetupFailed":
-      return "Claude authentication check could not run: failed to prepare the Claude Agent CLI.";
-    case "InitializationFailed":
-      return "Claude authentication check could not run: the Claude Agent CLI initialization probe failed.";
-    case "NoAccountInfo":
-      return "Could not verify Claude authentication status from initialization result.";
-  }
-}
-
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
     claudeSettings: ClaudeSettings,
-  ) => Effect.Effect<ClaudeCapabilitiesProbeOutcome>,
+  ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
+  /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
+  scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -613,37 +553,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
-  const capabilitiesOutcome: ClaudeCapabilitiesProbeOutcome = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(
-        Effect.orElseSucceed(
-          (): ClaudeCapabilitiesProbeOutcome => ({
-            _tag: "InitializationFailed",
-            cause: "resolveCapabilities effect failed",
-          }),
-        ),
-      )
-    : { _tag: "InitializationFailed", cause: "no capabilities resolver configured" };
-  // Any outcome that carries a probe (Succeeded or NoAccountInfo) still ran
-  // initialization successfully, so its slash commands are real data.
-  const probe =
-    capabilitiesOutcome._tag === "Succeeded" || capabilitiesOutcome._tag === "NoAccountInfo"
-      ? capabilitiesOutcome.probe
-      : undefined;
+  const capabilities = resolveCapabilities
+    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+    : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const slashCommands = [
-    {
-      name: "compact",
-      description: "Summarize the conversation and reduce context usage",
-    },
-    ...(probe?.slashCommands ?? []),
-  ];
+  const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = withoutAgentOnlySkillCommands(
     dedupeSlashCommands(slashCommands),
     skills,
   );
 
-  if (capabilitiesOutcome._tag !== "Succeeded") {
-    const message = claudeCapabilitiesWarningMessage(capabilitiesOutcome);
+  if (!capabilities) {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -656,17 +576,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
-        message,
+        message: "Could not verify Claude authentication status from initialization result.",
       },
     });
   }
 
-  const capabilities = capabilitiesOutcome.probe;
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const usageLimits = !capabilities.usage
+    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+    : scopedLimitNames
+      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+          response: capabilities.usage,
+          checkedAt,
+        })
+      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -684,6 +611,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
+      usageLimits,
     },
   });
 });

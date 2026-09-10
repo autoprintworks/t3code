@@ -58,16 +58,19 @@ describe("electron development launcher", () => {
       "T3 Code (Dev)",
     );
 
-    // The bundle paths are joined with the host separator, so join here too. A
-    // literal POSIX string would assert the machine running the suite.
-    const executableDir = NodePath.join(
+    // A macOS bundle path is always POSIX, so join here the same way
+    // `resolveMacLauncherPaths` does rather than with the host separator.
+    const executableDir = NodePath.posix.join(
       "/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app",
       "Contents",
       "MacOS",
     );
     assert.equal(paths.launcherExecutableName, "T3 Code (Dev) Launcher");
-    assert.equal(paths.launcherBinaryPath, NodePath.join(executableDir, "T3 Code (Dev) Launcher"));
-    assert.equal(paths.runtimeElectronBinaryPath, NodePath.join(executableDir, "Electron"));
+    assert.equal(
+      paths.launcherBinaryPath,
+      NodePath.posix.join(executableDir, "T3 Code (Dev) Launcher"),
+    );
+    assert.equal(paths.runtimeElectronBinaryPath, NodePath.posix.join(executableDir, "Electron"));
 
     const script = makeDevelopmentLauncherScript({
       electronBinaryPath: paths.runtimeElectronBinaryPath,
@@ -75,7 +78,7 @@ describe("electron development launcher", () => {
       desktopRoot: "/repo/apps/desktop",
       environment: {},
     });
-    assert.include(script, `exec '${NodePath.join(executableDir, "Electron")}'`);
+    assert.include(script, `exec '${NodePath.posix.join(executableDir, "Electron")}'`);
     assert.notInclude(script, "node_modules/electron");
   });
 
@@ -83,16 +86,10 @@ describe("electron development launcher", () => {
     const development = resolveMacLauncherIconPaths("/runtime", true);
     const production = resolveMacLauncherIconPaths("/runtime", false);
 
-    // Joined with the host separator, so build the expected tail the same way.
-    assert.ok(
-      development.sourceIconPath.endsWith(
-        NodePath.join("assets", "dev", "blueprint-macos-1024.png"),
-      ),
-    );
-    assert.equal(development.generatedIconPath, NodePath.join("/runtime", "icon-dev.icns"));
-    assert.ok(
-      production.sourceIconPath.endsWith(NodePath.join("assets", "prod", "black-macos-1024.png")),
-    );
-    assert.equal(production.generatedIconPath, NodePath.join("/runtime", "icon-prod.icns"));
+    // The source icons are real repo paths, joined for the host.
+    assert.match(development.sourceIconPath, /assets[\\/]dev[\\/]blueprint-macos-1024\.png$/);
+    assert.equal(development.generatedIconPath, "/runtime/icon-dev.icns");
+    assert.match(production.sourceIconPath, /assets[\\/]prod[\\/]black-macos-1024\.png$/);
+    assert.equal(production.generatedIconPath, "/runtime/icon-prod.icns");
   });
 });

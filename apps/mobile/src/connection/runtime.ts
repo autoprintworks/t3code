@@ -38,7 +38,10 @@ type ConnectionLayerSource =
 // /api/observability/v1/traces and lands in that server's trace file as otlp-span records.
 // Without this, connection spans use the ambient no-op Tracer and never leave the process -
 // see docs/operations/observability.md.
-const providedClientConnectionLayer = Layer.merge(Connection.layer, snapshotLoaderLayer).pipe(
+const providedClientConnectionLayer = snapshotLoaderLayer.pipe(
+  Layer.provideMerge(
+    Connection.layerWithOptions({ usageLimitSources: true, usageLimitsCommand: true }),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       runtimeContextLayer,

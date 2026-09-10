@@ -49,13 +49,20 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+  readonly refreshWorkspaceSnapshot: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
   /**
    * Resolve the maintenance capabilities owned by one live provider instance.
    * Falls back to manual-only capabilities when the instance is not live.
+   * `fresh` re-derives ownership from the executable instead of the cache.
    */
   readonly getProviderMaintenanceCapabilitiesForInstance: (
     instanceId: ProviderInstanceId,
     provider: ProviderDriverKind,
+    options?: { readonly fresh?: boolean },
   ) => Effect.Effect<ProviderMaintenanceCapabilities>;
 
   /**
@@ -80,11 +87,6 @@ export interface ProviderRegistryShape {
    * unknown instance answers with no skills; a driver that cannot scope
    * discovery answers with its snapshot skills unchanged.
    */
-  readonly listSkills: (input: {
-    readonly instanceId: ProviderInstanceId;
-    readonly cwd: string;
-  }) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
-
   /**
    * Stream of provider snapshot updates — one emission per aggregated
    * change. The array contains the full current state.

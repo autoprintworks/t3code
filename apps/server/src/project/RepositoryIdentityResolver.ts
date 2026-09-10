@@ -9,7 +9,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitWorkDepth from "../vcs/GitWorkDepth.ts";
@@ -27,17 +26,10 @@ export interface RepositoryIdentityResolverOptions {
 export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
   {
-    /**
-     * The identity of the repository `cwd` belongs to, or `null` when it is not
-     * in one. Served from cache for a workspace root already resolved in this
-     * process, so a repeat asks `git` nothing.
-     */
-    readonly resolve: (cwd: string) => Effect.Effect<RepositoryIdentity | null>;
-    /**
-     * Drops the cached answer for `cwd`, so the next `resolve` spawns `git`
-     * again. The reactor calls this when a project's workspace root changes.
-     */
-    readonly invalidate: (cwd: string) => Effect.Effect<void>;
+    readonly resolve: (
+      cwd: string,
+      options?: { readonly refresh?: boolean },
+    ) => Effect.Effect<RepositoryIdentity | null>;
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
@@ -200,27 +192,15 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
-  )(function* (cwd) {
+  )(function* (cwd, options) {
+    if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
     const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
     if (cacheKey === null) return null;
+    if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
     return yield* Cache.get(repositoryIdentityCache, cacheKey);
   });
 
-  // Re-saving a folder is the user's manual refresh, so it must reach `git`
-  // again for both questions the resolve asks. Dropping the root entry alone
-  // would still serve the remote from the identity cache, so drop the identity
-  // entry for the root that is cached now, then the root entry itself.
-  const invalidate: RepositoryIdentityResolver["Service"]["invalidate"] = Effect.fn(
-    "RepositoryIdentityResolver.invalidate",
-  )(function* (cwd) {
-    const cacheKey = yield* Cache.getOption(repositoryRootCache, cwd);
-    if (Option.isSome(cacheKey) && cacheKey.value !== null) {
-      yield* Cache.invalidate(repositoryIdentityCache, cacheKey.value);
-    }
-    yield* Cache.invalidate(repositoryRootCache, cwd);
-  });
-
-  return RepositoryIdentityResolver.of({ resolve, invalidate });
+  return RepositoryIdentityResolver.of({ resolve });
 });
 
 export const layer = Layer.effect(RepositoryIdentityResolver, make()).pipe(

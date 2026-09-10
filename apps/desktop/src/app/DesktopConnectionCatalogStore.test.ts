@@ -235,10 +235,11 @@ describe("DesktopConnectionCatalogStore", () => {
   it.effect("surfaces malformed catalog documents without deleting them", () =>
     withStore(
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-        const catalogPath = `${environment.stateDir}/connection-catalog.json`;
+        const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(catalogPath, "{not-json");
 
@@ -332,6 +333,7 @@ describe("DesktopConnectionCatalogStore", () => {
   it.effect("reports the legacy migration stage", () =>
     withStore(
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
@@ -344,7 +346,7 @@ describe("DesktopConnectionCatalogStore", () => {
           DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreMigrationError,
         );
         assert.equal(error.operation, "read-legacy-registry");
-        assert.equal(error.catalogPath, `${environment.stateDir}/connection-catalog.json`);
+        assert.equal(error.catalogPath, path.join(environment.stateDir, "connection-catalog.json"));
         assert.instanceOf(
           error.cause,
           DesktopSavedEnvironments.DesktopSavedEnvironmentsDocumentDecodeError,
@@ -354,7 +356,7 @@ describe("DesktopConnectionCatalogStore", () => {
         assert.exists(registryError.cause);
         assert.equal(
           error.message,
-          `Legacy desktop saved-environment migration failed during read-legacy-registry into ${environment.stateDir}/connection-catalog.json.`,
+          `Legacy desktop saved-environment migration failed during read-legacy-registry into ${path.join(environment.stateDir, "connection-catalog.json")}.`,
         );
         assert.notEqual(error.message, registryError.message);
       }),
@@ -364,10 +366,11 @@ describe("DesktopConnectionCatalogStore", () => {
   it.effect("reports invalid encrypted catalog data without exposing it", () =>
     withStore(
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-        const catalogPath = `${environment.stateDir}/connection-catalog.json`;
+        const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(catalogPath, '{"version":1,"encryptedCatalog":"%%%"}\n');
 

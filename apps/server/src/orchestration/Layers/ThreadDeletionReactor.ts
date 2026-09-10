@@ -9,7 +9,6 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { checkpointRefsPrefixForThread } from "../../checkpointing/Utils.ts";
-import { isGitRepository } from "../../git/Utils.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -60,7 +59,10 @@ export const sweepThreadCheckpointRefs = Effect.fn("sweepThreadCheckpointRefs")(
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
   const workspaceRoot = yield* projectionSnapshotQuery.getThreadWorkspaceRoot(threadId);
-  if (Option.isNone(workspaceRoot) || !isGitRepository(workspaceRoot.value)) {
+  if (Option.isNone(workspaceRoot)) {
+    return;
+  }
+  if (!(yield* checkpointStore.isGitRepository(workspaceRoot.value))) {
     return;
   }
 

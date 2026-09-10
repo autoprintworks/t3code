@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -28,10 +29,9 @@ const makeEnvironmentLayer = (
     ...defaultInput,
     ...overrides,
   }).pipe(
-    // `Path.layer` is the POSIX implementation. The fixtures below are POSIX
-    // paths, so pin it over the host path service or every assertion reads the
-    // separator of the machine running the suite.
-    Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest(env), Path.layer)),
+    Layer.provide(
+      Layer.mergeAll(NodeServices.layer, NodePath.layerPosix, DesktopConfig.layerTest(env)),
+    ),
   );
 
 const makeEnvironment = (

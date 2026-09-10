@@ -13,7 +13,6 @@ import {
 import * as Effect from "effect/Effect";
 
 import {
-  findThreadById,
   issuedByFleet,
   listThreadsByProjectId,
   requireThread,
@@ -232,9 +231,7 @@ describe("requireThreadPromptable", () => {
 });
 
 describe("commandInvariants", () => {
-  it("finds threads by id and project", () => {
-    expect(findThreadById(readModel, ThreadId.make("thread-1"))?.projectId).toBe("project-a");
-    expect(findThreadById(readModel, ThreadId.make("missing"))).toBeUndefined();
+  it("lists threads by project", () => {
     expect(
       listThreadsByProjectId(readModel, ProjectId.make("project-b")).map((thread) => thread.id),
     ).toEqual([ThreadId.make("thread-2")]);

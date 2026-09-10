@@ -26,10 +26,13 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { isWindowsHost, skipBatchStubChildExit } from "../../testUtils/hostPlatform.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
@@ -39,54 +42,25 @@ class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-const mockAgentCommand = "node";
-const mockAgentArgs = [mockAgentPath] as const;
-
-// The adapter spawns these wrappers through the configured binaryPath, so a wrapper has to be
-// something the host can execute: a shell script on POSIX, a batch file on Windows.
-const wrapperFileName = isWindowsHost ? "fake-agent.cmd" : "fake-agent.sh";
-
-// A Windows path can hold a backslash but never a quote, so plain quoting is enough and
-// JSON.stringify would double every separator.
-const quoteForBatch = (value: string) => `"${value}"`;
-const batchEnvSets = (extraEnv?: Record<string, string>) =>
-  Object.entries(extraEnv ?? {}).map(([key, value]) => `set ${quoteForBatch(`${key}=${value}`)}`);
-const batchExec = `${quoteForBatch(mockAgentCommand)} ${mockAgentArgs.map(quoteForBatch).join(" ")} %*`;
-
-async function writeBatchWrapper(dir: string, lines: readonly string[]) {
-  const wrapperPath = NodePath.join(dir, wrapperFileName);
-  await NodeFSP.writeFile(wrapperPath, ["@echo off", ...lines, ""].join("\r\n"), "utf8");
-  return wrapperPath;
-}
-
+// Stopping a session kills the agent with SIGTERM; Windows terminates the
+// process instead, so the mock never sees a signal to log.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 async function makeMockAgentWrapper(
   extraEnv?: Record<string, string>,
   options?: { initialDelaySeconds?: number },
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-mock-"));
-  if (isWindowsHost) {
-    // timeout.exe refuses to run with stdin redirected, so node holds the startup delay instead.
-    const delaySeconds = options?.initialDelaySeconds;
-    return writeBatchWrapper(dir, [
-      ...batchEnvSets(extraEnv),
-      ...(delaySeconds
-        ? [`node -e "setTimeout(() => {}, ${Math.round(delaySeconds * 1000)})"`]
-        : []),
-      batchExec,
-    ]);
-  }
-  const wrapperPath = NodePath.join(dir, wrapperFileName);
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
-${options?.initialDelaySeconds ? `sleep ${JSON.stringify(String(options.initialDelaySeconds))}` : ""}
-exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
-`;
-  await NodeFSP.writeFile(wrapperPath, script, "utf8");
-  await NodeFSP.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    env: extraEnv ?? {},
+    source: execScriptSource({
+      scriptPath: mockAgentPath,
+      ...(options?.initialDelaySeconds === undefined
+        ? {}
+        : { delayMs: Math.round(options.initialDelaySeconds * 1000) }),
+    }),
+  });
 }
 
 async function makeProbeWrapper(
@@ -95,33 +69,12 @@ async function makeProbeWrapper(
   extraEnv?: Record<string, string>,
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-probe-"));
-  if (isWindowsHost) {
-    return writeBatchWrapper(dir, [
-      // resolveSpawnCommand routes a .cmd through a shell, so %* still carries the quotes it
-      // added. %%~A strips them, and the tab keeps the log in the format readArgvLog expects.
-      "setlocal EnableDelayedExpansion",
-      'set "T3ARGV="',
-      'for %%A in (%*) do set "T3ARGV=!T3ARGV!%%~A\t"',
-      `>>${quoteForBatch(argvLogPath)} echo(!T3ARGV!`,
-      `set ${quoteForBatch(`T3_ACP_REQUEST_LOG_PATH=${requestLogPath}`)}`,
-      ...batchEnvSets(extraEnv),
-      batchExec,
-    ]);
-  }
-  const wrapperPath = NodePath.join(dir, wrapperFileName);
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-printf '%s\t' "$@" >> ${JSON.stringify(argvLogPath)}
-printf '\n' >> ${JSON.stringify(argvLogPath)}
-export T3_ACP_REQUEST_LOG_PATH=${JSON.stringify(requestLogPath)}
-${envExports}
-exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
-`;
-  await NodeFSP.writeFile(wrapperPath, script, "utf8");
-  await NodeFSP.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    env: { T3_ACP_REQUEST_LOG_PATH: requestLogPath, ...extraEnv },
+    source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
+  });
 }
 
 async function readArgvLog(filePath: string) {
@@ -210,7 +163,41 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-  const itChildExit = it.effect.skipIf(skipBatchStubChildExit);
+  it.effect("rejects a Cursor transport error returned as a successful assistant answer", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-transport-error-answer");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_PROMPT_RESPONSE_TEXT: "Error: RetriableError: WritableIterable is closed",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const error = yield* adapter
+        .sendTurn({ threadId, input: "continue", attachments: [] })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      if (error._tag === "ProviderAdapterRequestError") {
+        assert.equal(error.detail, "Cursor reported a transport failure.");
+        assert.equal(error.cause, "Error: RetriableError: WritableIterable is closed");
+      }
+      yield* adapter.stopSession(threadId);
+      const runtimeEvents = yield* Fiber.join(runtimeEventsFiber);
+      assert.isFalse(runtimeEvents.some((event) => event.type === "turn.completed"));
+    }),
+  );
 
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
@@ -294,6 +281,69 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("sends selected project skills in Cursor's native slash form", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-skill-dispatch");
+      const workspace = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-skill-dispatch-")),
+      );
+      const requestLogPath = NodePath.join(workspace, "requests.ndjson");
+      const argvLogPath = NodePath.join(workspace, "argv.txt");
+      const skillDirectory = NodePath.join(workspace, ".cursor", "skills", "review");
+      yield* Effect.promise(() => NodeFSP.mkdir(skillDirectory, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(skillDirectory, "SKILL.md"), "# Review\n", "utf8"),
+      );
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: workspace,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "please $review this",
+        attachments: [],
+      });
+      const snapshot = yield* adapter.readThread(threadId);
+      assert.deepStrictEqual(
+        snapshot.turns.map((turn) => turn.items),
+        [
+          [
+            {
+              prompt: [{ type: "text", text: "please /review this" }],
+              result: { stopReason: "end_turn" },
+            },
+          ],
+        ],
+      );
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const promptRequests = requests.filter((entry) => entry.method === "session/prompt");
+      assert.deepStrictEqual(
+        promptRequests.map(
+          (request) => (request.params as Record<string, unknown> | undefined)?.prompt,
+        ),
+        [
+          [
+            { type: "text", text: "please /review this" },
+            { type: "text", text: buildRuntimeInstructions({ harness: "Cursor" }) },
+          ],
+        ],
+      );
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -370,7 +420,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  itChildExit("closes the ACP child process when a session stops", () =>
+  it.effect.skipIf(windowsHost)("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const settings = yield* ServerSettingsService;
@@ -402,7 +452,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  itChildExit(
+  it.effect.skipIf(windowsHost)(
     "serializes concurrent startSession calls for the same thread and closes the replaced ACP session",
     () =>
       Effect.gen(function* () {
@@ -864,6 +914,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         );
         assert.isDefined(permissionResponse);
 
+        const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
+        assert.deepStrictEqual(argvRuns, [["--force", "acp"]]);
+
         yield* adapter.stopSession(threadId);
       }),
   );
@@ -1304,7 +1357,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
       assert.lengthOf(argvRuns, 1, "session should not restart — only one spawn");
-      assert.deepStrictEqual(argvRuns[0], ["acp"]);
+      assert.deepStrictEqual(argvRuns[0], ["--force", "acp"]);
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const setConfigRequests = requests.filter(

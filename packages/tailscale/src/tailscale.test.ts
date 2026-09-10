@@ -1,4 +1,3 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -9,6 +8,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   buildTailscaleHttpsBaseUrl,
@@ -99,10 +99,14 @@ function neverFinishingMockHandle() {
   });
 }
 
-// The executable name is platform-derived (`tailscale.exe` on Windows), so pin
-// the host or every executable assertion below reads the machine running the
-// suite instead of the behaviour under test.
-const pinnedHostLayer = Layer.succeed(HostProcessPlatform, "linux");
+// The executable name depends on the host platform (`tailscale.exe` on
+// Windows), so pin it: these tests assert the posix spelling.
+function spawnerLayer(spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) {
+  return Layer.merge(
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Layer.succeed(HostProcessPlatform, "linux"),
+  );
+}
 
 function mockSpawnerLayer(
   handler: (
@@ -110,18 +114,14 @@ function mockSpawnerLayer(
     args: ReadonlyArray<string>,
   ) => { stdout?: string; stderr?: string; code?: number },
 ) {
-  return Layer.mergeAll(
-    Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) => {
-        const childProcess = command as unknown as {
-          readonly command: string;
-          readonly args: ReadonlyArray<string>;
-        };
-        return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
-      }),
-    ),
-    pinnedHostLayer,
+  return spawnerLayer(
+    ChildProcessSpawner.make((command) => {
+      const childProcess = command as unknown as {
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+      };
+      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+    }),
   );
 }
 
@@ -203,13 +203,7 @@ describe("tailscale", () => {
       method: "spawn",
       cause: systemCause,
     });
-    const layer = Layer.mergeAll(
-      Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => Effect.fail(cause)),
-      ),
-      pinnedHostLayer,
-    );
+    const layer = spawnerLayer(ChildProcessSpawner.make(() => Effect.fail(cause)));
 
     return Effect.gen(function* () {
       const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
@@ -230,8 +224,7 @@ describe("tailscale", () => {
     // inside an `Effect.callback` registration, so that throw arrives as a
     // defect rather than a typed error - the shape reproduced here.
     const defect = Object.assign(new Error("spawn tailscale ENOTDIR"), { code: "ENOTDIR" });
-    const layer = Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
+    const layer = spawnerLayer(
       ChildProcessSpawner.make(() =>
         Effect.callback<never, never>(() => {
           throw defect;
@@ -309,11 +302,7 @@ describe("tailscale", () => {
   it.effect("times out tailscale status through TestClock", () => {
     const layer = Layer.mergeAll(
       TestClock.layer(),
-      Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => Effect.succeed(neverFinishingMockHandle())),
-      ),
-      pinnedHostLayer,
+      spawnerLayer(ChildProcessSpawner.make(() => Effect.succeed(neverFinishingMockHandle()))),
     );
 
     return Effect.gen(function* () {

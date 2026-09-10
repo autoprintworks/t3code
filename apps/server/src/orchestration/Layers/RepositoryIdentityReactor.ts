@@ -69,10 +69,9 @@ const make = Effect.gen(function* () {
    * projects sharing a root cost one resolution between them.
    */
   const resolveAndRecord = Effect.fn("resolveAndRecord")(function* (request: ResolutionRequest) {
-    if (request.refresh) {
-      yield* repositoryIdentityResolver.invalidate(request.workspaceRoot);
-    }
-    const repositoryIdentity = yield* repositoryIdentityResolver.resolve(request.workspaceRoot);
+    const repositoryIdentity = yield* repositoryIdentityResolver.resolve(request.workspaceRoot, {
+      refresh: request.refresh,
+    });
     yield* orchestrationEngine.dispatch({
       type: "project.repository-identity.record",
       commandId: yield* serverCommandId,

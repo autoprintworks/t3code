@@ -5,18 +5,19 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type {
   ProviderSettingsFormAnnotation,
-  ProviderSettingsFormChoice,
   ProviderSettingsFormControl,
+  ProviderSettingsFormOption,
   ProviderSettingsFormSchemaAnnotation,
 } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import type { ProviderClientDefinition } from "./providerDriverMeta";
+import { SettingsRow } from "./settingsLayout";
 
 /**
  * Stands in for the empty string in a select, because a Radix `SelectItem`
@@ -33,8 +34,8 @@ export interface ProviderSettingsFieldModel {
   readonly placeholder?: string | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
   readonly defaultBooleanValue?: boolean | undefined;
-  /** Menu for a `select` field. Empty for every other control. */
-  readonly choices?: ReadonlyArray<ProviderSettingsFormChoice> | undefined;
+  /** Choices for a `select` control. The first entry is the default. */
+  readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
 
 function titleizeFieldKey(key: string): string {
@@ -117,23 +118,21 @@ export function deriveProviderSettingsFields(
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
-          ...(formAnnotation.choices !== undefined ? { choices: formAnnotation.choices } : {}),
+          ...(formAnnotation.control === "select" && formAnnotation.options
+            ? { options: formAnnotation.options }
+            : {}),
         } satisfies ProviderSettingsFieldModel,
       ];
     });
 }
 
-export function readProviderConfigString(config: unknown, key: string): string {
+function readProviderConfigString(config: unknown, key: string): string {
   if (config === null || typeof config !== "object") return "";
   const value = (config as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
 }
 
-export function readProviderConfigBoolean(
-  config: unknown,
-  key: string,
-  defaultValue = false,
-): boolean {
+function readProviderConfigBoolean(config: unknown, key: string, defaultValue = false): boolean {
   if (config === null || typeof config !== "object") return defaultValue;
   const value = (config as Record<string, unknown>)[key];
   return typeof value === "boolean" ? value : defaultValue;
@@ -170,8 +169,54 @@ interface ProviderSettingsFormProps {
   readonly definition: ProviderClientDefinition;
   readonly value: unknown;
   readonly idPrefix: string;
-  readonly variant: "card" | "dialog";
+  /**
+   * `card` stacks label over control, `dialog` is the compact wizard layout,
+   * and `settings` renders the shared settings row treatment.
+   */
+  readonly variant: "card" | "dialog" | "settings";
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
+}
+
+/** Stores the default choice as an omitted key so unchanged configs stay small. */
+function ProviderSettingsSelect({
+  field,
+  value,
+  inputId,
+  size,
+  className,
+  onChange,
+}: {
+  readonly field: ProviderSettingsFieldModel;
+  readonly value: unknown;
+  readonly inputId: string;
+  readonly size: "sm" | "xs";
+  readonly className?: string | undefined;
+  readonly onChange: ProviderSettingsFormProps["onChange"];
+}) {
+  const options = field.options ?? [];
+  const fallback = options[0]?.value ?? "";
+  const current = readProviderConfigString(value, field.key) || fallback;
+  const label = options.find((option) => option.value === current)?.label ?? current;
+  return (
+    <Select
+      value={current}
+      onValueChange={(next) => {
+        if (typeof next !== "string") return;
+        onChange(nextProviderConfigWithFieldValue(value, field, next === fallback ? "" : next));
+      }}
+    >
+      <SelectTrigger id={inputId} size={size} className={className} aria-label={field.label}>
+        <SelectValue>{label}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="start" alignItemWithTrigger={false}>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
 }
 
 function FieldFrame(props: {
@@ -201,13 +246,74 @@ function ProviderSettingsFieldRow({
 }: ProviderSettingsFieldRowProps) {
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
-    variant === "card"
-      ? "mt-1 block text-xs text-muted-foreground"
-      : "text-[11px] text-muted-foreground";
+    variant === "dialog"
+      ? "text-[11px] text-muted-foreground"
+      : "mt-1 block text-xs text-muted-foreground";
   const label = <span className="text-xs font-medium text-foreground">{field.label}</span>;
   const description = field.description ? (
     <span className={descriptionClassName}>{field.description}</span>
   ) : null;
+
+  if (variant === "settings") {
+    const descriptionId = field.description ? `${inputId}-description` : undefined;
+    const control =
+      field.control === "switch" ? (
+        <Switch
+          checked={readProviderConfigBoolean(value, field.key, field.defaultBooleanValue)}
+          onCheckedChange={(checked) =>
+            onChange(nextProviderConfigWithFieldValue(value, field, Boolean(checked)))
+          }
+          aria-label={field.label}
+          aria-describedby={descriptionId}
+        />
+      ) : field.control === "select" ? (
+        <ProviderSettingsSelect
+          field={field}
+          value={value}
+          inputId={inputId}
+          size="sm"
+          className="w-full sm:w-56"
+          onChange={onChange}
+        />
+      ) : field.control === "textarea" ? (
+        <Textarea
+          id={inputId}
+          aria-describedby={descriptionId}
+          className="w-full sm:w-96"
+          value={readProviderConfigString(value, field.key)}
+          onChange={(event) =>
+            onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
+          }
+          placeholder={field.placeholder}
+          spellCheck={false}
+        />
+      ) : (
+        <DraftInput
+          id={inputId}
+          aria-describedby={descriptionId}
+          size="sm"
+          className="w-full sm:w-56"
+          type={field.control === "password" ? "password" : undefined}
+          autoComplete={field.control === "password" ? "off" : undefined}
+          value={readProviderConfigString(value, field.key)}
+          onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+          placeholder={field.placeholder}
+          spellCheck={false}
+        />
+      );
+
+    return (
+      <SettingsRow
+        title={
+          field.control === "switch" ? field.label : <label htmlFor={inputId}>{field.label}</label>
+        }
+        description={
+          field.description ? <span id={descriptionId}>{field.description}</span> : undefined
+        }
+        control={control}
+      />
+    );
+  }
 
   if (field.control === "switch") {
     return (
@@ -230,43 +336,20 @@ function ProviderSettingsFieldRow({
   }
 
   if (field.control === "select") {
-    // A select is a button, not an input, so it gets an aria-labelledby pair
-    // rather than the wrapping `<label>` the text controls use: a label around
-    // a button opens the menu again on the click that just closed it.
     return (
       <FieldFrame variant={variant}>
-        <span id={`${inputId}-label`} className={cn(variant === "card" && "block")}>
+        <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
           {label}
-        </span>
-        <Select
-          value={readProviderConfigString(value, field.key) || SELECT_UNSET_VALUE}
-          onValueChange={(next: unknown) =>
-            onChange(
-              nextProviderConfigWithFieldValue(
-                value,
-                field,
-                typeof next === "string" && next !== SELECT_UNSET_VALUE ? next : "",
-              ),
-            )
-          }
-        >
-          <SelectTrigger
-            id={inputId}
-            aria-labelledby={`${inputId}-label`}
+          <ProviderSettingsSelect
+            field={field}
+            value={value}
+            inputId={inputId}
+            size="sm"
             className={cn("w-full", variant === "card" && "mt-1.5")}
-          >
-            <SelectValue placeholder={field.placeholder ?? "Default"} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={SELECT_UNSET_VALUE}>{field.placeholder ?? "Default"}</SelectItem>
-            {(field.choices ?? []).map((choice) => (
-              <SelectItem key={choice.value} value={choice.value}>
-                {choice.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {description}
+            onChange={onChange}
+          />
+          {description}
+        </label>
       </FieldFrame>
     );
   }
@@ -300,6 +383,7 @@ function ProviderSettingsFieldRow({
         {variant === "card" ? (
           <DraftInput
             id={inputId}
+            size="sm"
             className="mt-1.5"
             type={type}
             autoComplete={field.control === "password" ? "off" : undefined}
