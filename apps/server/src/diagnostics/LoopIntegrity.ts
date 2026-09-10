@@ -237,13 +237,11 @@ export const watchLoopIntegrity = (options: LoopIntegrityOptions = {}): LoopInte
     }
     const during = inits
       .filter((entry) => entry.atMs > windowStart && entry.atMs <= blockEndedAt)
-      .map(
-        (entry): LoopBlockAttribution => ({
-          resourceType: entry.resourceType,
-          phase: "during",
-          stack: entry.stack,
-        }),
-      );
+      .map((entry): LoopBlockAttribution => ({
+        resourceType: entry.resourceType,
+        phase: "during",
+        stack: entry.stack,
+      }));
     if (during.length > 0) {
       // Distinct call sites only: a burst of spawns repeats one stack.
       const seen = new Set<string>();
