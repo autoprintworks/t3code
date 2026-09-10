@@ -208,7 +208,7 @@ export function isProviderIconKey(value: string | null | undefined): boolean {
  * the mobile app show for the same provider, and the two drawing different
  * glyphs for one instance is a bug neither client can see on its own.
  */
-export const PROVIDER_ICON_KEY_BY_DRIVER_KIND: Partial<Record<ProviderDriverKind, string>> = {
+const PROVIDER_ICON_KEY_BY_DRIVER_KIND: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: "openai",
   [CLAUDE_DRIVER_KIND]: "anthropic",
   [CURSOR_DRIVER_KIND]: "cursor",

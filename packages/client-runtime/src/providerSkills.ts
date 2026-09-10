@@ -156,7 +156,7 @@ export function formatProviderSkillInvocationLabel(
  * to the two a composer menu must tell apart. A scope it cannot place stays
  * `null`, and the caller decides what to show instead of guessing.
  */
-export function classifyProviderSkillScope(
+function classifyProviderSkillScope(
   skill: Pick<ServerProviderSkill, "scope">,
 ): "project" | "user" | null {
   const normalized = skill.scope?.trim().toLowerCase();

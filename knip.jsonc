@@ -23,6 +23,14 @@
         "src/service-launcher.ts!",
         "scripts/cli.ts",
         "src/provider/testFixtures/*.mjs",
+        // Fork diagnostics, run by hand from the shell rather than imported.
+        // `bench-acp-worker-poll.ts` and `windows-console-probe.ts` are documented in
+        // docs/internals; `acp-worker-poll-agent.mjs` is the stand-in agent the bench
+        // spawns by path; `bench-request-depth.ts` carries its usage in its own header.
+        "scripts/acp-worker-poll-agent.mjs",
+        "scripts/bench-acp-worker-poll.ts",
+        "scripts/bench-request-depth.ts",
+        "scripts/windows-console-probe.ts",
       ],
       // Native msgpack acceleration and the Vite+ web build prerequisite.
       "ignoreDependencies": ["msgpackr-extract", "@t3tools/web"],

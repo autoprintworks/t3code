@@ -18,14 +18,12 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
-  ACP_AGENT_DRIVER_KIND,
   ApprovalRequestId,
   isToolLifecycleItemType,
   type AssetResource,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
-  ProviderDriverKind,
   type ToolLifecycleItemType,
   type ThreadId,
   type TurnId,
@@ -45,49 +43,6 @@ import {
 export type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
 
 export { formatDuration } from "@t3tools/shared/orchestrationTiming";
-
-export type ProviderPickerKind = ProviderDriverKind;
-
-export const PROVIDER_OPTIONS: Array<{
-  value: ProviderPickerKind;
-  label: string;
-  available: boolean;
-  /** Shown on the model picker sidebar when relevant */
-  pickerSidebarBadge?: "new" | "soon";
-}> = [
-  { value: ProviderDriverKind.make("codex"), label: "Codex", available: true },
-  { value: ProviderDriverKind.make("claudeAgent"), label: "Claude", available: true },
-  {
-    value: ProviderDriverKind.make("opencode"),
-    label: "OpenCode",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  {
-    value: ProviderDriverKind.make("cursor"),
-    label: "Cursor",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  {
-    value: ProviderDriverKind.make("grok"),
-    label: "Grok",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  {
-    value: ProviderDriverKind.make("antigravity"),
-    label: "Antigravity",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  {
-    value: ACP_AGENT_DRIVER_KIND,
-    label: "ACP agent",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-];
 
 export {
   workEntryDisplayIndicatesToolFailure,

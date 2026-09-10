@@ -17,7 +17,7 @@ import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { buildEnvironmentAuthHeaders } from "../state/environmentHttpAuth.ts";
 
 /** Where an environment receives client OTLP span exports. */
-export const OTLP_TRACES_PATH = "/api/observability/v1/traces";
+const OTLP_TRACES_PATH = "/api/observability/v1/traces";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
 
