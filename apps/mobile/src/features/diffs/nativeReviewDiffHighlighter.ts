@@ -82,6 +82,17 @@ const NATIVE_REVIEW_DIFF_VISIBLE_OVERSCAN_ROWS = 160;
 const NATIVE_REVIEW_DIFF_VISIBLE_MAX_ROWS = 360;
 const NATIVE_REVIEW_DIFF_TOKENIZE_MAX_LINE_LENGTH = 1_000;
 const NATIVE_REVIEW_DIFF_TOKENIZE_MAX_CHARACTERS = 8_000;
+/**
+ * Disables Shiki's per-line tokenizer deadline (0 means "no limit").
+ *
+ * Shiki defaults to 500ms per line. A line that crosses that deadline stops mid-line and
+ * the remainder becomes one token wearing whatever scope was open. Here that also poisons
+ * the grammar state carried into the next batch, so one slow moment discolors the rest of
+ * the file, and the result is cached for the sheet's lifetime. Lines long enough to be
+ * genuinely slow never reach the tokenizer: NATIVE_REVIEW_DIFF_TOKENIZE_MAX_LINE_LENGTH
+ * bypasses them first.
+ */
+const NATIVE_REVIEW_DIFF_TOKENIZE_TIME_LIMIT_MS = 0;
 
 const NATIVE_REVIEW_DIFF_THEME_NAME_BY_SCHEME = {
   dark: "t3-pierre-dark",
@@ -257,6 +268,7 @@ function createHighlighterHandle(
           lang,
           theme,
           grammarState,
+          tokenizeTimeLimit: NATIVE_REVIEW_DIFF_TOKENIZE_TIME_LIMIT_MS,
         });
         grammarState = highlighter.getLastGrammarState(tokens);
         highlighted.push(...normalizeTokens(tokens));

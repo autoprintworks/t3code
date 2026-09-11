@@ -56,6 +56,17 @@ const REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE = resolveReviewHighlighterEnginePrefe
 const REVIEW_HIGHLIGHT_CHUNK_LINE_THRESHOLD = 8;
 const REVIEW_HIGHLIGHT_CHUNK_SIZE = 200;
 const REVIEW_TOKENIZE_MAX_LINE_LENGTH = 1_000;
+/**
+ * Disables Shiki's per-line tokenizer deadline (0 means "no limit").
+ *
+ * Shiki defaults to 500ms per line. When a line crosses that deadline the TextMate
+ * tokenizer stops mid-line and emits the remainder as one token wearing whatever scope
+ * was open, so the same file highlights differently depending on how busy the device is.
+ * The first call against a freshly loaded grammar is the one at risk, because it also
+ * pays to compile that grammar's patterns. Lines long enough to be genuinely slow never
+ * reach the tokenizer: REVIEW_TOKENIZE_MAX_LINE_LENGTH bypasses them first.
+ */
+const REVIEW_TOKENIZE_TIME_LIMIT_MS = 0;
 const REVIEW_INITIAL_LANGUAGE_MODULES = [
   bashLanguage,
   javascriptLanguage,
@@ -561,6 +572,7 @@ async function highlightLines(
     const tokenLines = highlighter.codeToTokensBase(shortLineBatch.join("\n"), {
       lang: language,
       theme,
+      tokenizeTimeLimit: REVIEW_TOKENIZE_TIME_LIMIT_MS,
     });
     highlightedLines.push(...normalizeHighlightedLines(tokenLines));
     shortLineBatch.length = 0;
