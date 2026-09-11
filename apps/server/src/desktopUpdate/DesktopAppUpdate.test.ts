@@ -16,6 +16,7 @@ import * as DesktopAppUpdate from "./DesktopAppUpdate.ts";
 function makeState(overrides: Partial<DesktopUpdateState> = {}): DesktopUpdateState {
   return {
     enabled: true,
+    automaticUpdates: true,
     status: "idle",
     channel: "latest",
     currentVersion: "1.2.3",
