@@ -302,6 +302,24 @@ const createManager = (
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
 
+/**
+ * Base poll period for the subprocess poll tests below. They run on a
+ * TestClock, so the value only has to divide by 10 for the stepping helper.
+ */
+const POLL_BASE_PERIOD_MS = 1_000;
+
+/** Advances the test clock by `stepMs` at a time, `steps` times. */
+const stepClock = (steps: number, stepMs: number) =>
+  Effect.forEach(
+    Array.from({ length: steps }, (_, index) => index),
+    () => TestClock.adjust(Duration.millis(stepMs)),
+    { discard: true },
+  );
+
+/** The gaps between consecutive recorded times, in milliseconds. */
+const gapsOf = (times: ReadonlyArray<number>): ReadonlyArray<number> =>
+  times.slice(1).map((time, index) => time - (times[index] ?? 0));
+
 // Apply the existing line policy, then find the longest code-point-aligned byte tail.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
   const terminated = text.endsWith("\n");
@@ -1222,68 +1240,61 @@ it.layer(
         { pid: 101, ppid: 9001, name: "git" },
         { pid: 102, ppid: 9002, name: "python3" },
       ];
-      const firstRoundStarted = yield* Deferred.make<void>();
-      const releaseFirstRound = yield* Deferred.make<void>();
-      let snapshotCalls = 0;
+      const snapshotStarts: Array<number> = [];
 
       const { manager, getEvents } = yield* createManager(5, {
-        // Long enough that the round which answers all three sessions is over
-        // before the next one is due. A wake cannot cut the base period short.
-        subprocessPollIntervalMs: 300,
-        processTable: Effect.suspend(() => {
-          snapshotCalls += 1;
-          if (snapshotCalls > 1) return Effect.succeed(rows);
-          return Deferred.succeed(firstRoundStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(releaseFirstRound)),
-            Effect.as(rows),
-          );
-        }),
+        subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
+        processKillGraceMs: 0,
+        processTable: Clock.currentTimeMillis.pipe(
+          Effect.map((now) => {
+            snapshotStarts.push(now);
+            return rows;
+          }),
+        ),
       }).pipe(Effect.provide(withHostPlatform("linux")));
 
       yield* manager.open(openInput());
       yield* manager.open(openInput({ threadId: "thread-2" }));
       yield* manager.open(openInput({ threadId: "thread-3" }));
 
-      yield* Deferred.await(firstRoundStarted);
-      // Three running sessions, one snapshot in flight.
-      assert.equal(snapshotCalls, 1);
+      // Far enough for exactly one round with all three sessions running.
+      yield* stepClock(10, POLL_BASE_PERIOD_MS / 10);
 
-      yield* Deferred.succeed(releaseFirstRound, undefined);
-      yield* waitFor(
-        Effect.map(getEvents, (events) => {
-          const labels = new Set(
-            events
-              .filter((event) => event.type === "activity" && event.hasRunningSubprocess)
-              .map((event) => (event.type === "activity" ? event.label : null)),
-          );
-          return labels.has("vim") && labels.has("git") && labels.has("python3");
-        }),
-        "1200 millis",
+      const events = yield* getEvents;
+      const labels = new Set(
+        events.flatMap((event) =>
+          event.type === "activity" && event.hasRunningSubprocess ? [event.label] : [],
+        ),
       );
-      // All three answers came out of that one snapshot.
-      assert.equal(snapshotCalls, 1);
-    }),
+      // Three sessions answered.
+      assert.deepStrictEqual([...labels].sort(), ["git", "python3", "vim"]);
+      // Out of one snapshot. The cost of a round does not grow with the
+      // number of terminals, which is what issue #83 asked for.
+      assert.deepStrictEqual(snapshotStarts, [POLL_BASE_PERIOD_MS]);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("never overlaps a round that overran its period with the next", () =>
     Effect.gen(function* () {
+      const roundStarts: Array<number> = [];
       let inFlight = 0;
       let maxInFlight = 0;
-      let completedRounds = 0;
+      // Four times the period, so every round after the first starts late.
+      const roundDurationMs = POLL_BASE_PERIOD_MS * 4;
 
       const { manager } = yield* createManager(5, {
-        // The snapshot below takes far longer than this period, so every round
-        // after the first starts late.
-        subprocessPollIntervalMs: 20,
+        subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
+        processKillGraceMs: 0,
         processTable: Effect.suspend(() => {
           inFlight += 1;
           maxInFlight = Math.max(maxInFlight, inFlight);
-          return Effect.sleep("120 millis").pipe(
+          return Clock.currentTimeMillis.pipe(
+            Effect.tap((now) => Effect.sync(() => roundStarts.push(now))),
+            Effect.andThen(Effect.sleep(Duration.millis(roundDurationMs))),
             Effect.as([{ pid: 100, ppid: 9000, name: "vim" }]),
             Effect.ensuring(
               Effect.sync(() => {
                 inFlight -= 1;
-                completedRounds += 1;
               }),
             ),
           );
@@ -1291,21 +1302,27 @@ it.layer(
       }).pipe(Effect.provide(withHostPlatform("linux")));
 
       yield* manager.open(openInput());
-      yield* waitFor(
-        Effect.sync(() => completedRounds >= 3),
-        "2000 millis",
-      );
+      yield* stepClock(200, POLL_BASE_PERIOD_MS / 10);
+
+      expect(roundStarts.length).toBeGreaterThan(2);
+      // The round is awaited inside the loop, so an overrun delays the next
+      // round rather than overlapping it.
       assert.equal(maxInFlight, 1);
-    }),
+      // No two round starts are closer together than the round takes.
+      assert.deepStrictEqual(
+        gapsOf(roundStarts).filter((gap) => gap < roundDurationMs),
+        [],
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("backs off an unchanging round and returns to base on a terminal event", () =>
     Effect.gen(function* () {
       const roundStarts: Array<number> = [];
-      const basePeriodMs = 30;
 
       const { manager, ptyAdapter } = yield* createManager(5, {
-        subprocessPollIntervalMs: basePeriodMs,
+        subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
+        processKillGraceMs: 0,
         // No children, so no round ever changes a label and nothing wakes the
         // poll on its own.
         processTable: Clock.currentTimeMillis.pipe(
@@ -1317,14 +1334,19 @@ it.layer(
       }).pipe(Effect.provide(withHostPlatform("linux")));
 
       yield* manager.open(openInput());
-      // Each round that changes nothing doubles the next gap, so five rounds
-      // put the poll on its x8 cap of 240 ms.
-      yield* waitFor(
-        Effect.sync(() => roundStarts.length >= 5),
-        "3000 millis",
-      );
-      const backedOffGapMs = roundStarts.at(-1)! - roundStarts.at(-2)!;
-      expect(backedOffGapMs).toBeGreaterThan(basePeriodMs * 3);
+      // Enough for the back-off to reach its x8 cap and hold there.
+      yield* stepClock(400, POLL_BASE_PERIOD_MS / 10);
+
+      const backedOffGaps = gapsOf(roundStarts);
+      // Each round that changed nothing doubles the next gap.
+      assert.deepStrictEqual(backedOffGaps.slice(0, 4), [
+        POLL_BASE_PERIOD_MS,
+        POLL_BASE_PERIOD_MS * 2,
+        POLL_BASE_PERIOD_MS * 4,
+        POLL_BASE_PERIOD_MS * 8,
+      ]);
+      // The x8 cap holds from there.
+      assert.deepStrictEqual([...new Set(backedOffGaps.slice(3))], [POLL_BASE_PERIOD_MS * 8]);
 
       const roundsBeforeEvent = roundStarts.length;
       const process = ptyAdapter.processes[0];
@@ -1333,15 +1355,17 @@ it.layer(
       const wokeAtMs = yield* Clock.currentTimeMillis;
       process.emitData("keystroke\n");
 
-      yield* waitFor(
-        Effect.sync(() => roundStarts.length > roundsBeforeEvent),
-        "3000 millis",
+      yield* stepClock(30, POLL_BASE_PERIOD_MS / 10);
+
+      // The event put the poll back on the base period. The round it triggers
+      // lands within one base period of the event rather than out at the x8
+      // gap the poll had reached, and the cadence after it is the base again.
+      expect(roundStarts[roundsBeforeEvent]! - wokeAtMs).toBeLessThanOrEqual(POLL_BASE_PERIOD_MS);
+      assert.deepStrictEqual(
+        gapsOf(roundStarts).slice(roundsBeforeEvent - 1, roundsBeforeEvent + 1),
+        [POLL_BASE_PERIOD_MS, POLL_BASE_PERIOD_MS],
       );
-      // The event put the next round back on the base period rather than
-      // leaving it on the backed-off gap it had reached.
-      const gapAfterWakeMs = roundStarts[roundsBeforeEvent]! - wokeAtMs;
-      expect(gapAfterWakeMs).toBeLessThan(backedOffGapMs / 2);
-    }),
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("uses process snapshots from the resource monitor", () =>
@@ -1392,7 +1416,8 @@ it.layer(
       };
 
       const { manager, getEvents } = yield* createManager(5, {
-        subprocessPollIntervalMs: 20,
+        subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
+        processKillGraceMs: 0,
         processTable: Effect.fail("sidecar unavailable").pipe(
           Effect.mapError((cause) => cause as never),
         ),
@@ -1402,29 +1427,31 @@ it.layer(
       );
 
       yield* manager.open(openInput());
-      // The fallback data is still applied while the sidecar is down.
-      yield* waitFor(
-        Effect.map(getEvents, (events) =>
-          events.some(
-            (event) =>
-              event.type === "activity" &&
-              event.hasRunningSubprocess === true &&
-              event.label === "vim",
-          ),
-        ),
-        "1200 millis",
-      );
+      yield* stepClock(400, POLL_BASE_PERIOD_MS / 10);
 
-      yield* waitFor(
-        Effect.sync(() => fallbackCalls.length >= 4),
-        "2000 millis",
-      );
-      // Four snapshots at the 20 ms base cadence would span ~60 ms. Backoff
-      // (40 + 80 + 160 ms) stretches the same four snapshots past 150 ms, so
-      // a stalled sidecar no longer hot-loops the spawned fallback.
-      const spanMs = fallbackCalls[3]! - fallbackCalls[0]!;
-      expect(spanMs).toBeGreaterThan(150);
-    }),
+      // The fallback data is still applied while the sidecar is down.
+      const events = yield* getEvents;
+      expect(
+        events.some(
+          (event) =>
+            event.type === "activity" &&
+            event.hasRunningSubprocess === true &&
+            event.label === "vim",
+        ),
+      ).toBe(true);
+
+      // Those activity events would normally wake the poll. While the snapshot
+      // is degraded the wake is suppressed, so the fallback keeps backing off
+      // to its x8 cap instead of hot-looping the spawn.
+      const gaps = gapsOf(fallbackCalls);
+      assert.deepStrictEqual(gaps.slice(0, 4), [
+        POLL_BASE_PERIOD_MS,
+        POLL_BASE_PERIOD_MS * 2,
+        POLL_BASE_PERIOD_MS * 4,
+        POLL_BASE_PERIOD_MS * 8,
+      ]);
+      assert.deepStrictEqual([...new Set(gaps.slice(3))], [POLL_BASE_PERIOD_MS * 8]);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("caps persisted history to configured line limit", () =>
