@@ -46,6 +46,28 @@
       "patchesUpstream": true
     },
     {
+      "name": "fork-automatic-updates",
+      "description": "A found update downloads with no click and installs on the next quit. One sidebar nudge names the waiting version, Settings shows the state in plain words, and a switch turns it off for upstream's two-click flow. forkAutomaticUpdates.ts and forkAutomaticUpdates.logic.ts are the fork's own modules and upstream has no file at either path, so the test cannot pass on plain upstream. Issue #113.",
+      "files": [
+        "apps/desktop/src/updates/forkAutomaticUpdates.ts",
+        "apps/desktop/src/updates/DesktopUpdates.ts",
+        "apps/desktop/src/updates/updateMachine.ts",
+        "apps/desktop/src/updates/updatesTestHarness.ts",
+        "apps/desktop/src/settings/DesktopAppSettings.ts",
+        "apps/desktop/src/ipc/channels.ts",
+        "apps/desktop/src/ipc/methods/updates.ts",
+        "apps/desktop/src/ipc/DesktopIpcHandlers.ts",
+        "apps/desktop/src/preload.ts",
+        "packages/contracts/src/ipc.ts",
+        "apps/web/src/components/forkAutomaticUpdates.logic.ts",
+        "apps/web/src/components/forkAutomaticUpdates.logic.test.ts",
+        "apps/web/src/components/sidebar/SidebarUpdatePill.tsx",
+        "apps/web/src/components/settings/SettingsPanels.tsx"
+      ],
+      "test": "apps/desktop/src/updates/forkAutomaticUpdates.test.ts",
+      "patchesUpstream": true
+    },
+    {
       "name": "fm-acp-provider",
       "description": "First Mate is driven through its ACP door as a configurable ACP agent provider. Issues #78 and #79.",
       "files": [
