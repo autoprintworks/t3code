@@ -42,7 +42,9 @@ called from `scripts/build-desktop-artifact.ts`). An existing `.env` or `.env.lo
 overwritten, the fork keeps no second copy of the values, and an upstream edit to `.env.example`
 flows straight into the next build. `.github/workflows/fork-update.yml` gets it from the same call,
 because its build step runs the same script. The four values are public identifiers, as
-`.env.example` says; no secret goes near this. See [connect-setup.md](connect-setup.md).
+`.env.example` says; no secret goes near this. Upstream injects the relay URL into the server
+bundle and the web client but not into the desktop main bundle, so `server.asar` carries both
+values and `app.asar` carries the Clerk key alone. See [connect-setup.md](connect-setup.md).
 
 Known risk: the fork's OAuth callback scheme is `t3code-fork://` and the official Clerk instance
 allowlists `t3code://app/` and `t3code-dev://app/` only, so a Google or GitHub sign-in may open the
