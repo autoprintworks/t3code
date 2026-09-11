@@ -232,6 +232,19 @@ jobs:
         if: steps.resolve.outputs.up_to_date != 'true'
         run: pnpm run --filter @t3tools/desktop ensure:electron
 
+      # apps/desktop/scripts/browser-secret-native.test.mjs compiles native/browser-secret
+      # against libsecret, so on Linux `pnpm test` needs the headers and pkg-config. Without
+      # them the gate dies on "Package libsecret-1 was not found in the pkg-config search
+      # path". Run 34544913834 is that failure.
+      #
+      # ci.yml installs the same two packages, but prefixes them with a sed over
+      # /etc/apt/blacksmith-ubuntu-mirrors.txt. That file comes from a Blacksmith runner.
+      # This job runs on ubuntu-latest, where sed on a missing path exits 2 and would fail
+      # the step, so the mirror rewrite is not copied.
+      - name: Install browser secret helper build libraries
+        if: steps.resolve.outputs.up_to_date != 'true'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
       - name: Gate
         id: gate
         if: steps.resolve.outputs.up_to_date != 'true'
