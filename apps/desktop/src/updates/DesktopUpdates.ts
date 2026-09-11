@@ -228,17 +228,23 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
   );
 }
 
-function createBaseUpdateState(
-  channel: DesktopUpdateChannel,
-  enabled: boolean,
-  automaticUpdates: boolean,
-  environment: DesktopEnvironment.DesktopEnvironment["Service"],
-): DesktopUpdateState {
+/** One options object, because `enabled` and `automaticUpdates` are adjacent
+    booleans and swapping them would not be a type error. */
+function createBaseUpdateState(options: {
+  readonly channel: DesktopUpdateChannel;
+  readonly enabled: boolean;
+  readonly automaticUpdates: boolean;
+  readonly environment: DesktopEnvironment.DesktopEnvironment["Service"];
+}): DesktopUpdateState {
   return {
-    ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
-    enabled,
-    automaticUpdates,
-    status: enabled ? "idle" : "disabled",
+    ...createInitialDesktopUpdateState(
+      options.environment.appVersion,
+      options.environment.runtimeInfo,
+      options.channel,
+    ),
+    enabled: options.enabled,
+    automaticUpdates: options.automaticUpdates,
+    status: options.enabled ? "idle" : "disabled",
   };
 }
 
@@ -521,6 +527,33 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
+  /**
+   * Fork only (#113). The one place that decides to download without a click.
+   * The real updater fires update-available before checkForUpdates resolves, so
+   * the check still holds the single action lock when the handler runs and the
+   * download would be refused with nothing to retry it. Waits for the check to
+   * release the lock first, the way installDownloadedUpdate already does.
+   */
+  const maybeAutoDownload = (state: DesktopUpdateState) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (!shouldAutoDownloadDesktopUpdate(state)) return;
+        const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
+        while (true) {
+          const activeAction = yield* Ref.get(activeUpdateActionRef);
+          if (!(Option.isSome(activeAction) && activeAction.value === "check")) break;
+          const finishedAction = yield* PubSub.take(actionCompletions).pipe(
+            Effect.timeoutOption(PREPARED_INSTALL_CHECK_WAIT),
+          );
+          if (Option.isNone(finishedAction)) return;
+        }
+        yield* logUpdaterInfo("downloading update without a click", {
+          version: state.availableVersion,
+        });
+        yield* downloadAvailableUpdate;
+      }),
+    ).pipe(Effect.withSpan("desktop.updates.maybeAutoDownload"));
+
   const resetInstallAction = Effect.all(
     [finishUpdateAction("install"), Ref.set(desktopState.quitting, false)],
     { discard: true },
@@ -749,17 +782,7 @@ export const make = Effect.gen(function* () {
           });
 
           // Fork only (#113). Upstream stops here and waits for a click.
-          if (
-            shouldAutoDownloadDesktopUpdate({
-              automaticUpdates: nextState.automaticUpdates,
-              status: nextState.status,
-            })
-          ) {
-            yield* logUpdaterInfo("downloading update without a click", {
-              version: info.version,
-            });
-            yield* downloadAvailableUpdate;
-          }
+          yield* maybeAutoDownload(nextState);
         }),
       ),
       Effect.catchCause((cause) => {
@@ -912,12 +935,12 @@ export const make = Effect.gen(function* () {
       const settings = yield* desktopSettings.get;
       const enabled = yield* shouldEnableAutoUpdates;
       yield* setState(
-        createBaseUpdateState(
-          settings.updateChannel,
+        createBaseUpdateState({
+          channel: settings.updateChannel,
           enabled,
-          settings.automaticUpdates,
+          automaticUpdates: settings.automaticUpdates,
           environment,
-        ),
+        }),
       );
       if (!enabled) {
         return;
@@ -993,7 +1016,12 @@ export const make = Effect.gen(function* () {
 
         const enabled = yield* shouldEnableAutoUpdates;
         yield* setState(
-          createBaseUpdateState(nextChannel, enabled, state.automaticUpdates, environment),
+          createBaseUpdateState({
+            channel: nextChannel,
+            enabled,
+            automaticUpdates: state.automaticUpdates,
+            environment,
+          }),
         );
 
         if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
@@ -1037,14 +1065,7 @@ export const make = Effect.gen(function* () {
 
       // Turning it on with an update already found should not need the click
       // the setting exists to remove.
-      if (
-        shouldAutoDownloadDesktopUpdate({
-          automaticUpdates: nextState.automaticUpdates,
-          status: nextState.status,
-        })
-      ) {
-        yield* downloadAvailableUpdate;
-      }
+      yield* maybeAutoDownload(nextState);
       return yield* Ref.get(updateStateRef);
     }),
     check: Effect.fn("desktop.updates.check")(function* (reason: string) {

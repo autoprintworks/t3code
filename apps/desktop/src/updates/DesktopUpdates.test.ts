@@ -109,7 +109,8 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("updates and broadcasts state from updater events", () => {
-    const harness = makeHarness();
+    // Upstream's two-click flow: this test asserts no download starts (#113).
+    const harness = makeHarness({ automaticUpdates: false });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -129,7 +130,8 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("enables nightly full changelog release notes and broadcasts summaries", () => {
-    const harness = makeHarness();
+    // Upstream's two-click flow: this test asserts no download starts (#113).
+    const harness = makeHarness({ automaticUpdates: false });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -185,7 +187,8 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("checks for newer releases after an update has been downloaded", () => {
-    const harness = makeHarness();
+    // Upstream's two-click flow: this test asserts no download starts (#113).
+    const harness = makeHarness({ automaticUpdates: false });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -494,7 +497,9 @@ describe("DesktopUpdates", () => {
     Effect.gen(function* () {
       const actionStarted = yield* Deferred.make<void>();
       let disableDifferentialCalls = 0;
+      // Upstream's two-click flow: this test drives the download by hand (#113).
       const harness = makeHarness({
+        automaticUpdates: false,
         setDisableDifferentialDownload: Effect.suspend(() => {
           disableDifferentialCalls += 1;
           if (disableDifferentialCalls === 1) {

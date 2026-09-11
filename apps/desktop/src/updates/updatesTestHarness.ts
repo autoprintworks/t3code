@@ -32,9 +32,10 @@ export interface UpdatesHarnessOptions {
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
   readonly env?: Record<string, string | undefined>;
-  /** Fork only (#113). Seeds the persisted automatic update setting. Defaults to
-      false so the harness keeps upstream's two-click flow and every test that
-      predates the fork feature reads the same. */
+  /** Fork only (#113). Overrides the persisted automatic update setting. Left
+      unset, the harness uses the real DesktopAppSettings layer and so runs
+      against the shipping default. Set it to false to get upstream's two-click
+      flow. */
   readonly automaticUpdates?: boolean;
 }
 
@@ -180,44 +181,50 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-    automaticUpdates: options.automaticUpdates ?? false,
+    automaticUpdates:
+      options.automaticUpdates ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS.automaticUpdates,
   };
   const setUpdateChannelError = options.setUpdateChannelError;
-  const settingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
-    get: Effect.sync(() => testSettings),
-    load: Effect.sync(() => testSettings),
-    setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
-    setServerExposureMode: () => Effect.die("unexpected server exposure update"),
-    setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
-    setUpdateChannel: (channel) =>
-      setUpdateChannelError
-        ? Effect.fail(setUpdateChannelError)
-        : (options.beforeSetUpdateChannel ?? Effect.void).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                const changed = testSettings.updateChannel !== channel;
-                testSettings = {
-                  ...testSettings,
-                  updateChannel: channel,
-                  updateChannelConfiguredByUser: true,
-                };
-                return { settings: testSettings, changed };
-              }),
-            ),
-          ),
-    // Fork only (#113).
-    setAutomaticUpdates: (enabled) =>
-      Effect.sync(() => {
-        const changed = testSettings.automaticUpdates !== enabled;
-        testSettings = { ...testSettings, automaticUpdates: enabled };
-        return { settings: testSettings, changed };
-      }),
-    setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
-    setWslDistro: () => Effect.die("unexpected WSL distro change"),
-    setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
-    applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
-    applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
-  } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
+  const settingsLayer =
+    setUpdateChannelError ||
+    options.beforeSetUpdateChannel ||
+    options.automaticUpdates !== undefined
+      ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+          get: Effect.sync(() => testSettings),
+          load: Effect.sync(() => testSettings),
+          setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
+          setServerExposureMode: () => Effect.die("unexpected server exposure update"),
+          setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
+          setUpdateChannel: (channel) =>
+            setUpdateChannelError
+              ? Effect.fail(setUpdateChannelError)
+              : (options.beforeSetUpdateChannel ?? Effect.void).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      const changed = testSettings.updateChannel !== channel;
+                      testSettings = {
+                        ...testSettings,
+                        updateChannel: channel,
+                        updateChannelConfiguredByUser: true,
+                      };
+                      return { settings: testSettings, changed };
+                    }),
+                  ),
+                ),
+          // Fork only (#113).
+          setAutomaticUpdates: (enabled) =>
+            Effect.sync(() => {
+              const changed = testSettings.automaticUpdates !== enabled;
+              testSettings = { ...testSettings, automaticUpdates: enabled };
+              return { settings: testSettings, changed };
+            }),
+          setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
+          setWslDistro: () => Effect.die("unexpected WSL distro change"),
+          setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+          applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
+          applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+        } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
+      : DesktopAppSettings.layer;
 
   const layer = DesktopUpdates.layer.pipe(
     Layer.provideMerge(updaterLayer),
