@@ -1198,12 +1198,151 @@ it.layer(
     }),
   );
 
-  it("calculates snapshot failure backoff and success reset delays", () => {
-    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 0), 1_000);
-    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 1), 2_000);
-    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 2), 4_000);
-    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 30), 60_000);
+  it("holds the process snapshot timeout under the poll period", () => {
+    // Issue #83 reported a 1500 ms timeout under a 1000 ms period. At the
+    // shipped 2000 ms period the Windows ceiling applies and is under it.
+    assert.equal(TerminalManager.processSnapshotTimeoutMs(2_000, "win32"), 1_500);
+    assert.equal(TerminalManager.processSnapshotTimeoutMs(2_000, "linux"), 1_000);
+    // A period shorter than the platform ceiling takes the fraction instead, so
+    // no configured period can be outlasted by its own probe.
+    assert.equal(TerminalManager.processSnapshotTimeoutMs(1_000, "win32"), 750);
+    assert.equal(TerminalManager.processSnapshotTimeoutMs(400, "linux"), 300);
+    assert.equal(TerminalManager.processSnapshotTimeoutMs(1, "win32"), 1);
+    // The ceiling still caps a long period.
+    assert.equal(TerminalManager.processSnapshotTimeoutMs(60_000, "win32"), 1_500);
+    assert.equal(TerminalManager.processSnapshotTimeoutMs(60_000, "darwin"), 1_000);
   });
+
+  it.effect("issues one process-table snapshot per round however many sessions run", () =>
+    Effect.gen(function* () {
+      // FakePtyAdapter assigns pids from 9000, so the three terminals opened
+      // below run as pids 9000, 9001 and 9002.
+      const rows = [
+        { pid: 100, ppid: 9000, name: "vim" },
+        { pid: 101, ppid: 9001, name: "git" },
+        { pid: 102, ppid: 9002, name: "python3" },
+      ];
+      const firstRoundStarted = yield* Deferred.make<void>();
+      const releaseFirstRound = yield* Deferred.make<void>();
+      let snapshotCalls = 0;
+
+      const { manager, getEvents } = yield* createManager(5, {
+        // Long enough that the round which answers all three sessions is over
+        // before the next one is due. A wake cannot cut the base period short.
+        subprocessPollIntervalMs: 300,
+        processTable: Effect.suspend(() => {
+          snapshotCalls += 1;
+          if (snapshotCalls > 1) return Effect.succeed(rows);
+          return Deferred.succeed(firstRoundStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirstRound)),
+            Effect.as(rows),
+          );
+        }),
+      }).pipe(Effect.provide(withHostPlatform("linux")));
+
+      yield* manager.open(openInput());
+      yield* manager.open(openInput({ threadId: "thread-2" }));
+      yield* manager.open(openInput({ threadId: "thread-3" }));
+
+      yield* Deferred.await(firstRoundStarted);
+      // Three running sessions, one snapshot in flight.
+      assert.equal(snapshotCalls, 1);
+
+      yield* Deferred.succeed(releaseFirstRound, undefined);
+      yield* waitFor(
+        Effect.map(getEvents, (events) => {
+          const labels = new Set(
+            events
+              .filter((event) => event.type === "activity" && event.hasRunningSubprocess)
+              .map((event) => (event.type === "activity" ? event.label : null)),
+          );
+          return labels.has("vim") && labels.has("git") && labels.has("python3");
+        }),
+        "1200 millis",
+      );
+      // All three answers came out of that one snapshot.
+      assert.equal(snapshotCalls, 1);
+    }),
+  );
+
+  it.effect("never overlaps a round that overran its period with the next", () =>
+    Effect.gen(function* () {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      let completedRounds = 0;
+
+      const { manager } = yield* createManager(5, {
+        // The snapshot below takes far longer than this period, so every round
+        // after the first starts late.
+        subprocessPollIntervalMs: 20,
+        processTable: Effect.suspend(() => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          return Effect.sleep("120 millis").pipe(
+            Effect.as([{ pid: 100, ppid: 9000, name: "vim" }]),
+            Effect.ensuring(
+              Effect.sync(() => {
+                inFlight -= 1;
+                completedRounds += 1;
+              }),
+            ),
+          );
+        }),
+      }).pipe(Effect.provide(withHostPlatform("linux")));
+
+      yield* manager.open(openInput());
+      yield* waitFor(
+        Effect.sync(() => completedRounds >= 3),
+        "2000 millis",
+      );
+      assert.equal(maxInFlight, 1);
+    }),
+  );
+
+  it.effect("backs off an unchanging round and returns to base on a terminal event", () =>
+    Effect.gen(function* () {
+      const roundStarts: Array<number> = [];
+      const basePeriodMs = 30;
+
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        subprocessPollIntervalMs: basePeriodMs,
+        // No children, so no round ever changes a label and nothing wakes the
+        // poll on its own.
+        processTable: Clock.currentTimeMillis.pipe(
+          Effect.map((now) => {
+            roundStarts.push(now);
+            return [];
+          }),
+        ),
+      }).pipe(Effect.provide(withHostPlatform("linux")));
+
+      yield* manager.open(openInput());
+      // Each round that changes nothing doubles the next gap, so five rounds
+      // put the poll on its x8 cap of 240 ms.
+      yield* waitFor(
+        Effect.sync(() => roundStarts.length >= 5),
+        "3000 millis",
+      );
+      const backedOffGapMs = roundStarts.at(-1)! - roundStarts.at(-2)!;
+      expect(backedOffGapMs).toBeGreaterThan(basePeriodMs * 3);
+
+      const roundsBeforeEvent = roundStarts.length;
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      const wokeAtMs = yield* Clock.currentTimeMillis;
+      process.emitData("keystroke\n");
+
+      yield* waitFor(
+        Effect.sync(() => roundStarts.length > roundsBeforeEvent),
+        "3000 millis",
+      );
+      // The event put the next round back on the base period rather than
+      // leaving it on the backed-off gap it had reached.
+      const gapAfterWakeMs = roundStarts[roundsBeforeEvent]! - wokeAtMs;
+      expect(gapAfterWakeMs).toBeLessThan(backedOffGapMs / 2);
+    }),
+  );
 
   it.effect("uses process snapshots from the resource monitor", () =>
     Effect.gen(function* () {

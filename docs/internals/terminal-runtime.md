@@ -27,6 +27,45 @@ skip any incomplete UTF-8 prefix, and apply the line limit. Close the read handl
 before rewriting the capped file. Reading whole old logs would defeat the memory
 bound during startup.
 
+## Subprocess poll
+
+A terminal's label says whether a child process is running in it. That answer comes
+from a host process table, read on a timer by
+[`Manager.ts`](../../apps/server/src/terminal/Manager.ts). The timer is a
+[back-off poll](../../apps/server/src/pollLoop.ts), the same engine the preview
+port scanner uses.
+
+One **round** takes one process-table snapshot and derives every session's answer
+from it in memory. The cost of a round does not grow with the number of terminals.
+The snapshot comes from the resource-monitor sidecar where it is available, and from
+one spawned `ps -eo pid=,ppid=,comm=` or one `powershell.exe Get-CimInstance
+Win32_Process` where it is not.
+
+| Knob                | Value                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| Base period         | 2000 ms                                                                                            |
+| Back-off            | x2 per round that changed nothing, capped at x8, so 2, 4, 8, 16, 16 s                              |
+| Probe budget        | the lower of the platform ceiling (1500 ms Windows, 1000 ms POSIX) and 0.75 of the period in force |
+| Per-session fan-out | 4                                                                                                  |
+
+The probe budget is always under the period, so a probe that hits its budget is
+cancelled before the next round is due. The round is awaited inside the loop, so a
+round that overruns delays the next one rather than overlapping it.
+
+Every terminal event the manager publishes wakes the poll, which puts the next round
+back on the base period. A wake never cuts the base period short, so a chatty
+terminal cannot drive the poll faster than its configured rate.
+
+One case suppresses the wake. When the sidecar snapshot fails and a round falls back
+to a spawned probe, the round keeps backing off. Without that, the events a fallback
+round produces would pull it straight back to the base period and hot-loop the
+spawn. The cost is latency: while the sidecar is down, a label can be up to one
+backed-off period stale.
+
+A snapshot that fails or times out is not authoritative. It leaves every session's
+last known state alone, because one bad probe is far more likely than every
+subprocess exiting at once.
+
 ## Renderer ownership
 
 Android and web use the same `libghostty-vt` C ABI for terminal behavior. Platform

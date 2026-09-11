@@ -6,8 +6,10 @@ Windows gives every console-subsystem process a console. A child with no console
 gets a brand new one, and Windows draws it: a black window that appears and disappears. T3
 Code's hosts are graphical processes with no console of their own - Electron main, and the
 backend Electron runs as node - so every `powershell.exe`, `git`, or provider CLI they start
-used to flash a window. The terminal subprocess poll starts one every second per running
-terminal, which turned a flash into a strobe.
+used to flash a window. The terminal subprocess poll used to start one every second per
+running terminal, which turned a flash into a strobe. That poll is now one snapshot per
+round on a back-off - see [terminal runtime](terminal-runtime.md) - but the invariant
+below is what stops the window, not the cadence.
 
 ## The invariant
 
