@@ -6,6 +6,7 @@ import { highlightNativeReviewDiffVisibleRows } from "./nativeReviewDiffHighligh
 
 const tokenization = vi.hoisted(() => ({
   calls: [] as string[],
+  timeLimits: [] as Array<number | undefined>,
   afterCall: undefined as (() => void) | undefined,
 }));
 
@@ -19,6 +20,7 @@ vi.mock("@shikijs/core", async (importOriginal) => {
         ...highlighter,
         codeToTokensBase: (...input: Parameters<typeof highlighter.codeToTokensBase>) => {
           tokenization.calls.push(input[0]);
+          tokenization.timeLimits.push(input[1]?.tokenizeTimeLimit);
           const result = highlighter.codeToTokensBase(...input);
           tokenization.afterCall?.();
           return result;
@@ -36,6 +38,7 @@ vi.mock("react-native-shiki-engine", async () => {
 
 afterEach(() => {
   tokenization.calls = [];
+  tokenization.timeLimits = [];
   tokenization.afterCall = undefined;
 });
 
@@ -84,6 +87,24 @@ function highlight(
 }
 
 describe("highlightNativeReviewDiffVisibleRows", () => {
+  it("tokenizes without a wall-clock deadline", async () => {
+    // Shiki's default 500ms per-line deadline stops the tokenizer mid-line on a busy
+    // device and emits the rest as one token, which also poisons the grammar state
+    // carried into the next batch. Rows would then highlight differently run to run.
+    await highlight([
+      makeLine({
+        id: "row-1",
+        content: "export const answer: number = 42;",
+        change: "add",
+        oldLineNumber: null,
+        newLineNumber: 1,
+      }),
+    ]);
+
+    expect(tokenization.timeLimits.length).toBeGreaterThan(0);
+    expect(tokenization.timeLimits.every((limit) => limit === 0)).toBe(true);
+  });
+
   it("does not carry grammar state across hunk boundaries", async () => {
     const exportRow = makeLine({
       id: "export-row",
