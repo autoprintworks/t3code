@@ -20,18 +20,19 @@ export function supportsForkAutomaticUpdates(
 }
 
 /**
- * The sidebar nudge. One short label with the version, shown only while a
+ * The update pill label. One short label with the version, shown only while a
  * downloaded update waits. Null means show nothing. The fork downloads without
  * a click, so this replaces the toast that a hand-started download raises.
  */
-export function getForkUpdateNudgeLabel(state: DesktopUpdateState | null): string | null {
+export function getForkUpdatePillLabel(state: DesktopUpdateState | null): string | null {
   if (!state || !state.automaticUpdates || state.status !== "downloaded") return null;
   const version = getDesktopUpdateDownloadedVersion(state);
   return version ? `v${version} ready` : "Update ready";
 }
 
-/** Settings shows the state in plain words. */
-export function getForkUpdateStatusLine(state: DesktopUpdateState | null): string {
+/** Settings shows the state in plain words. Null means say nothing, so a fresh
+    window does not claim "Up to date." before the first check has run. */
+export function getForkUpdateStatusLine(state: DesktopUpdateState | null): string | null {
   if (!state || !state.enabled) return "Updates are off in this build.";
 
   switch (state.status) {
@@ -54,12 +55,14 @@ export function getForkUpdateStatusLine(state: DesktopUpdateState | null): strin
       const version = state.availableVersion ? `v${state.availableVersion}` : "An update";
       return state.automaticUpdates ? `${version} found.` : `${version} found. Download it.`;
     }
+    case "up-to-date":
+      return "Up to date.";
     case "error":
       return state.message ?? "The last update attempt failed.";
     case "disabled":
       return "Updates are off in this build.";
     default:
-      return "Up to date.";
+      return null;
   }
 }
 

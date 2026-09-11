@@ -2,7 +2,7 @@ import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  getForkUpdateNudgeLabel,
+  getForkUpdatePillLabel,
   getForkUpdateStatusLine,
   supportsForkAutomaticUpdates,
 } from "./forkAutomaticUpdates.logic";
@@ -30,10 +30,10 @@ const baseState: DesktopUpdateState = {
   canRetry: false,
 };
 
-describe("fork update sidebar nudge", () => {
+describe("fork update pill label", () => {
   it("names the version while a downloaded update waits", () => {
     expect(
-      getForkUpdateNudgeLabel({
+      getForkUpdatePillLabel({
         ...baseState,
         status: "downloaded",
         downloadedVersion: "0.0.41-ap.1",
@@ -42,19 +42,19 @@ describe("fork update sidebar nudge", () => {
   });
 
   it("stays hidden in every other state", () => {
-    expect(getForkUpdateNudgeLabel(null)).toBeNull();
-    expect(getForkUpdateNudgeLabel(baseState)).toBeNull();
+    expect(getForkUpdatePillLabel(null)).toBeNull();
+    expect(getForkUpdatePillLabel(baseState)).toBeNull();
     expect(
-      getForkUpdateNudgeLabel({ ...baseState, status: "available", availableVersion: "0.0.41" }),
+      getForkUpdatePillLabel({ ...baseState, status: "available", availableVersion: "0.0.41" }),
     ).toBeNull();
     expect(
-      getForkUpdateNudgeLabel({ ...baseState, status: "downloading", downloadPercent: 40 }),
+      getForkUpdatePillLabel({ ...baseState, status: "downloading", downloadPercent: 40 }),
     ).toBeNull();
   });
 
   it("stays hidden when the setting is off, because the download was a click", () => {
     expect(
-      getForkUpdateNudgeLabel({
+      getForkUpdatePillLabel({
         ...baseState,
         automaticUpdates: false,
         status: "downloaded",
@@ -85,6 +85,11 @@ describe("fork update status line", () => {
       }),
     ).toBe("v0.0.41 is ready. It installs when you quit. Restart to get it now.");
     expect(getForkUpdateStatusLine({ ...baseState, status: "up-to-date" })).toBe("Up to date.");
+  });
+
+  it("says nothing before the first check", () => {
+    // "Up to date." on a fresh window would be a claim nothing has checked.
+    expect(getForkUpdateStatusLine({ ...baseState, status: "idle" })).toBeNull();
   });
 
   it("describes upstream's flow when the setting is off", () => {
