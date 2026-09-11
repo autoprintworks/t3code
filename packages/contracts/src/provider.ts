@@ -21,7 +21,11 @@ import {
   ProviderUserInputAnswers,
   RuntimeMode,
 } from "./orchestration.ts";
-import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import {
+  ProviderInstanceEnvironment,
+  ProviderInstanceId,
+  ProviderDriverKind,
+} from "./providerInstance.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
@@ -61,6 +65,12 @@ export const ProviderSessionStartInput = Schema.Struct({
   resumeCursor: Schema.optional(Schema.Unknown),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
+  /**
+   * Environment carried by the turn that asked for this session, applied to
+   * the process the session spawns and to nothing else. It is not part of the
+   * session binding, so it never survives into persisted state or an event.
+   */
+  environment: Schema.optional(ProviderInstanceEnvironment),
   runtimeMode: RuntimeMode,
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;

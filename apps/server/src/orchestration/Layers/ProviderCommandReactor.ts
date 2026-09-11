@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type ProviderInstanceEnvironment,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -43,6 +44,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { takeTurnEnvironment, withTurnEnvironment } from "../TurnEnvironment.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -574,12 +576,21 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * `options.environment` is one turn's environment, and it reaches a process
+   * at spawn and nowhere else. When the thread's session is already live and
+   * needs no restart, this returns early, no `startSession` runs, and that
+   * turn's environment is dropped. The live process keeps the environment it
+   * was spawned with. The follow-up is
+   * https://github.com/autoprintworks/t3code/issues/132.
+   */
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly environment?: ProviderInstanceEnvironment;
     },
   ) {
     const thread = yield* resolveThreadShell(threadId);
@@ -731,6 +742,10 @@ const make = Effect.gen(function* () {
           ...(thread.title ? { title: thread.title } : {}),
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+          // Belongs to the turn that asked for this session, not to the
+          // thread. It is applied to the process this call spawns and is not
+          // kept, so the next turn starts from the instance environment.
+          ...withTurnEnvironment(options?.environment),
           runtimeMode: desiredRuntimeMode,
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
@@ -843,6 +858,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly environment?: ProviderInstanceEnvironment;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThreadShell(input.threadId);
@@ -853,6 +869,7 @@ const make = Effect.gen(function* () {
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      ...withTurnEnvironment(input.environment),
       pendingTurnStart: true,
     });
     if (input.modelSelection !== undefined) {
@@ -1183,6 +1200,9 @@ const make = Effect.gen(function* () {
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
+    // Taken before any early return, so a turn start that is deduplicated or
+    // refused cannot leave its environment behind for a later spawn.
+    const turnEnvironment = takeTurnEnvironment(event.commandId);
     const key = turnStartKeyForEvent(event);
     if (yield* hasHandledTurnStartRecently(key)) {
       return;
@@ -1430,6 +1450,7 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
+      ...withTurnEnvironment(turnEnvironment),
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),

@@ -252,6 +252,133 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
   }),
 );
 
+/**
+ * The per-turn `environment` carries the variables a hosted worker needs to
+ * reach its reporting tool. It is optional on purpose: a turn start from any
+ * older sender must still decode to exactly what it decoded to before.
+ */
+it.effect("leaves thread.turn.start environment undefined when the field is absent", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-no-env",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-1",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.environment, undefined);
+    assert.strictEqual("environment" in parsed, false);
+  }),
+);
+
+it.effect("decodes thread.turn.start environment entries with the instance entry shape", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-env",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-1",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      environment: [
+        { name: "FM_UNIT", value: "unit-7" },
+        { name: "PATH", value: "/opt/fm/bin" },
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(
+      parsed.environment?.map((variable) => [variable.name, variable.value]),
+      [
+        ["FM_UNIT", "unit-7"],
+        ["PATH", "/opt/fm/bin"],
+      ],
+    );
+    // The entry shape is `ProviderInstanceEnvironmentVariable`, so the same
+    // decoding defaults apply here as on a provider instance.
+    assert.strictEqual(parsed.environment?.[0]?.sensitive, false);
+  }),
+);
+
+it.effect("rejects a thread.turn.start environment entry with an unusable name", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeThreadTurnStartCommand({
+        type: "thread.turn.start",
+        commandId: "cmd-turn-bad-env",
+        threadId: "thread-1",
+        message: {
+          messageId: "msg-1",
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        environment: [{ name: "not a variable name", value: "x" }],
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("accepts thread.turn.start environment from a client command", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-client-env",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-1",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      environment: [{ name: "FM_DECLARE", value: "fm-declare" }],
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.turn.start");
+    if (command.type !== "thread.turn.start") return;
+    assert.strictEqual(command.environment?.[0]?.name, "FM_DECLARE");
+  }),
+);
+
+/**
+ * A new sender and an old editor, and the reverse, have to keep working while
+ * the two halves roll out separately. Struct decoding drops unknown keys, so
+ * an unknown field on a turn start is not an error.
+ */
+it.effect("ignores an unknown field on thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-unknown",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-1",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      environment: [{ name: "FM_UNIT", value: "unit-7" }],
+      // What a newer sender might add next. An editor that predates it must
+      // still decode the rest of the command.
+      unitLedgerPath: "/opt/fm/ledger",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual("unitLedgerPath" in parsed, false);
+    assert.strictEqual(parsed.environment?.[0]?.name, "FM_UNIT");
+  }),
+);
+
 it.effect("accepts inline images, uploaded images, and uploaded files from clients", () =>
   Effect.gen(function* () {
     const command = yield* decodeClientOrchestrationCommand({

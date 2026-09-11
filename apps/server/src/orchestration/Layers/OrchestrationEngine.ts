@@ -45,6 +45,7 @@ import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
+import { rememberTurnEnvironment } from "../TurnEnvironment.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -301,6 +302,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         for (const cleanup of committedCommand.attachmentCleanups) {
           yield* cleanup;
         }
+        // Park the turn's environment for the provider reactor before the
+        // events it reacts to go out. The events carry no environment, so this
+        // is the only way it reaches the spawn. Parked after the commit, so a
+        // refused command leaves nothing behind.
+        yield* rememberTurnEnvironment(envelope.command);
         for (const [index, event] of committedCommand.committedEvents.entries()) {
           yield* PubSub.publish(eventPubSub, event);
           if (index === 0) {

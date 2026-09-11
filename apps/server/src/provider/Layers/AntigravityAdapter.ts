@@ -727,6 +727,20 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     }
   });
 
+  /**
+   * Turn environment: not applied here.
+   *
+   * `input.environment` carries the environment of the turn that asked for
+   * this session. Only the Claude driver applies it, because that is where
+   * First Mate hosts the worker turns the field exists for. This adapter
+   * starts its process through `AcpSessionRuntime`, which takes the provider
+   * instance's environment and nothing per turn.
+   *
+   * To adopt the rule here, pass the instance environment through
+   * `applyTurnEnvironment` from `provider/Drivers/ClaudeHome.ts` before
+   * handing it to `AcpSessionRuntime`. That function owns the merge and the PATH
+   * prefix rule, so neither is written twice.
+   */
   const startSession: Adapter["startSession"] = (input) =>
     withThreadLock(
       input.threadId,

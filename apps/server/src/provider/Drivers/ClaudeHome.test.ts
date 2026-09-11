@@ -1,17 +1,24 @@
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - effect/Path gives `sep`, the path separator. The PATH list separator is `delimiter`, and only node:path has it.
+import * as NodePath from "node:path";
 
+import { ProviderInstanceEnvironment } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import {
+  applyTurnEnvironment,
   claudeSignedOutMessage,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
+
+const decodeEnvironment = Schema.decodeUnknownSync(ProviderInstanceEnvironment);
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   describe("Claude home resolution", () => {
@@ -70,5 +77,77 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         );
       }),
     );
+  });
+
+  describe("turn environment overlay", () => {
+    /** Turn entries, decoded through the contract the daemon sends them on. */
+    const entries = (...pairs: ReadonlyArray<readonly [string, string]>) =>
+      decodeEnvironment(pairs.map(([name, value]) => ({ name, value })));
+
+    it("returns the instance environment unchanged when the turn carried none", () => {
+      const baseEnv = { FM_UNIT: "instance" };
+      expect(applyTurnEnvironment(baseEnv, undefined)).toBe(baseEnv);
+      expect(applyTurnEnvironment(baseEnv, entries())).toBe(baseEnv);
+    });
+
+    it("merges turn entries over the instance environment", () => {
+      const merged = applyTurnEnvironment(
+        { FM_UNIT: "instance", KEPT: "instance" },
+        entries(["FM_UNIT", "unit-7"], ["FM_DECLARE_HOME", "/opt/fm/home"]),
+      );
+      expect(merged.FM_UNIT).toBe("unit-7");
+      expect(merged.FM_DECLARE_HOME).toBe("/opt/fm/home");
+      expect(merged.KEPT).toBe("instance");
+    });
+
+    it("puts a PATH entry in front of the inherited PATH", () => {
+      const merged = applyTurnEnvironment(
+        { PATH: `/usr/bin${NodePath.delimiter}/bin` },
+        entries(["PATH", "/opt/fm/bin"]),
+      );
+      expect(merged.PATH).toBe(`/opt/fm/bin${NodePath.delimiter}/usr/bin${NodePath.delimiter}/bin`);
+    });
+
+    it("writes the PATH prefix back to the key the base environment uses", () => {
+      // Windows spells the variable `Path`. Two keys that differ only in case
+      // would reach the child as two variables, and the CLI would read one.
+      const merged = applyTurnEnvironment({ Path: "/usr/bin" }, entries(["PATH", "/opt/fm/bin"]));
+      expect(merged.Path).toBe(`/opt/fm/bin${NodePath.delimiter}/usr/bin`);
+      expect(Object.keys(merged).filter((key) => key.toUpperCase() === "PATH")).toEqual(["Path"]);
+    });
+
+    it("uses the PATH entry alone when nothing was inherited", () => {
+      expect(applyTurnEnvironment({}, entries(["PATH", "/opt/fm/bin"])).PATH).toBe("/opt/fm/bin");
+      expect(applyTurnEnvironment({ PATH: "" }, entries(["PATH", "/opt/fm/bin"])).PATH).toBe(
+        "/opt/fm/bin",
+      );
+    });
+
+    it("writes every entry back to the key the base environment uses", () => {
+      // Windows treats variable names without case, so an instance that spells
+      // one `Fm_Unit` and a turn that spells it `FM_UNIT` name one variable.
+      // Two keys would reach the child, and the tool would read the stale one.
+      const merged = applyTurnEnvironment(
+        { Fm_Unit: "instance", KEPT: "instance" },
+        entries(["FM_UNIT", "unit-7"]),
+      );
+      expect(merged.Fm_Unit).toBe("unit-7");
+      expect(Object.keys(merged).filter((key) => key.toUpperCase() === "FM_UNIT")).toEqual([
+        "Fm_Unit",
+      ]);
+      expect(merged.KEPT).toBe("instance");
+    });
+
+    it("lands two turn entries that differ only in case on one key", () => {
+      const merged = applyTurnEnvironment({}, entries(["FM_UNIT", "first"], ["Fm_Unit", "second"]));
+      expect(Object.keys(merged)).toEqual(["FM_UNIT"]);
+      expect(merged.FM_UNIT).toBe("second");
+    });
+
+    it("does not change the instance environment it was given", () => {
+      const baseEnv = { PATH: "/usr/bin", FM_UNIT: "instance" };
+      applyTurnEnvironment(baseEnv, entries(["PATH", "/opt/fm/bin"], ["FM_UNIT", "unit-7"]));
+      expect(baseEnv).toEqual({ PATH: "/usr/bin", FM_UNIT: "instance" });
+    });
   });
 });

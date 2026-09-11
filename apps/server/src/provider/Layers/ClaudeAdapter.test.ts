@@ -15,6 +15,7 @@ import {
   ApprovalRequestId,
   ClaudeSettings,
   ProviderDriverKind,
+  ProviderInstanceEnvironment,
   ProviderItemId,
   ProviderRuntimeEvent,
   type RuntimeMode,
@@ -159,6 +160,8 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     };
   }
 }
+
+const decodeProviderEnvironment = Schema.decodeUnknownSync(ProviderInstanceEnvironment);
 
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
@@ -522,6 +525,86 @@ describe("ClaudeAdapterLive", () => {
         createInput?.options.env?.CLAUDE_CONFIG_DIR,
         NodePath.join(NodeOS.homedir(), ".claude-work"),
       );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  /**
+   * A turn hosted for a fleet worker carries its own environment. It has to
+   * reach the process this turn spawns, and it has to stop there: the next
+   * turn on the same thread starts from the instance environment again.
+   */
+  it.effect("applies the turn's environment to the process it spawns", () => {
+    const harness = makeHarness({
+      environment: {
+        FM_UNIT: "instance-unit",
+        KEPT_BY_INSTANCE: "instance",
+        PATH: "/usr/bin",
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+        ),
+        environment: decodeProviderEnvironment([
+          { name: "FM_UNIT", value: "turn-unit" },
+          { name: "FM_DECLARE", value: "fm-declare" },
+          { name: "PATH", value: "/opt/fm/bin" },
+        ]),
+        runtimeMode: "full-access",
+      });
+
+      const env = harness.getLastCreateQueryInput()?.options.env;
+      assert.equal(env?.FM_UNIT, "turn-unit");
+      assert.equal(env?.FM_DECLARE, "fm-declare");
+      assert.equal(env?.KEPT_BY_INSTANCE, "instance");
+      // PATH is a prefix, not a replacement.
+      assert.equal(env?.PATH, `/opt/fm/bin${NodePath.delimiter}/usr/bin`);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("gives a turn with no environment the plain instance environment", () => {
+    const harness = makeHarness({
+      environment: { FM_UNIT: "instance-unit", PATH: "/usr/bin" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const start = (environment?: ProviderInstanceEnvironment) =>
+        adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          ),
+          ...(environment !== undefined ? { environment } : {}),
+          runtimeMode: "full-access",
+        });
+
+      yield* start(
+        decodeProviderEnvironment([
+          { name: "FM_UNIT", value: "turn-unit" },
+          { name: "FM_DECLARE", value: "fm-declare" },
+          { name: "PATH", value: "/opt/fm/bin" },
+        ]),
+      );
+      // Second turn on the same thread, carrying nothing of its own.
+      yield* start();
+
+      const env = harness.getLastCreateQueryInput()?.options.env;
+      assert.equal(env?.FM_UNIT, "instance-unit");
+      assert.equal(env?.FM_DECLARE, undefined);
+      assert.equal(env?.PATH, "/usr/bin");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
