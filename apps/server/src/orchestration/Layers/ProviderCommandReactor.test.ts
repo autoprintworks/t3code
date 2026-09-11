@@ -8,6 +8,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderDriverKind,
+  ProviderInstanceEnvironment,
   ProviderInstanceId,
   ProviderSetupError,
 } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { it as effectIt } from "@effect/vitest";
@@ -132,6 +134,11 @@ async function waitFor(
 
   return poll();
 }
+
+const decodeProviderEnvironment = Schema.decodeUnknownSync(ProviderInstanceEnvironment);
+
+/** The directory the daemon puts on a hosted turn's PATH. No client sees it. */
+const TURN_ENVIRONMENT_TOOL_DIR = "/opt/fm/bin";
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
@@ -2823,6 +2830,77 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
   });
+
+  /**
+   * A turn hosted for a fleet worker carries its own environment. The events
+   * this turn writes cannot carry it, so the reactor takes it out of band and
+   * hands it to the session start that spawns the process. It belongs to that
+   * turn: the next turn on the thread must not inherit it.
+   */
+  effectIt.effect("hands one turn's environment to the session start only", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const turnEnvironment = decodeProviderEnvironment([
+        { name: "FM_UNIT", value: "unit-7" },
+        { name: "PATH", value: TURN_ENVIRONMENT_TOOL_DIR },
+      ]);
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-environment-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-environment-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        environment: turnEnvironment,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+        environment: turnEnvironment,
+      });
+
+      // Switching instance restarts the session, so the second turn reaches
+      // startSession too. It carries no environment of its own.
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-environment-2"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-environment-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex_work"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+      expect(harness.startSession).toHaveBeenCalledTimes(2);
+      expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("environment");
+
+      // Nothing a client reads carries the value. The read model is what the
+      // UI renders.
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(JSON.stringify(readModel)).not.toContain(TURN_ENVIRONMENT_TOOL_DIR);
+    }),
+  );
 
   it("restarts the provider session when the thread workspace changes", async () => {
     const harness = await createHarness({

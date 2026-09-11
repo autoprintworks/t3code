@@ -1,6 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
-import type { ClaudeSettings } from "@t3tools/contracts";
+import type { ClaudeSettings, ProviderInstanceEnvironment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -36,6 +38,46 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
 });
+
+const PATH_VARIABLE_NAME = "PATH";
+
+/**
+ * Overlay one turn's environment on the instance environment, for the process
+ * that turn spawns.
+ *
+ * An entry replaces the instance value of the same name, with one exception:
+ * an entry named `PATH` is a prefix, not a replacement. Its value is placed in
+ * front of the spawn's own PATH and joined with the platform separator, so a
+ * turn can add a tool directory without taking away the directories the CLI
+ * needs to run. The result belongs to that spawn alone: nothing here is
+ * stored on the session, so the next turn starts from the instance
+ * environment again.
+ */
+export const applyTurnEnvironment = (
+  baseEnv: NodeJS.ProcessEnv,
+  environment: ProviderInstanceEnvironment | undefined,
+): NodeJS.ProcessEnv => {
+  if (!environment || environment.length === 0) {
+    return baseEnv;
+  }
+  const next: NodeJS.ProcessEnv = { ...baseEnv };
+  // Windows spells the variable `Path`. Write the prefix back to the key the
+  // base environment already uses, or the child receives two of them.
+  const pathKey =
+    Object.keys(next).find((key) => key.toUpperCase() === PATH_VARIABLE_NAME) ?? PATH_VARIABLE_NAME;
+  for (const variable of environment) {
+    if (variable.name.toUpperCase() === PATH_VARIABLE_NAME) {
+      const inherited = next[pathKey];
+      next[pathKey] =
+        inherited !== undefined && inherited.length > 0
+          ? `${variable.value}${NodePath.delimiter}${inherited}`
+          : variable.value;
+      continue;
+    }
+    next[variable.name] = variable.value;
+  }
+  return next;
+};
 
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(
   function* (config: Pick<ClaudeSettings, "homePath">): Effect.fn.Return<string, never, Path.Path> {

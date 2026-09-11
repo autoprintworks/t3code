@@ -22,7 +22,7 @@ import {
   TrimmedString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderInstanceEnvironment, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -1046,6 +1046,11 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // Environment for the process this turn spawns, on top of the provider
+  // instance's own environment. It reaches the driver out of band and is
+  // never written to an event, because its values name paths on the server's
+  // filesystem that no client needs and none may display.
+  environment: Schema.optional(ProviderInstanceEnvironment),
   // Who asked for this turn. Stamped by a dispatch entry point from the
   // authenticated session and absent from the client command, so a payload
   // cannot claim it however it is spelled. Together with the target thread's
@@ -1071,6 +1076,8 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // Same field, and the same rule, as `ThreadTurnStartCommand.environment`.
+  environment: Schema.optional(ProviderInstanceEnvironment),
   createdAt: IsoDateTime,
 });
 
