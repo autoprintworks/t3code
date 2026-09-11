@@ -2898,6 +2898,7 @@ describe("ProviderCommandReactor", () => {
       // Nothing a client reads carries the value. The read model is what the
       // UI renders.
       const readModel = yield* Effect.promise(() => harness.readModel());
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Scans the whole read model for a value no client may see.
       expect(JSON.stringify(readModel)).not.toContain(TURN_ENVIRONMENT_TOOL_DIR);
     }),
   );
