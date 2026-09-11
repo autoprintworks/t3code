@@ -308,6 +308,23 @@ const withHostPlatform = (platform: NodeJS.Platform) =>
  */
 const POLL_BASE_PERIOD_MS = 1_000;
 
+/**
+ * `SUBPROCESS_DEGRADED_BACKOFF_MAX_MULTIPLIER` in `Manager.ts`: the ceiling the
+ * back-off reaches while the round is spawning its own fallback probe.
+ */
+const POLL_DEGRADED_MAX_MULTIPLIER = 30;
+
+/**
+ * What every poll test below configures. `processKillGraceMs: 0` is not
+ * incidental: nothing advances a TestClock once the test effect has ended, so a
+ * non-zero kill grace would leave the shutdown finaliser waiting out a sleep
+ * that never completes.
+ */
+const pollTestOptions = {
+  subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
+  processKillGraceMs: 0,
+} as const;
+
 /** Advances the test clock by `stepMs` at a time, `steps` times. */
 const stepClock = (steps: number, stepMs: number) =>
   Effect.forEach(
@@ -1243,8 +1260,7 @@ it.layer(
       const snapshotStarts: Array<number> = [];
 
       const { manager, getEvents } = yield* createManager(5, {
-        subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
-        processKillGraceMs: 0,
+        ...pollTestOptions,
         processTable: Clock.currentTimeMillis.pipe(
           Effect.map((now) => {
             snapshotStarts.push(now);
@@ -1283,8 +1299,7 @@ it.layer(
       const roundDurationMs = POLL_BASE_PERIOD_MS * 4;
 
       const { manager } = yield* createManager(5, {
-        subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
-        processKillGraceMs: 0,
+        ...pollTestOptions,
         processTable: Effect.suspend(() => {
           inFlight += 1;
           maxInFlight = Math.max(maxInFlight, inFlight);
@@ -1321,8 +1336,7 @@ it.layer(
       const roundStarts: Array<number> = [];
 
       const { manager, ptyAdapter } = yield* createManager(5, {
-        subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
-        processKillGraceMs: 0,
+        ...pollTestOptions,
         // No children, so no round ever changes a label and nothing wakes the
         // poll on its own.
         processTable: Clock.currentTimeMillis.pipe(
@@ -1416,8 +1430,7 @@ it.layer(
       };
 
       const { manager, getEvents } = yield* createManager(5, {
-        subprocessPollIntervalMs: POLL_BASE_PERIOD_MS,
-        processKillGraceMs: 0,
+        ...pollTestOptions,
         processTable: Effect.fail("sidecar unavailable").pipe(
           Effect.mapError((cause) => cause as never),
         ),
@@ -1427,7 +1440,7 @@ it.layer(
       );
 
       yield* manager.open(openInput());
-      yield* stepClock(400, POLL_BASE_PERIOD_MS / 10);
+      yield* stepClock(POLL_DEGRADED_MAX_MULTIPLIER * 8, POLL_BASE_PERIOD_MS / 2);
 
       // The fallback data is still applied while the sidecar is down.
       const events = yield* getEvents;
@@ -1440,17 +1453,81 @@ it.layer(
         ),
       ).toBe(true);
 
-      // Those activity events would normally wake the poll. While the snapshot
-      // is degraded the wake is suppressed, so the fallback keeps backing off
-      // to its x8 cap instead of hot-looping the spawn.
+      // An activity event a degraded round derived from its own fallback data
+      // does not wake the poll, so the fallback keeps backing off instead of
+      // hot-looping the spawn. Its ceiling is the degraded one, which holds
+      // the spawn rate at upstream's one a minute on the shipped 2 s base.
       const gaps = gapsOf(fallbackCalls);
-      assert.deepStrictEqual(gaps.slice(0, 4), [
+      assert.deepStrictEqual(gaps.slice(0, 5), [
         POLL_BASE_PERIOD_MS,
         POLL_BASE_PERIOD_MS * 2,
         POLL_BASE_PERIOD_MS * 4,
         POLL_BASE_PERIOD_MS * 8,
+        POLL_BASE_PERIOD_MS * 16,
       ]);
-      assert.deepStrictEqual([...new Set(gaps.slice(3))], [POLL_BASE_PERIOD_MS * 8]);
+      assert.deepStrictEqual(
+        [...new Set(gaps.slice(5))],
+        [POLL_BASE_PERIOD_MS * POLL_DEGRADED_MAX_MULTIPLIER],
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("a keystroke still resets the poll while the sidecar snapshot is degraded", () =>
+    Effect.gen(function* () {
+      const fallbackCalls: Array<number> = [];
+      const processRunner: ProcessRunner.ProcessRunner["Service"] = {
+        run: () =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => {
+              fallbackCalls.push(now);
+              return {
+                stdout: "  100  9000 vim",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrInvalidUtf8: false,
+                stdoutInvalidUtf8: false,
+                stderrTruncated: false,
+              };
+            }),
+          ),
+      };
+
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        ...pollTestOptions,
+        // Every dev checkout runs without the sidecar, so this is the ordinary
+        // case, not an edge case: the very first round is already degraded.
+        processTable: Effect.fail("sidecar unavailable").pipe(
+          Effect.mapError((cause) => cause as never),
+        ),
+      }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provide(withHostPlatform("linux")),
+      );
+
+      yield* manager.open(openInput());
+      // Three backed-off rounds: gaps of one, two and four base periods.
+      yield* stepClock(16, POLL_BASE_PERIOD_MS / 2);
+      assert.deepStrictEqual(gapsOf(fallbackCalls), [
+        POLL_BASE_PERIOD_MS,
+        POLL_BASE_PERIOD_MS * 2,
+        POLL_BASE_PERIOD_MS * 4,
+      ]);
+
+      const roundsBeforeEvent = fallbackCalls.length;
+      const process = ptyAdapter.processes[0];
+      assert.ok(process);
+      process.emitData("keystroke\n");
+
+      yield* stepClock(6, POLL_BASE_PERIOD_MS / 2);
+
+      // The keystroke is not the round's own event, so the suppression does not
+      // reach it. The next gap is the base period, and the one after it too.
+      assert.deepStrictEqual(
+        gapsOf(fallbackCalls).slice(roundsBeforeEvent - 1, roundsBeforeEvent + 1),
+        [POLL_BASE_PERIOD_MS, POLL_BASE_PERIOD_MS],
+      );
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

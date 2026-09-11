@@ -41,26 +41,34 @@ The snapshot comes from the resource-monitor sidecar where it is available, and 
 one spawned `ps -eo pid=,ppid=,comm=` or one `powershell.exe Get-CimInstance
 Win32_Process` where it is not.
 
-| Knob                | Value                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------- |
-| Base period         | 2000 ms                                                                                            |
-| Back-off            | x2 per round that changed nothing, capped at x8, so 2, 4, 8, 16, 16 s                              |
-| Probe budget        | the lower of the platform ceiling (1500 ms Windows, 1000 ms POSIX) and 0.75 of the period in force |
-| Per-session fan-out | 4                                                                                                  |
+| Knob                | Value                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| Base period         | 2000 ms                                                                                        |
+| Back-off            | x2 per round that changed nothing, capped at x8 on a sidecar snapshot and x30 on a spawned one |
+| Probe budget        | the lower of the platform ceiling (1500 ms Windows, 1000 ms POSIX) and 0.75 of the base period |
+| Per-session fan-out | 4                                                                                              |
 
-The probe budget is always under the period, so a probe that hits its budget is
+So an idle host settles at a 16 s gap while the sidecar answers, and at a 60 s gap
+while it does not. The second ceiling is upstream's (#9476): a degraded round spawns
+a process, and one spawn a minute is the rate upstream chose for that. The first
+applies when a round costs a sidecar read, which is cheap enough to do more often.
+
+The probe budget is computed once, from the base period, because the base is the
+shortest gap the loop can run at. A probe that hits its budget is therefore always
 cancelled before the next round is due. The round is awaited inside the loop, so a
-round that overruns delays the next one rather than overlapping it.
+round that overruns skips to the next base-period boundary rather than overlapping
+the next round or spinning after it.
 
 Every terminal event the manager publishes wakes the poll, which puts the next round
 back on the base period. A wake never cuts the base period short, so a chatty
 terminal cannot drive the poll faster than its configured rate.
 
-One case suppresses the wake. When the sidecar snapshot fails and a round falls back
-to a spawned probe, the round keeps backing off. Without that, the events a fallback
-round produces would pull it straight back to the base period and hot-loop the
-spawn. The cost is latency: while the sidecar is down, a label can be up to one
-backed-off period stale.
+One kind of event does not wake it: the activity events a round publishes from its
+own spawned fallback data, when the sidecar snapshot failed. Waking on those would
+let the round re-trigger itself and hot-loop the spawn. The suppression is per event,
+not a mode on the manager, so a keystroke during a degraded round still resets the
+cadence. The cost is latency on the idle path only: with no sidecar and no terminal
+activity, a label can be up to 60 s stale.
 
 A snapshot that fails or times out is not authoritative. It leaves every session's
 last known state alone, because one bad probe is far more likely than every

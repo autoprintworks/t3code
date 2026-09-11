@@ -98,7 +98,15 @@ const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 2_000;
 const SUBPROCESS_POLL_BACKOFF_FACTOR = 2;
+/** Ceiling while the sidecar answers: a read is cheap, so 8 x 2 s = 16 s. */
 const SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER = 8;
+/**
+ * Ceiling while the snapshot is degraded and every round spawns a fallback
+ * probe. Upstream caps that case at 60 s (#9476) and this holds the same
+ * ceiling: 30 x 2 s. An idle host with no sidecar therefore settles at one
+ * spawn a minute, not the 3.75 that the 16 s ceiling would give.
+ */
+const SUBPROCESS_DEGRADED_BACKOFF_MAX_MULTIPLIER = 30;
 /**
  * Fan-out limit for the per-session half of a round. After the snapshot the
  * work is pure in-memory tree walking, so this bounds the fan-out without
@@ -110,9 +118,10 @@ const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_500;
 /** Ceiling on the POSIX `ps -e` probe, which is far cheaper than a CIM query. */
 const POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_000;
 /**
- * The probe budget is also held under the period in force, so a caller that
- * configures a period shorter than the platform ceiling cannot be outlasted by
- * its own probe.
+ * The probe budget is also held under the base period, so a caller that
+ * configures a base period shorter than the platform ceiling cannot be
+ * outlasted by its own probe. The back-off only ever lengthens the gap, so
+ * holding the budget under the base holds it under every later period too.
  */
 const PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION = 0.75;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
@@ -659,6 +668,17 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
   );
 }
 
+/**
+ * Whether publishing an event also tells the subprocess poll that the host is
+ * busy. `"wake"` for everything a user or a pty drives, which is every event
+ * but one. `"keepCadence"` only for the activity events a degraded poll round
+ * derives from its own spawned fallback data: waking on those would let the
+ * round re-trigger itself and hot-loop the fallback spawn. The distinction is
+ * per event rather than a mode on the manager, so a keystroke during a degraded
+ * round still resets the cadence.
+ */
+type TerminalPollWake = "wake" | "keepCadence";
+
 interface TerminalProcessTableSnapshot {
   readonly childrenByParent: ReadonlyMap<number, ReadonlyArray<number>>;
   readonly commandById: ReadonlyMap<number, string>;
@@ -666,9 +686,11 @@ interface TerminalProcessTableSnapshot {
 
 /**
  * Budget for one process-table probe: the lower of the platform ceiling and
- * `PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION` of the poll period in force. A
- * probe is therefore always cancelled before the next round is due, which is
- * the inversion issue #83 reported (a 1500 ms timeout under a 1000 ms period).
+ * `PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION` of the base poll period. It is
+ * computed once, from the base period, because the base is the shortest gap the
+ * loop can run at. A probe is therefore always cancelled before the next round
+ * is due, which is the inversion issue #83 reported (a 1500 ms timeout under a
+ * 1000 ms period).
  */
 export function processSnapshotTimeoutMs(
   pollIntervalMs: number,
@@ -1542,22 +1564,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             snapshotSucceeded,
           }),
         );
+  // True while the last round's process table came from the spawned fallback
+  // rather than the sidecar. It only widens the back-off ceiling; see
+  // `TerminalPollWake` for the separate question of which events reset it.
+  let subprocessSnapshotDegraded = false;
   // Woken by anything that means "this host is not idle": every terminal event
-  // this manager publishes. See `pollLoop.ts` for what a wake does to the
-  // cadence, and `wakeSubprocessPoll` below for the one case that suppresses it.
+  // this manager publishes except the poll's own degraded findings. See
+  // `pollLoop.ts` for what a wake does to the cadence.
   const subprocessPoll = yield* PollLoop.makeBackoffPoll({
     basePeriod: Duration.millis(subprocessPollIntervalMs),
     factor: SUBPROCESS_POLL_BACKOFF_FACTOR,
-    maxMultiplier: SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER,
+    maxMultiplier: () =>
+      subprocessSnapshotDegraded
+        ? SUBPROCESS_DEGRADED_BACKOFF_MAX_MULTIPLIER
+        : SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER,
   });
-  // True while the round's process table came from the spawned fallback rather
-  // than the sidecar. The fallback data is still applied, but the round must
-  // keep backing off instead of being pulled back to the base period by the
-  // very events it produces, which would hot-loop the fallback spawn.
-  let subprocessSnapshotDegraded = false;
-  const wakeSubprocessPoll = () => {
-    if (!subprocessSnapshotDegraded) subprocessPoll.wakeUnsafe();
-  };
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
@@ -1575,11 +1596,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
 
-  const publishEvent = (event: TerminalEvent) =>
+  const publishEvent = (event: TerminalEvent, wake: TerminalPollWake = "wake") =>
     Effect.gen(function* () {
       // Any terminal event means this host is not idle, so the subprocess poll
       // drops back to its base period. Allocation-free on the hot output path.
-      wakeSubprocessPoll();
+      if (wake === "wake") subprocessPoll.wakeUnsafe();
       for (const listener of terminalEventListeners) {
         yield* listener(event).pipe(Effect.ignoreCause({ log: true }));
       }
@@ -2435,8 +2456,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const { inspector: subprocessInspector, snapshotSucceeded } = inspectorOption.value;
-    // Set before the per-session work, so an event published later in this same
-    // round sees the source this round actually used.
+    // Set before the per-session work, so the ceiling this round backs off to
+    // reflects the source it actually used.
     subprocessSnapshotDegraded = !snapshotSucceeded;
 
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
@@ -2498,7 +2519,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
 
       if (Option.isSome(event)) {
-        yield* publishEvent(event.value);
+        yield* publishEvent(event.value, snapshotSucceeded ? "wake" : "keepCadence");
       }
     });
 
@@ -2513,7 +2534,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // round is caught here rather than in the engine, so a defect stays
   // attributable to this subsystem and does not end the poll.
   const subprocessPollRound = pollSubprocessActivity().pipe(
-    Effect.catchCause((cause: Cause.Cause<never>) =>
+    Effect.catchCause((cause) =>
       Effect.logWarning("terminal subprocess poll round failed", Cause.pretty(cause)),
     ),
   );
