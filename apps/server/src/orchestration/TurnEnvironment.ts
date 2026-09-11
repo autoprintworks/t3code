@@ -65,3 +65,47 @@ export function withTurnEnvironment(environment: ProviderInstanceEnvironment | u
 } {
   return environment === undefined ? {} : { environment };
 }
+
+/**
+ * Whether two turn environments would give a process the same variables.
+ *
+ * The comparison is over the set of names and their values. Order does not
+ * count, and neither does any other field on an entry, because only the name
+ * and the value reach the process.
+ *
+ * Names are compared without case, the way `applyTurnEnvironment` in
+ * `apps/server/src/provider/Drivers/ClaudeHome.ts` resolves them. Windows
+ * treats variable names without case, so two entries whose names differ only
+ * in case are one variable there and the last entry wins. This folds the same
+ * way, so it cannot call two environments different that a spawn would make
+ * the same.
+ *
+ * A missing environment and an empty one are alike. Neither adds a variable to
+ * the spawn, so neither is a reason to restart a session.
+ */
+export function sameTurnEnvironment(
+  left: ProviderInstanceEnvironment | undefined,
+  right: ProviderInstanceEnvironment | undefined,
+): boolean {
+  const leftValues = toValuesByFoldedName(left);
+  const rightValues = toValuesByFoldedName(right);
+  if (leftValues.size !== rightValues.size) {
+    return false;
+  }
+  for (const [name, value] of leftValues) {
+    if (rightValues.get(name) !== value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function toValuesByFoldedName(
+  environment: ProviderInstanceEnvironment | undefined,
+): Map<string, string> {
+  const values = new Map<string, string>();
+  for (const variable of environment ?? []) {
+    values.set(variable.name.toUpperCase(), variable.value);
+  }
+  return values;
+}
