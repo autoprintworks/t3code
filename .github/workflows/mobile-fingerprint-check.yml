@@ -32,7 +32,11 @@ concurrency:
 jobs:
   fingerprint:
     name: Native fingerprint diff
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Fork drift. Upstream asks for blacksmith-8vcpu-ubuntu-2404. This fork has
+    # no Blacksmith account, so that label leaves the job queued until the next
+    # push cancels it. GitHub-hosted runners are free on a public repository,
+    # and this job uses no Blacksmith-specific action. Issue #122.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
