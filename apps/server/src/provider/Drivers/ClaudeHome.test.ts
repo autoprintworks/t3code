@@ -1,5 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - effect/Path gives `sep`, the path separator. The PATH list separator is `delimiter`, and only node:path has it.
 import * as NodePath from "node:path";
 
 import { ProviderInstanceEnvironment } from "@t3tools/contracts";
@@ -121,6 +121,27 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       expect(applyTurnEnvironment({ PATH: "" }, entries(["PATH", "/opt/fm/bin"])).PATH).toBe(
         "/opt/fm/bin",
       );
+    });
+
+    it("writes every entry back to the key the base environment uses", () => {
+      // Windows treats variable names without case, so an instance that spells
+      // one `Fm_Unit` and a turn that spells it `FM_UNIT` name one variable.
+      // Two keys would reach the child, and the tool would read the stale one.
+      const merged = applyTurnEnvironment(
+        { Fm_Unit: "instance", KEPT: "instance" },
+        entries(["FM_UNIT", "unit-7"]),
+      );
+      expect(merged.Fm_Unit).toBe("unit-7");
+      expect(Object.keys(merged).filter((key) => key.toUpperCase() === "FM_UNIT")).toEqual([
+        "Fm_Unit",
+      ]);
+      expect(merged.KEPT).toBe("instance");
+    });
+
+    it("lands two turn entries that differ only in case on one key", () => {
+      const merged = applyTurnEnvironment({}, entries(["FM_UNIT", "first"], ["Fm_Unit", "second"]));
+      expect(Object.keys(merged)).toEqual(["FM_UNIT"]);
+      expect(merged.FM_UNIT).toBe("second");
     });
 
     it("does not change the instance environment it was given", () => {

@@ -44,7 +44,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { takeTurnEnvironment } from "../TurnEnvironment.ts";
+import { takeTurnEnvironment, withTurnEnvironment } from "../TurnEnvironment.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -576,6 +576,14 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * `options.environment` is one turn's environment, and it reaches a process
+   * at spawn and nowhere else. When the thread's session is already live and
+   * needs no restart, this returns early, no `startSession` runs, and that
+   * turn's environment is dropped. The live process keeps the environment it
+   * was spawned with. The follow-up is
+   * https://github.com/autoprintworks/t3code/issues/132.
+   */
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
     createdAt: string,
@@ -737,7 +745,7 @@ const make = Effect.gen(function* () {
           // Belongs to the turn that asked for this session, not to the
           // thread. It is applied to the process this call spawns and is not
           // kept, so the next turn starts from the instance environment.
-          ...(options?.environment !== undefined ? { environment: options.environment } : {}),
+          ...withTurnEnvironment(options?.environment),
           runtimeMode: desiredRuntimeMode,
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
@@ -861,7 +869,7 @@ const make = Effect.gen(function* () {
     }
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-      ...(input.environment !== undefined ? { environment: input.environment } : {}),
+      ...withTurnEnvironment(input.environment),
       pendingTurnStart: true,
     });
     if (input.modelSelection !== undefined) {
@@ -1442,7 +1450,7 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
-      ...(turnEnvironment !== undefined ? { environment: turnEnvironment } : {}),
+      ...withTurnEnvironment(turnEnvironment),
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),

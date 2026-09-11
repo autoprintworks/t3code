@@ -2903,6 +2903,77 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  /**
+   * The rule this pins: a turn's environment reaches a process at spawn and
+   * nowhere else. When the thread already has a live session that needs no
+   * restart, there is no spawn, so the turn's environment is dropped and the
+   * process keeps what it was spawned with. The follow-up is
+   * https://github.com/autoprintworks/t3code/issues/132.
+   */
+  effectIt.effect("drops a turn's environment when the thread's session is already live", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+      const turnEnvironment = decodeProviderEnvironment([
+        { name: "FM_UNIT", value: "unit-8" },
+        { name: "PATH", value: TURN_ENVIRONMENT_TOOL_DIR },
+      ]);
+
+      // The first turn spawns the session, and carries no environment.
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-live-session-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-live-session-1"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("environment");
+
+      // The second turn keeps the same instance and model, so the session
+      // stays up and nothing spawns. Its environment carries no further.
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-live-session-2"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-live-session-2"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        environment: turnEnvironment,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+      // Nothing spawned for the second turn, so nothing applied its
+      // environment. `sendTurn` has no way to carry one.
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+      expect(harness.sendTurn.mock.calls[1]?.[0]).not.toHaveProperty("environment");
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Scans the whole read model for a value no client may see.
+      expect(JSON.stringify(readModel)).not.toContain(TURN_ENVIRONMENT_TOOL_DIR);
+    }),
+  );
+
   it("restarts the provider session when the thread workspace changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {

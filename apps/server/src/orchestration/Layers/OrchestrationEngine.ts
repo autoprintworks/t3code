@@ -306,7 +306,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         // events it reacts to go out. The events carry no environment, so this
         // is the only way it reaches the spawn. Parked after the commit, so a
         // refused command leaves nothing behind.
-        rememberTurnEnvironment(envelope.command);
+        yield* rememberTurnEnvironment(envelope.command);
         for (const [index, event] of committedCommand.committedEvents.entries()) {
           yield* PubSub.publish(eventPubSub, event);
           if (index === 0) {

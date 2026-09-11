@@ -11,6 +11,9 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 
 import { decideOrchestrationCommand } from "./decider.ts";
@@ -76,25 +79,73 @@ function makeTurnStart(commandId: string, withEnvironment: boolean): Orchestrati
   };
 }
 
+// The register is bounded, so a turn start whose environment nobody takes
+// costs one entry rather than growing for the life of the process.
+const MAX_PARKED_TURN_ENVIRONMENTS = 256;
+
 describe("turn environment side channel", () => {
-  it("hands a parked environment to the one command that carried it", () => {
-    rememberTurnEnvironment(makeTurnStart("cmd-1", true));
-    expect(takeTurnEnvironment(CommandId.make("cmd-1"))).toEqual(environment);
-  });
+  it.effect("hands a parked environment to the one command that carried it", () =>
+    Effect.gen(function* () {
+      yield* rememberTurnEnvironment(makeTurnStart("cmd-1", true));
+      expect(takeTurnEnvironment(CommandId.make("cmd-1"))).toEqual(environment);
+    }),
+  );
 
-  it("gives a later turn on the same thread nothing of the previous turn's", () => {
-    rememberTurnEnvironment(makeTurnStart("cmd-2", true));
-    expect(takeTurnEnvironment(CommandId.make("cmd-2"))).toEqual(environment);
-    // Taking removes it. A second turn asks with its own command id and gets
-    // nothing, so the spawn falls back to the instance environment.
-    expect(takeTurnEnvironment(CommandId.make("cmd-2"))).toBeUndefined();
+  it.effect("gives a later turn on the same thread nothing of the previous turn's", () =>
+    Effect.gen(function* () {
+      yield* rememberTurnEnvironment(makeTurnStart("cmd-2", true));
+      expect(takeTurnEnvironment(CommandId.make("cmd-2"))).toEqual(environment);
+      // Taking removes it. A second turn asks with its own command id and gets
+      // nothing, so the spawn falls back to the instance environment.
+      expect(takeTurnEnvironment(CommandId.make("cmd-2"))).toBeUndefined();
 
-    rememberTurnEnvironment(makeTurnStart("cmd-3", false));
-    expect(takeTurnEnvironment(CommandId.make("cmd-3"))).toBeUndefined();
-  });
+      yield* rememberTurnEnvironment(makeTurnStart("cmd-3", false));
+      expect(takeTurnEnvironment(CommandId.make("cmd-3"))).toBeUndefined();
+    }),
+  );
 
   it("has nothing for an event with no command id", () => {
     expect(takeTurnEnvironment(null)).toBeUndefined();
+  });
+
+  /**
+   * An eviction means a turn spawns without the tooling it asked for. The
+   * bound stays, so the register cannot grow without limit, but the drop is
+   * reported rather than silent.
+   */
+  it.effect("warns with the command id when it evicts a parked environment", () => {
+    const warnings: string[] = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Warn") {
+        warnings.push(JSON.stringify(message));
+      }
+    });
+
+    return Effect.gen(function* () {
+      for (let index = 0; index < MAX_PARKED_TURN_ENVIRONMENTS; index += 1) {
+        yield* rememberTurnEnvironment(makeTurnStart(`cmd-fill-${index}`, true));
+      }
+      expect(warnings).toHaveLength(0);
+
+      // One past the bound. The oldest entry goes, and says so.
+      yield* rememberTurnEnvironment(makeTurnStart("cmd-overflow", true));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("cmd-fill-0");
+      expect(takeTurnEnvironment(CommandId.make("cmd-fill-0"))).toBeUndefined();
+      expect(takeTurnEnvironment(CommandId.make("cmd-overflow"))).toEqual(environment);
+
+      // Leave the register empty for the tests that share this module.
+      for (let index = 1; index < MAX_PARKED_TURN_ENVIRONMENTS; index += 1) {
+        takeTurnEnvironment(CommandId.make(`cmd-fill-${index}`));
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Logger.layer([logger], { mergeWithExisting: false }),
+          Layer.succeed(References.MinimumLogLevel, "Debug"),
+        ),
+      ),
+    );
   });
 });
 
