@@ -196,6 +196,7 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
+import { ReadOnlyThreadModelBadges } from "./chat/ReadOnlyThreadModel";
 import {
   deriveProviderEntriesByEnvironment,
   shouldShowInstanceBadge,
@@ -1891,6 +1892,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               )}
               {terminalStatusIcon}
               {prBadge}
+              {thread.readOnly === true ? (
+                <ReadOnlyThreadModelBadges
+                  providerEntry={providerEntry}
+                  selection={thread.modelSelection}
+                />
+              ) : null}
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}

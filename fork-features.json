@@ -106,6 +106,18 @@
       ],
       "test": "scripts/lib/fork-public-env.test.ts",
       "patchesUpstream": true
+    },
+    {
+      "name": "fm-worker-thread-model",
+      "description": "A read-only worker thread says which model and thinking level is behind it: a strip where the composer would sit, and badges on the sidebar row. ReadOnlyThreadModel.tsx and readOnlyThreadModel.logic.ts are the fork's own modules and upstream has no file at either path, so the test cannot pass on plain upstream. Issue #135.",
+      "files": [
+        "apps/web/src/components/chat/ReadOnlyThreadModel.tsx",
+        "apps/web/src/components/chat/readOnlyThreadModel.logic.ts",
+        "apps/web/src/components/ChatView.tsx",
+        "apps/web/src/components/Sidebar.tsx"
+      ],
+      "test": "apps/web/src/components/chat/readOnlyThreadModel.test.tsx",
+      "patchesUpstream": true
     }
   ]
 }
