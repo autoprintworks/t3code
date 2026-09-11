@@ -73,6 +73,54 @@ it.effect("never lets the back-off pass the configured multiple of the base peri
   }),
 );
 
+it.effect("a round that overruns its period skips to the next base-period boundary", () =>
+  Effect.gen(function* () {
+    const poll = yield* PollLoop.makeBackoffPoll(terminalConfig);
+    const starts: Array<number> = [];
+    // 5 s of work under a 2 s base period, so every round overruns by 1 s.
+    const fiber = yield* Effect.forkChild(
+      poll.run(
+        Effect.gen(function* () {
+          starts.push(yield* Clock.currentTimeMillis);
+          yield* Effect.sleep(Duration.seconds(5));
+        }),
+      ),
+      { startImmediately: true },
+    );
+    yield* Effect.addFinalizer(() => Fiber.interrupt(fiber));
+
+    yield* stepClock(120, 500);
+
+    // Rounds start on the 2 s grid: 0, then 6 s, not 5.05 s. The gap grows by
+    // the back-off on top of that, and never drops below one base period.
+    assert.deepStrictEqual(starts.slice(0, 4), [0, 6_000, 14_000, 26_000]);
+    expect(Math.min(...gapsOf(starts))).toBeGreaterThanOrEqual(2_000);
+  }),
+);
+
+it.effect("reads a function ceiling every round, and clamps a period above a lowered one", () =>
+  Effect.gen(function* () {
+    let maxMultiplier = 16;
+    const poll = yield* PollLoop.makeBackoffPoll({
+      basePeriod: Duration.seconds(2),
+      factor: 2,
+      maxMultiplier: () => maxMultiplier,
+    });
+    const starts = yield* recordRoundStarts(poll);
+
+    // 2, 4, 8, 16 then 32 s: the raised ceiling lets the back-off past 16 s.
+    yield* stepClock(128, 500);
+    assert.deepStrictEqual(gapsOf(starts), [2_000, 4_000, 8_000, 16_000, 32_000]);
+
+    maxMultiplier = 4;
+    yield* stepClock(160, 500);
+
+    // A round reads the ceiling after it has run, so the 32 s gap already in
+    // flight plays out. The clamp lands on the round after it and holds.
+    assert.deepStrictEqual(gapsOf(starts).slice(-2), [8_000, 8_000]);
+  }),
+);
+
 it.effect("a wake puts the next round back on the base period", () =>
   Effect.gen(function* () {
     const poll = yield* PollLoop.makeBackoffPoll(terminalConfig);

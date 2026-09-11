@@ -41,8 +41,10 @@ import {
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Equal from "effect/Equal";
@@ -69,6 +71,7 @@ import {
   terminalSessionsTotal,
 } from "../observability/Metrics.ts";
 import { expandHomePath } from "../pathExpansion.ts";
+import * as PollLoop from "../pollLoop.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
@@ -93,8 +96,34 @@ const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
 const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
-const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
-const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
+const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 2_000;
+const SUBPROCESS_POLL_BACKOFF_FACTOR = 2;
+/** Ceiling while the sidecar answers: a read is cheap, so 8 x 2 s = 16 s. */
+const SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER = 8;
+/**
+ * Ceiling while the snapshot is degraded and every round spawns a fallback
+ * probe. Upstream caps that case at 60 s (#9476) and this holds the same
+ * ceiling: 30 x 2 s. An idle host with no sidecar therefore settles at one
+ * spawn a minute, not the 3.75 that the 16 s ceiling would give.
+ */
+const SUBPROCESS_DEGRADED_BACKOFF_MAX_MULTIPLIER = 30;
+/**
+ * Fan-out limit for the per-session half of a round. After the snapshot the
+ * work is pure in-memory tree walking, so this bounds the fan-out without
+ * costing latency; it replaces the unbounded fan-out issue #83 flagged.
+ */
+const SUBPROCESS_ROUND_CONCURRENCY = 4;
+/** Ceiling on the Windows `Get-CimInstance` probe, measured p95 about 870 ms. */
+const WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_500;
+/** Ceiling on the POSIX `ps -e` probe, which is far cheaper than a CIM query. */
+const POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS = 1_000;
+/**
+ * The probe budget is also held under the base period, so a caller that
+ * configures a base period shorter than the platform ceiling cannot be
+ * outlasted by its own probe. The back-off only ever lengthens the gap, so
+ * holding the budget under the base holds it under every later period too.
+ */
+const PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION = 0.75;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
@@ -639,16 +668,38 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
   );
 }
 
+/**
+ * Whether publishing an event also tells the subprocess poll that the host is
+ * busy. `"wake"` for everything a user or a pty drives, which is every event
+ * but one. `"keepCadence"` only for the activity events a degraded poll round
+ * derives from its own spawned fallback data: waking on those would let the
+ * round re-trigger itself and hot-loop the fallback spawn. The distinction is
+ * per event rather than a mode on the manager, so a keystroke during a degraded
+ * round still resets the cadence.
+ */
+type TerminalPollWake = "wake" | "keepCadence";
+
 interface TerminalProcessTableSnapshot {
   readonly childrenByParent: ReadonlyMap<number, ReadonlyArray<number>>;
   readonly commandById: ReadonlyMap<number, string>;
 }
 
-export function subprocessSnapshotPollDelayMs(
+/**
+ * Budget for one process-table probe: the lower of the platform ceiling and
+ * `PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION` of the base poll period. It is
+ * computed once, from the base period, because the base is the shortest gap the
+ * loop can run at. A probe is therefore always cancelled before the next round
+ * is due, which is the inversion issue #83 reported (a 1500 ms timeout under a
+ * 1000 ms period).
+ */
+export function processSnapshotTimeoutMs(
   pollIntervalMs: number,
-  failureCount: number,
+  platform: NodeJS.Platform,
 ): number {
-  return Math.min(pollIntervalMs * 2 ** failureCount, MAX_SUBPROCESS_POLL_INTERVAL_MS);
+  const ceilingMs =
+    platform === "win32" ? WINDOWS_PROCESS_SNAPSHOT_TIMEOUT_MS : POSIX_PROCESS_SNAPSHOT_TIMEOUT_MS;
+  const underPeriodMs = Math.floor(pollIntervalMs * PROCESS_SNAPSHOT_TIMEOUT_PERIOD_FRACTION);
+  return Math.max(1, Math.min(ceilingMs, underPeriodMs));
 }
 
 function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
@@ -730,6 +781,7 @@ const resolvePosixPsCommand = Effect.fn("terminal.resolvePosixPsCommand")(functi
 
 const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot")(function* (
   psCommand: string,
+  timeoutMs: number,
 ): Effect.fn.Return<
   TerminalProcessTableSnapshot,
   TerminalSubprocessCheckError,
@@ -740,7 +792,7 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
     .run({
       command: psCommand,
       args: ["-eo", "pid=,ppid=,comm="],
-      timeout: "1 second",
+      timeout: Duration.millis(timeoutMs),
       maxOutputBytes: 524_288,
       outputMode: "truncate",
       timeoutBehavior: "timedOutResult",
@@ -767,48 +819,46 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
   return parsePosixProcessTable(result.stdout);
 });
 
-const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnapshot")(
-  function* (): Effect.fn.Return<
-    TerminalProcessTableSnapshot,
-    TerminalSubprocessCheckError,
-    ProcessRunner.ProcessRunner
-  > {
-    const processRunner = yield* ProcessRunner.ProcessRunner;
-    const command =
-      'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
-    const result = yield* processRunner
-      .run({
-        command: "powershell.exe",
-        args: ["-NoProfile", "-NonInteractive", "-Command", command],
-        timeout: "1500 millis",
-        maxOutputBytes: 262_144,
-        outputMode: "truncate",
-        timeoutBehavior: "timedOutResult",
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) => new TerminalSubprocessCheckError({ cause, command: "powershell" }),
-        ),
-      );
-    if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
-      return yield* new TerminalSubprocessCheckError({
-        command: "powershell",
-        exitCode: result.code,
-        timedOut: result.timedOut,
-        stdoutTruncated: result.stdoutTruncated,
-      });
-    }
-    const processes = result.stdout.split(/\r?\n/g).flatMap((line) => {
-      const [pidRaw, ppidRaw, name = ""] = line.trim().split("|", 3);
-      const pid = Number(pidRaw);
-      const ppid = Number(ppidRaw);
-      return Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid)
-        ? [{ pid, ppid, name }]
-        : [];
+const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnapshot")(function* (
+  timeoutMs: number,
+): Effect.fn.Return<
+  TerminalProcessTableSnapshot,
+  TerminalSubprocessCheckError,
+  ProcessRunner.ProcessRunner
+> {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const command =
+    'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+  const result = yield* processRunner
+    .run({
+      command: "powershell.exe",
+      args: ["-NoProfile", "-NonInteractive", "-Command", command],
+      timeout: Duration.millis(timeoutMs),
+      maxOutputBytes: 262_144,
+      outputMode: "truncate",
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(
+      Effect.mapError(
+        (cause) => new TerminalSubprocessCheckError({ cause, command: "powershell" }),
+      ),
+    );
+  if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
+    return yield* new TerminalSubprocessCheckError({
+      command: "powershell",
+      exitCode: result.code,
+      timedOut: result.timedOut,
+      stdoutTruncated: result.stdoutTruncated,
     });
-    return processTableSnapshotFromProcesses(processes);
-  },
-);
+  }
+  const processes = result.stdout.split(/\r?\n/g).flatMap((line) => {
+    const [pidRaw, ppidRaw, name = ""] = line.trim().split("|", 3);
+    const pid = Number(pidRaw);
+    const ppid = Number(ppidRaw);
+    return Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid) ? [{ pid, ppid, name }] : [];
+  });
+  return processTableSnapshotFromProcesses(processes);
+});
 
 interface TerminalHistoryChunk {
   data: string;
@@ -1453,13 +1503,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return { ...input, env };
     },
   );
-  // One process-table snapshot per poll tick, shared across every terminal.
+  const subprocessPollIntervalMs =
+    options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
+  const snapshotTimeoutMs = processSnapshotTimeoutMs(subprocessPollIntervalMs, platform);
+  // One process-table snapshot per poll round, shared across every terminal.
   // Per-terminal `pgrep`/`ps` calls multiply spawn load by terminal count and
   // can exhaust the PID space on hosts with many sessions (#6332).
   const fallbackProcessTableSnapshot = (
     platform === "win32"
-      ? windowsProcessTableSnapshot()
-      : posixProcessTableSnapshot(yield* resolvePosixPsCommand())
+      ? windowsProcessTableSnapshot(snapshotTimeoutMs)
+      : posixProcessTableSnapshot(yield* resolvePosixPsCommand(), snapshotTimeoutMs)
   ).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
   const fetchProcessTableSnapshot: Effect.Effect<
     {
@@ -1511,8 +1564,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             snapshotSucceeded,
           }),
         );
-  const subprocessPollIntervalMs =
-    options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
+  // True while the last round's process table came from the spawned fallback
+  // rather than the sidecar. It only widens the back-off ceiling; see
+  // `TerminalPollWake` for the separate question of which events reset it.
+  let subprocessSnapshotDegraded = false;
+  // Woken by anything that means "this host is not idle": every terminal event
+  // this manager publishes except the poll's own degraded findings. See
+  // `pollLoop.ts` for what a wake does to the cadence.
+  const subprocessPoll = yield* PollLoop.makeBackoffPoll({
+    basePeriod: Duration.millis(subprocessPollIntervalMs),
+    factor: SUBPROCESS_POLL_BACKOFF_FACTOR,
+    maxMultiplier: () =>
+      subprocessSnapshotDegraded
+        ? SUBPROCESS_DEGRADED_BACKOFF_MAX_MULTIPLIER
+        : SUBPROCESS_POLL_BACKOFF_MAX_MULTIPLIER,
+  });
   const processKillGraceMs = options.processKillGraceMs ?? DEFAULT_PROCESS_KILL_GRACE_MS;
   const maxRetainedInactiveSessions =
     options.maxRetainedInactiveSessions ?? DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS;
@@ -1530,8 +1596,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
 
-  const publishEvent = (event: TerminalEvent) =>
+  const publishEvent = (event: TerminalEvent, wake: TerminalPollWake = "wake") =>
     Effect.gen(function* () {
+      // Any terminal event means this host is not idle, so the subprocess poll
+      // drops back to its base period. Allocation-free on the hot output path.
+      if (wake === "wake") subprocessPoll.wakeUnsafe();
       for (const listener of terminalEventListeners) {
         yield* listener(event).pipe(Effect.ignoreCause({ log: true }));
       }
@@ -2361,7 +2430,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (runningSessions.length === 0) {
-      return true;
+      subprocessSnapshotDegraded = false;
+      return;
     }
 
     const inspectorOption = yield* acquireSubprocessInspector.pipe(
@@ -2381,10 +2451,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (Option.isNone(inspectorOption)) {
-      return false;
+      subprocessSnapshotDegraded = true;
+      return;
     }
 
     const { inspector: subprocessInspector, snapshotSucceeded } = inspectorOption.value;
+    // Set before the per-session work, so the ceiling this round backs off to
+    // reflects the source it actually used.
+    subprocessSnapshotDegraded = !snapshotSucceeded;
 
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       session: TerminalSessionState & { pid: number },
@@ -2445,46 +2519,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
 
       if (Option.isSome(event)) {
-        yield* publishEvent(event.value);
+        yield* publishEvent(event.value, snapshotSucceeded ? "wake" : "keepCadence");
       }
     });
 
     yield* Effect.forEach(runningSessions, checkSubprocessActivity, {
-      concurrency: "unbounded",
+      concurrency: SUBPROCESS_ROUND_CONCURRENCY,
       discard: true,
     });
-    return snapshotSucceeded;
   });
 
-  const hasRunningSessions = readManagerState.pipe(
-    Effect.map((state) =>
-      [...state.sessions.values()].some((session) => session.status === "running"),
+  // One round at a time: `pollLoop` awaits the round inline, so a round that
+  // overruns its period delays the next one rather than overlapping it. The
+  // round is caught here rather than in the engine, so a defect stays
+  // attributable to this subsystem and does not end the poll.
+  const subprocessPollRound = pollSubprocessActivity().pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("terminal subprocess poll round failed", Cause.pretty(cause)),
     ),
   );
-
-  let subprocessSnapshotFailureCount = 0;
-  yield* Effect.forever(
-    hasRunningSessions.pipe(
-      Effect.flatMap((active) =>
-        active
-          ? pollSubprocessActivity().pipe(
-              Effect.flatMap((snapshotSucceeded) => {
-                subprocessSnapshotFailureCount = snapshotSucceeded
-                  ? 0
-                  : Math.min(subprocessSnapshotFailureCount + 1, 30);
-                const delayMs = subprocessSnapshotPollDelayMs(
-                  subprocessPollIntervalMs,
-                  subprocessSnapshotFailureCount,
-                );
-                return Effect.sleep(delayMs);
-              }),
-            )
-          : Effect.sync(() => {
-              subprocessSnapshotFailureCount = 0;
-            }).pipe(Effect.flatMap(() => Effect.sleep(subprocessPollIntervalMs))),
-      ),
-    ),
-  ).pipe(Effect.forkIn(workerScope));
+  yield* subprocessPoll.run(subprocessPollRound).pipe(Effect.forkIn(workerScope));
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {

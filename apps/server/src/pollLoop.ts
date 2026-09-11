@@ -14,6 +14,9 @@
  * - The period is the gap between round *starts*, not the gap after a round.
  *   A round that takes 500 ms out of a 2000 ms period is followed by a 1500 ms
  *   wait, so the configured period is the cadence you actually observe.
+ * - A round that overruns its period skips to the next base-period boundary
+ *   after it. A 2500 ms round under a 2000 ms base starts again at 4000 ms, not
+ *   at 2550 ms: an overrun costs a whole round, and can never spin the loop.
  * - The first round runs at the base period. The back-off is applied at the end
  *   of a round that reported no change, so with a base of 2 s and a factor of 2
  *   the gaps are 2, 4, 8, 16 s, capped at `maxMultiplier` times the base.
@@ -46,8 +49,13 @@ export interface BackoffPollConfig {
   readonly basePeriod: Duration.Duration;
   /** Multiplier applied to the period after each round that changed nothing. */
   readonly factor: number;
-  /** Ceiling on the back-off, as a multiple of `basePeriod`. */
-  readonly maxMultiplier: number;
+  /**
+   * Ceiling on the back-off, as a multiple of `basePeriod`. A function is read
+   * once per round, so a caller whose rounds have turned expensive can raise
+   * its own ceiling, and lower it again, without restarting the loop. A period
+   * already above a lowered ceiling is clamped on the next round.
+   */
+  readonly maxMultiplier: number | (() => number);
 }
 
 export interface BackoffPoll {
@@ -60,22 +68,14 @@ export interface BackoffPoll {
   readonly run: (round: Effect.Effect<void>) => Effect.Effect<never>;
 }
 
-/**
- * Floor on the gap between two round starts, for a round that overran its
- * period. Every caller sizes its probe timeouts strictly under its base period,
- * so a round should never reach this; it is here so that a round which somehow
- * does overrun cannot turn the loop into a spin. It never raises the gap above
- * the configured base period, so a caller that asks for a short period (a test,
- * usually) still gets the cadence it asked for.
- */
-const MIN_ROUND_GAP_MS = 50;
-
 export const makeBackoffPoll = Effect.fn("pollLoop.makeBackoffPoll")(function* (
   config: BackoffPollConfig,
 ) {
   const wakeLatch = yield* Latch.make(false);
   const basePeriodMs = Duration.toMillis(config.basePeriod);
-  const maxPeriodMs = basePeriodMs * config.maxMultiplier;
+  const maxMultiplier = config.maxMultiplier;
+  const readMaxPeriodMs = () =>
+    basePeriodMs * (typeof maxMultiplier === "function" ? maxMultiplier() : maxMultiplier);
   // The period this round will wait out. It starts at the base, so the first
   // round runs at the base period and the back-off only begins once a round has
   // reported no change.
@@ -100,12 +100,13 @@ export const makeBackoffPoll = Effect.fn("pollLoop.makeBackoffPoll")(function* (
 
         // Back off for the next round. A wake that landed during this round is
         // still open, so the top of the next iteration resets this to the base.
-        yield* Ref.set(periodRef, Math.min(periodMs * config.factor, maxPeriodMs));
+        yield* Ref.set(periodRef, Math.min(periodMs * config.factor, readMaxPeriodMs()));
 
-        const baseWaitMs = Math.max(
-          basePeriodMs - elapsedMs,
-          Math.min(MIN_ROUND_GAP_MS, basePeriodMs),
-        );
+        // Wait to the next base-period boundary after the round ended. For a
+        // round inside its period this is the rest of the period; for one that
+        // overran it skips the boundaries the round ate, so the next start is
+        // still on the base grid and is never less than a base period away.
+        const baseWaitMs = basePeriodMs - (elapsedMs % basePeriodMs);
         yield* Effect.sleep(Duration.millis(baseWaitMs));
         const remainderMs = periodMs - basePeriodMs;
         if (remainderMs > 0) {
