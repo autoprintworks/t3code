@@ -5,6 +5,8 @@ import type {
   DesktopUpdateState,
 } from "@t3tools/contracts";
 
+import { DEFAULT_FORK_AUTOMATIC_UPDATES } from "./forkAutomaticUpdates.ts";
+
 function nextStatusAfterDownloadFailure(
   currentState: DesktopUpdateState,
 ): DesktopUpdateState["status"] {
@@ -22,6 +24,9 @@ export function createInitialDesktopUpdateState(
 ): DesktopUpdateState {
   return {
     enabled: false,
+    // Fork only (#113). configure() replaces this with the persisted setting;
+    // until then the fork's default is what the renderer should see.
+    automaticUpdates: DEFAULT_FORK_AUTOMATIC_UPDATES,
     status: "disabled",
     channel,
     currentVersion,

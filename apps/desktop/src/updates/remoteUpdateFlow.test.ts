@@ -14,6 +14,7 @@ const NO_ATTEMPTS: RemoteDesktopUpdateAttempts = { checks: 0, downloads: 0 };
 function makeState(overrides: Partial<DesktopUpdateState> = {}): DesktopUpdateState {
   return {
     enabled: true,
+    automaticUpdates: true,
     status: "idle",
     channel: "latest",
     currentVersion: "1.2.3",

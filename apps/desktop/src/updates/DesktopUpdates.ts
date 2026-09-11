@@ -31,6 +31,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import { shouldAutoDownloadDesktopUpdate } from "./forkAutomaticUpdates.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -97,6 +98,19 @@ export class DesktopUpdateChannelPersistenceError extends Schema.TaggedErrorClas
 ) {
   override get message(): string {
     return `Failed to persist the ${this.channel} desktop update channel.`;
+  }
+}
+
+/** Fork only (#113). */
+export class DesktopUpdateAutomaticUpdatesPersistenceError extends Schema.TaggedErrorClass<DesktopUpdateAutomaticUpdatesPersistenceError>()(
+  "DesktopUpdateAutomaticUpdatesPersistenceError",
+  {
+    enabled: Schema.Boolean,
+    cause: Schema.instanceOf(DesktopAppSettings.DesktopSettingsWriteError),
+  },
+) {
+  override get message(): string {
+    return `Failed to persist automatic updates as ${this.enabled ? "on" : "off"}.`;
   }
 }
 
@@ -180,6 +194,10 @@ export class DesktopUpdates extends Context.Service<
     readonly setChannel: (
       channel: DesktopUpdateChannel,
     ) => Effect.Effect<DesktopUpdateState, DesktopUpdateSetChannelError>;
+    /** Fork only (#113). Turns automatic download and install on quit on or off. */
+    readonly setAutomaticUpdates: (
+      enabled: boolean,
+    ) => Effect.Effect<DesktopUpdateState, DesktopUpdateAutomaticUpdatesPersistenceError>;
     readonly check: (reason: string) => Effect.Effect<DesktopUpdateCheckResult>;
     readonly download: Effect.Effect<DesktopUpdateActionResult>;
     readonly install: Effect.Effect<DesktopUpdateActionResult>;
@@ -213,11 +231,13 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
 function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   enabled: boolean,
+  automaticUpdates: boolean,
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): DesktopUpdateState {
   return {
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
     enabled,
+    automaticUpdates,
     status: enabled ? "idle" : "disabled",
   };
 }
@@ -712,7 +732,7 @@ export const make = Effect.gen(function* () {
             info.releaseNotes,
             info.version,
           );
-          yield* setState(
+          const nextState = yield* updateState(() =>
             reduceDesktopUpdateStateOnUpdateAvailable(
               state,
               info.version,
@@ -727,6 +747,19 @@ export const make = Effect.gen(function* () {
             releaseNoteGroups: releaseNotes.length,
             omittedReleaseCount,
           });
+
+          // Fork only (#113). Upstream stops here and waits for a click.
+          if (
+            shouldAutoDownloadDesktopUpdate({
+              automaticUpdates: nextState.automaticUpdates,
+              status: nextState.status,
+            })
+          ) {
+            yield* logUpdaterInfo("downloading update without a click", {
+              version: info.version,
+            });
+            yield* downloadAvailableUpdate;
+          }
         }),
       ),
       Effect.catchCause((cause) => {
@@ -878,14 +911,24 @@ export const make = Effect.gen(function* () {
 
       const settings = yield* desktopSettings.get;
       const enabled = yield* shouldEnableAutoUpdates;
-      yield* setState(createBaseUpdateState(settings.updateChannel, enabled, environment));
+      yield* setState(
+        createBaseUpdateState(
+          settings.updateChannel,
+          enabled,
+          settings.automaticUpdates,
+          environment,
+        ),
+      );
       if (!enabled) {
         return;
       }
       yield* Ref.set(updaterConfiguredRef, true);
 
+      // Fork only (#113): the download stays ours so the channel filter in
+      // handleUpdateAvailable still runs before anything is fetched. Installing
+      // on quit is electron-updater's own quit handler, armed here.
       yield* electronUpdater.setAutoDownload(false);
-      yield* electronUpdater.setAutoInstallOnAppQuit(false);
+      yield* electronUpdater.setAutoInstallOnAppQuit(settings.automaticUpdates);
       yield* applyAutoUpdaterChannel(settings.updateChannel);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
@@ -949,7 +992,9 @@ export const make = Effect.gen(function* () {
           );
 
         const enabled = yield* shouldEnableAutoUpdates;
-        yield* setState(createBaseUpdateState(nextChannel, enabled, environment));
+        yield* setState(
+          createBaseUpdateState(nextChannel, enabled, state.automaticUpdates, environment),
+        );
 
         if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
           return yield* Ref.get(updateStateRef);
@@ -963,6 +1008,44 @@ export const make = Effect.gen(function* () {
         );
         return yield* Ref.get(updateStateRef);
       }).pipe(Effect.ensuring(finishUpdateAction("channel")));
+    }),
+    // Fork only (#113).
+    setAutomaticUpdates: Effect.fn("desktop.updates.setAutomaticUpdates")(function* (
+      enabled: boolean,
+    ) {
+      yield* Effect.annotateCurrentSpan({ enabled });
+      const current = yield* Ref.get(updateStateRef);
+      if (current.automaticUpdates === enabled) {
+        return current;
+      }
+
+      yield* desktopSettings
+        .setAutomaticUpdates(enabled)
+        .pipe(
+          Effect.mapError(
+            (cause) => new DesktopUpdateAutomaticUpdatesPersistenceError({ enabled, cause }),
+          ),
+        );
+
+      const nextState = yield* updateState((state) => ({ ...state, automaticUpdates: enabled }));
+      if (!(yield* Ref.get(updaterConfiguredRef))) {
+        return nextState;
+      }
+
+      yield* electronUpdater.setAutoInstallOnAppQuit(enabled);
+      yield* logUpdaterInfo("automatic updates changed", { enabled });
+
+      // Turning it on with an update already found should not need the click
+      // the setting exists to remove.
+      if (
+        shouldAutoDownloadDesktopUpdate({
+          automaticUpdates: nextState.automaticUpdates,
+          status: nextState.status,
+        })
+      ) {
+        yield* downloadAvailableUpdate;
+      }
+      return yield* Ref.get(updateStateRef);
     }),
     check: Effect.fn("desktop.updates.check")(function* (reason: string) {
       yield* Effect.annotateCurrentSpan({ reason });
