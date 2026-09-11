@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  DEFAULT_FORK_AUTOMATIC_UPDATES,
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
   ProviderDriverKind,
@@ -254,6 +255,8 @@ function AboutVersionTitle() {
 
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
+  // Fork only (#113). Null until there is something true to say.
+  const forkUpdateStatusLine = getForkUpdateStatusLine(updateState);
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
   // Fork only (#113).
@@ -443,8 +446,8 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
-      {hasDesktopBridge ? (
-        <SettingsRow title="Update status" description={getForkUpdateStatusLine(updateState)} />
+      {hasDesktopBridge && forkUpdateStatusLine ? (
+        <SettingsRow title="Update status" description={forkUpdateStatusLine} />
       ) : null}
       {hasDesktopBridge && supportsForkAutomaticUpdates(window.desktopBridge) ? (
         <SettingsRow
@@ -453,8 +456,8 @@ function AboutVersionSection() {
           control={
             <Switch
               aria-label={FORK_AUTOMATIC_UPDATES_TITLE}
-              checked={updateState?.automaticUpdates ?? true}
-              disabled={isChangingAutomaticUpdates}
+              checked={updateState?.automaticUpdates ?? DEFAULT_FORK_AUTOMATIC_UPDATES}
+              disabled={!updateState || isChangingAutomaticUpdates}
               onCheckedChange={(checked) => {
                 handleAutomaticUpdatesChange(Boolean(checked));
               }}

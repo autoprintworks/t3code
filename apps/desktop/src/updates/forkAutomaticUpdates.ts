@@ -8,17 +8,14 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
  * quit instead. Issue #113.
  */
 
-/** On for the fork. The setting exists to get upstream's two-click flow back. */
-export const DEFAULT_FORK_AUTOMATIC_UPDATES = true;
-
 /**
  * True when a found update should start downloading with no click. Read after
  * the update-available handler has applied the channel filter, so a release on
  * another channel never reaches it.
  */
-export function shouldAutoDownloadDesktopUpdate(args: {
+export function shouldAutoDownloadDesktopUpdate(state: {
   readonly automaticUpdates: boolean;
   readonly status: DesktopUpdateState["status"];
 }): boolean {
-  return args.automaticUpdates && args.status === "available";
+  return state.automaticUpdates && state.status === "available";
 }

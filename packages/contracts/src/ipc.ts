@@ -204,6 +204,13 @@ export interface DesktopRuntimeInfo {
   runningUnderArm64Translation: boolean;
 }
 
+/**
+ * Fork only (#113). On for the fork. The one owner of this default: the desktop
+ * settings seed it, and the web Settings switch falls back to it while the
+ * update state is still loading.
+ */
+export const DEFAULT_FORK_AUTOMATIC_UPDATES = true;
+
 export interface DesktopUpdateState {
   enabled: boolean;
   /**

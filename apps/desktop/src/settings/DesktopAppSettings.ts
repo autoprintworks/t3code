@@ -1,4 +1,5 @@
 import {
+  DEFAULT_FORK_AUTOMATIC_UPDATES,
   DesktopServerExposureModeSchema,
   DesktopUpdateChannelSchema,
   type DesktopServerExposureMode,
@@ -21,7 +22,6 @@ import {
   normalizeLinuxPasswordStorePreference,
   type LinuxPasswordStorePreference,
 } from "../linuxSecretStorage.ts";
-import { DEFAULT_FORK_AUTOMATIC_UPDATES } from "../updates/forkAutomaticUpdates.ts";
 import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 

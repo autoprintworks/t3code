@@ -1,11 +1,10 @@
-import type {
-  DesktopRuntimeInfo,
-  DesktopUpdateChannel,
-  DesktopUpdateReleaseNote,
-  DesktopUpdateState,
+import {
+  DEFAULT_FORK_AUTOMATIC_UPDATES,
+  type DesktopRuntimeInfo,
+  type DesktopUpdateChannel,
+  type DesktopUpdateReleaseNote,
+  type DesktopUpdateState,
 } from "@t3tools/contracts";
-
-import { DEFAULT_FORK_AUTOMATIC_UPDATES } from "./forkAutomaticUpdates.ts";
 
 function nextStatusAfterDownloadFailure(
   currentState: DesktopUpdateState,
