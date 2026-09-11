@@ -2903,74 +2903,128 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  const TURN_ENVIRONMENT_MODEL_SELECTION = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5-codex",
+  };
+
+  const dispatchTurn = (input: {
+    readonly harness: Awaited<ReturnType<typeof createHarness>>;
+    readonly ordinal: number;
+    readonly environment?: ProviderInstanceEnvironment;
+  }) =>
+    input.harness.engine.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make(`cmd-turn-live-session-${input.ordinal}`),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId: asMessageId(`user-message-live-session-${input.ordinal}`),
+        role: "user",
+        text: `turn ${input.ordinal}`,
+        attachments: [],
+      },
+      modelSelection: TURN_ENVIRONMENT_MODEL_SELECTION,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      ...(input.environment !== undefined ? { environment: input.environment } : {}),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
   /**
-   * The rule this pins: a turn's environment reaches a process at spawn and
-   * nowhere else. When the thread already has a live session that needs no
-   * restart, there is no spawn, so the turn's environment is dropped and the
-   * process keeps what it was spawned with. The follow-up is
-   * https://github.com/autoprintworks/t3code/issues/132.
+   * A turn hosted for a fleet worker carries the environment its owner gave
+   * it. The thread's session can already be live from a sidebar turn that had
+   * none, and a live session keeps what it was spawned with, so this turn
+   * restarts it before it runs.
    */
-  effectIt.effect("drops a turn's environment when the thread's session is already live", () =>
+  effectIt.effect("restarts a live session that was spawned without the turn's environment", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness());
-      const modelSelection = {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5-codex",
-      };
       const turnEnvironment = decodeProviderEnvironment([
         { name: "FM_UNIT", value: "unit-8" },
         { name: "PATH", value: TURN_ENVIRONMENT_TOOL_DIR },
       ]);
 
       // The first turn spawns the session, and carries no environment.
-      yield* harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-live-session-1"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-live-session-1"),
-          role: "user",
-          text: "first",
-          attachments: [],
-        },
-        modelSelection,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: "2026-01-01T00:00:00.000Z",
-      });
-
+      yield* dispatchTurn({ harness, ordinal: 1 });
       yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
       expect(harness.startSession).toHaveBeenCalledTimes(1);
       expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("environment");
 
-      // The second turn keeps the same instance and model, so the session
-      // stays up and nothing spawns. Its environment carries no further.
-      yield* harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-live-session-2"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-live-session-2"),
-          role: "user",
-          text: "second",
-          attachments: [],
-        },
-        modelSelection,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
+      // The second turn asks for an environment the live process does not
+      // have, so the session restarts and the new process gets it.
+      yield* dispatchTurn({ harness, ordinal: 2, environment: turnEnvironment });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+      expect(harness.startSession).toHaveBeenCalledTimes(2);
+      expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
         environment: turnEnvironment,
-        createdAt: "2026-01-01T00:00:00.000Z",
+        // The cursor of the process it replaced, so the conversation carries
+        // on in the new one.
+        resumeCursor: { opaque: "resume-1" },
       });
 
-      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
-      // Nothing spawned for the second turn, so nothing applied its
-      // environment. `sendTurn` has no way to carry one.
-      expect(harness.startSession).toHaveBeenCalledTimes(1);
-      expect(harness.sendTurn.mock.calls[1]?.[0]).not.toHaveProperty("environment");
-
+      // Nothing a client reads carries the value. The read model is what the
+      // UI renders.
       const readModel = yield* Effect.promise(() => harness.readModel());
       // @effect-diagnostics-next-line preferSchemaOverJson:off - Scans the whole read model for a value no client may see.
       expect(JSON.stringify(readModel)).not.toContain(TURN_ENVIRONMENT_TOOL_DIR);
+    }),
+  );
+
+  /**
+   * The daemon sends the same environment on every turn of a thread it owns.
+   * The live process already has those variables, so restarting would cost a
+   * process for no change.
+   */
+  effectIt.effect("keeps a live session whose environment the turn repeats", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const turnEnvironment = decodeProviderEnvironment([
+        { name: "FM_UNIT", value: "unit-9" },
+        { name: "PATH", value: TURN_ENVIRONMENT_TOOL_DIR },
+      ]);
+      // The same names and values, in the order a later turn happened to send
+      // them. Order is not a difference.
+      const sameEnvironment = decodeProviderEnvironment([
+        { name: "PATH", value: TURN_ENVIRONMENT_TOOL_DIR },
+        { name: "FM_UNIT", value: "unit-9" },
+      ]);
+
+      yield* dispatchTurn({ harness, ordinal: 1, environment: turnEnvironment });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+
+      yield* dispatchTurn({ harness, ordinal: 2, environment: sameEnvironment });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  /**
+   * A turn without an environment is the ordinary turn from the sidebar.
+   * Restarting a worker's session on each of those would throw away the
+   * environment its owner gave it, so this turn leaves the session alone.
+   */
+  effectIt.effect("keeps a live session when the turn carries no environment", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const turnEnvironment = decodeProviderEnvironment([
+        { name: "FM_UNIT", value: "unit-10" },
+        { name: "PATH", value: TURN_ENVIRONMENT_TOOL_DIR },
+      ]);
+
+      yield* dispatchTurn({ harness, ordinal: 1, environment: turnEnvironment });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+
+      yield* dispatchTurn({ harness, ordinal: 2 });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+      // No spawn, so the process still holds what the first turn gave it.
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+        environment: turnEnvironment,
+      });
+      // `sendTurn` has no way to carry an environment.
+      expect(harness.sendTurn.mock.calls[1]?.[0]).not.toHaveProperty("environment");
     }),
   );
 
