@@ -204,8 +204,20 @@ export interface DesktopRuntimeInfo {
   runningUnderArm64Translation: boolean;
 }
 
+/**
+ * Fork only (#113). On for the fork. The one owner of this default: the desktop
+ * settings seed it, and the web Settings switch falls back to it while the
+ * update state is still loading.
+ */
+export const DEFAULT_FORK_AUTOMATIC_UPDATES = true;
+
 export interface DesktopUpdateState {
   enabled: boolean;
+  /**
+   * Fork only. When true a found update downloads with no click and installs
+   * on the next quit. Turn it off to get the two-click download/restart flow.
+   */
+  automaticUpdates: boolean;
   status: DesktopUpdateStatus;
   channel: DesktopUpdateChannel;
   currentVersion: string;
@@ -237,6 +249,7 @@ export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
 
 export const DesktopUpdateStateSchema = Schema.Struct({
   enabled: Schema.Boolean,
+  automaticUpdates: Schema.Boolean,
   status: DesktopUpdateStatusSchema,
   channel: DesktopUpdateChannelSchema,
   currentVersion: Schema.String,
@@ -1147,6 +1160,12 @@ export interface DesktopBridge {
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
+  /**
+   * Fork only. Turns automatic download and install on quit on or off.
+   * Optional: builds without the fork's automatic updates lack it, and
+   * callers hide the control when it is missing.
+   */
+  setAutomaticUpdates?: (enabled: boolean) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;

@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  DEFAULT_FORK_AUTOMATIC_UPDATES,
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
   ProviderDriverKind,
@@ -54,6 +55,12 @@ import {
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
+import {
+  FORK_AUTOMATIC_UPDATES_DESCRIPTION,
+  FORK_AUTOMATIC_UPDATES_TITLE,
+  getForkUpdateStatusLine,
+  supportsForkAutomaticUpdates,
+} from "../../components/forkAutomaticUpdates.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
@@ -248,8 +255,12 @@ function AboutVersionTitle() {
 
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
+  // Fork only (#113). Null until there is something true to say.
+  const forkUpdateStatusLine = getForkUpdateStatusLine(updateState);
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
+  // Fork only (#113).
+  const [isChangingAutomaticUpdates, setIsChangingAutomaticUpdates] = useState(false);
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -284,6 +295,28 @@ function AboutVersionSection() {
     },
     [selectedUpdateChannel],
   );
+
+  // Fork only (#113).
+  const handleAutomaticUpdatesChange = useCallback((enabled: boolean) => {
+    const bridge = window.desktopBridge;
+    if (!supportsForkAutomaticUpdates(bridge)) return;
+
+    setIsChangingAutomaticUpdates(true);
+    void bridge
+      .setAutomaticUpdates(enabled)
+      .catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not change automatic updates",
+            description: error instanceof Error ? error.message : "The change did not save.",
+          }),
+        );
+      })
+      .finally(() => {
+        setIsChangingAutomaticUpdates(false);
+      });
+  }, []);
 
   const handleButtonClick = useCallback(async () => {
     const bridge = window.desktopBridge;
@@ -413,6 +446,25 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
+      {hasDesktopBridge && forkUpdateStatusLine ? (
+        <SettingsRow title="Update status" description={forkUpdateStatusLine} />
+      ) : null}
+      {hasDesktopBridge && supportsForkAutomaticUpdates(window.desktopBridge) ? (
+        <SettingsRow
+          title={FORK_AUTOMATIC_UPDATES_TITLE}
+          description={FORK_AUTOMATIC_UPDATES_DESCRIPTION}
+          control={
+            <Switch
+              aria-label={FORK_AUTOMATIC_UPDATES_TITLE}
+              checked={updateState?.automaticUpdates ?? DEFAULT_FORK_AUTOMATIC_UPDATES}
+              disabled={!updateState || isChangingAutomaticUpdates}
+              onCheckedChange={(checked) => {
+                handleAutomaticUpdatesChange(Boolean(checked));
+              }}
+            />
+          }
+        />
+      ) : null}
       {hasDesktopBridge ? (
         <SettingsRow
           title="Update track"

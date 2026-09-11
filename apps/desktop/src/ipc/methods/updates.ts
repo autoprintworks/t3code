@@ -31,6 +31,17 @@ export const setUpdateChannel = DesktopIpc.makeIpcMethod({
   }),
 });
 
+/** Fork only (#113). */
+export const setAutomaticUpdates = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.UPDATE_SET_AUTOMATIC_CHANNEL,
+  payload: Schema.Boolean,
+  result: DesktopUpdateStateSchema,
+  handler: Effect.fn("desktop.ipc.updates.setAutomaticUpdates")(function* (enabled) {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.setAutomaticUpdates(enabled);
+  }),
+});
+
 export const downloadUpdate = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.UPDATE_DOWNLOAD_CHANNEL,
   payload: Schema.Void,

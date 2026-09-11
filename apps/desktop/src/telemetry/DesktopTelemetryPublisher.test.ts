@@ -427,6 +427,7 @@ describe("DesktopTelemetryPublisher", () => {
           outcome: "up-to-date",
           state: {
             enabled: true,
+            automaticUpdates: true,
             status: "up-to-date",
             channel: "latest",
             currentVersion: "1.2.3",

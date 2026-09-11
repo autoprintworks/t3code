@@ -105,6 +105,7 @@ describe("DesktopSettings", () => {
     assert.deepEqual(
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
+        automaticUpdates: true,
         linuxPasswordStore: "auto",
         mainWindowBounds: null,
         mainWindowMaximized: false,
@@ -134,6 +135,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          automaticUpdates: true,
           linuxPasswordStore: "gnome-libsecret",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -241,6 +243,7 @@ describe("DesktopSettings", () => {
         );
 
         assert.deepEqual(yield* settings.load, {
+          automaticUpdates: true,
           linuxPasswordStore: "auto",
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
@@ -297,6 +300,7 @@ describe("DesktopSettings", () => {
           );
 
           assert.deepEqual(yield* settings.load, {
+            automaticUpdates: true,
             linuxPasswordStore: "auto",
             mainWindowBounds: null,
             mainWindowMaximized: false,
@@ -345,6 +349,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          automaticUpdates: true,
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -373,6 +378,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          automaticUpdates: true,
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -400,6 +406,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          automaticUpdates: true,
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,

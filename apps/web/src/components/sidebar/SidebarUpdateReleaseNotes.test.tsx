@@ -20,6 +20,7 @@ type AnchorElement = ReactElement<{
 
 const baseState: DesktopUpdateState = {
   enabled: true,
+  automaticUpdates: true,
   status: "available",
   channel: "nightly",
   currentVersion: "0.0.35",
