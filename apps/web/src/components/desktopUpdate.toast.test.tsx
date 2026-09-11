@@ -41,6 +41,7 @@ function getDescription(): ReactNode {
 function downloadedState(overrides: Partial<DesktopUpdateState> = {}): DesktopUpdateState {
   return {
     enabled: true,
+    automaticUpdates: true,
     status: "downloaded",
     channel: "latest",
     currentVersion: "0.0.29",

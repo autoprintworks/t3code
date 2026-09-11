@@ -17,6 +17,7 @@ import {
 
 const baseState: DesktopUpdateState = {
   enabled: true,
+  automaticUpdates: true,
   status: "idle",
   channel: "latest",
   currentVersion: "1.0.0",

@@ -20,6 +20,7 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
+import { getForkUpdateNudgeLabel } from "../forkAutomaticUpdates.logic";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -160,6 +161,8 @@ function SidebarUpdateControl() {
     showUpdateDetails,
     state,
   );
+  // Fork only (#113). The one nudge for a downloaded update that is waiting.
+  const nudgeLabel = getForkUpdateNudgeLabel(state);
 
   useEffect(() => {
     if (!showReleaseNotesPopover) {
@@ -303,7 +306,8 @@ function SidebarUpdateControl() {
       aria-label={tooltip}
       aria-disabled={isInteractionDisabled || undefined}
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2",
+        "inline-flex h-8 items-center justify-center gap-1.5 rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2",
+        nudgeLabel ? "px-2.5" : "w-8",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
         showUpdateIconState
           ? cn(
@@ -344,6 +348,9 @@ function SidebarUpdateControl() {
         onCheckAnimationIteration={handleCheckAnimationIteration}
         status={iconStatus}
       />
+      {nudgeLabel ? (
+        <span className="whitespace-nowrap font-medium text-xs">{nudgeLabel}</span>
+      ) : null}
     </button>
   );
 
