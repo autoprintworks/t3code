@@ -32,6 +32,23 @@ Optional: `--arch arm64` for an arm64 installer (defaults to `x64`). `T3CODE_DES
 `--wsl-prebuild <path>` bundles a prebuilt Linux `pty.node` for the WSL backend; omitting it is a
 warning, not a build failure — the packaged app just won't have a working WSL backend.
 
+## T3 Connect values
+
+Upstream ships T3 Connect switched off in a fresh clone. It turns on only when the public
+identifiers in `.env.example` reach the build through a repository-root `.env` or `.env.local`,
+which `scripts/lib/public-config.ts` loads. So `dist:desktop:win` copies `.env.example` to `.env`
+when the clone has neither file ([`scripts/lib/fork-public-env.ts`](../../scripts/lib/fork-public-env.ts),
+called from `scripts/build-desktop-artifact.ts`). An existing `.env` or `.env.local` is never
+overwritten, the fork keeps no second copy of the values, and an upstream edit to `.env.example`
+flows straight into the next build. `.github/workflows/fork-update.yml` gets it from the same call,
+because its build step runs the same script. The four values are public identifiers, as
+`.env.example` says; no secret goes near this. See [connect-setup.md](connect-setup.md).
+
+Known risk: the fork's OAuth callback scheme is `t3code-fork://` and the official Clerk instance
+allowlists `t3code://app/` and `t3code-dev://app/` only, so a Google or GitHub sign-in may open the
+browser and never come back, while email code sign-in stays in the window
+([#137](https://github.com/autoprintworks/t3code/issues/137)).
+
 ## The collision decision — read before running the installer
 
 **This build installs beside the official release, not over it.** The original decision in
