@@ -619,7 +619,11 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
     ...(options.refreshTrigger === undefined ? {} : { refreshTrigger: options.refreshTrigger }),
-    execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
+    // Query atoms refresh on their own schedule; nobody is waiting on one, so
+    // a slow refresh must not raise the slow-request warning. See the
+    // opposite choice for commands below.
+    execute: (input: EnvironmentRpcInput<TTag>) =>
+      request(options.tag, input, { interaction: "background" }),
   });
 }
 

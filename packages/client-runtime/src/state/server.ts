@@ -1033,7 +1033,9 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       staleTimeMs: 5_000,
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
-        request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
+        request(WS_METHODS.serverGetHostResources, input, { interaction: "background" }).pipe(
+          Effect.timeout("5 seconds"),
+        ),
     }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",

@@ -152,7 +152,7 @@ describe("environment RPC", () => {
         WS_METHODS.cloudGetRelayClientStatus,
         {},
         {
-          interaction: "user-blocking",
+          interaction: "background",
         },
       ).pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
@@ -160,12 +160,13 @@ describe("environment RPC", () => {
       );
 
       expect(result).toEqual({ status: "available", version: "2026.6.0" });
-      // A request is background unless the caller says a user is waiting on it.
+      // A request is user-blocking unless the caller says otherwise, so a
+      // forgotten option still raises the slow-request warning.
       expect(observations).toEqual([
-        `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:background`,
-        `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:background`,
         `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:user-blocking`,
         `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:user-blocking`,
+        `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:background`,
+        `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:background`,
       ]);
     }),
   );

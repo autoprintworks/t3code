@@ -154,7 +154,11 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
     method: tag,
-    interaction: options?.interaction ?? "background",
+    // A request a user is waiting on is the common case at this call site;
+    // routine polling and refreshes opt out explicitly with "background" at
+    // their own call sites so a forgotten option still raises the warning
+    // instead of silently hiding a slow request.
+    interaction: options?.interaction ?? "user-blocking",
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
