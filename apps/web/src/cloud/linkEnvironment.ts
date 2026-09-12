@@ -54,7 +54,10 @@ function ensureRelayClientAvailable(
   return Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry;
     const status = yield* registry
-      .run(environmentId, request(WS_METHODS.cloudGetRelayClientStatus, {}))
+      .run(
+        environmentId,
+        request(WS_METHODS.cloudGetRelayClientStatus, {}, { interaction: "user-blocking" }),
+      )
       .pipe(Effect.mapError(relayClientRpcError("Could not check relay client availability.")));
     if (status.status === "available") return;
     if (status.status === "unsupported") {

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentRpcInteraction } from "@t3tools/client-runtime/rpc";
 import { WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -51,8 +52,14 @@ function getSlowRpcAckRequestsValue(): ReadonlyArray<SlowRpcAckRequest> {
   return appAtomRegistry.get(slowRpcAckRequestsAtom);
 }
 
-function shouldTrackRpcAck(method: string): boolean {
+/**
+ * Background requests refresh cached views on their own schedule. Nobody is
+ * waiting on one, so a slow one must not interrupt the thread. Only requests a
+ * user action is waiting on can raise the slow-request warning.
+ */
+function shouldTrackRpcAck(method: string, interaction: EnvironmentRpcInteraction): boolean {
   return (
+    interaction === "user-blocking" &&
     !method.includes("subscribe") &&
     !method.startsWith("pullRequests.") &&
     !untrackedRpcAckMethods.has(method)
@@ -72,10 +79,16 @@ export function getSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
 /**
  * Starts the slow-request timer for one in-flight unary RPC. `method` is the
  * bare WS method (used to decide whether and how long to wait); `tag` is the
- * human-readable label shown in the toast, which defaults to the method.
+ * human-readable label shown in the toast, which defaults to the method;
+ * `interaction` says whether a user action is waiting on the request.
  */
-export function trackRpcRequestSent(requestId: string, method: string, tag = method): void {
-  if (!shouldTrackRpcAck(method)) {
+export function trackRpcRequestSent(
+  requestId: string,
+  method: string,
+  tag = method,
+  interaction: EnvironmentRpcInteraction = "user-blocking",
+): void {
+  if (!shouldTrackRpcAck(method, interaction)) {
     return;
   }
 

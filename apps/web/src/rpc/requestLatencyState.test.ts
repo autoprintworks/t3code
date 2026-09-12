@@ -36,6 +36,22 @@ describe("requestLatencyState", () => {
     ]);
   });
 
+  it("ignores a slow background request", () => {
+    trackRpcRequestSent("1", WS_METHODS.vcsListRefs, "vcs.listRefs · env-1", "background");
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
+
+    expect(getSlowRpcAckRequests()).toEqual([]);
+  });
+
+  it("still warns about a slow request a user action is waiting on", () => {
+    trackRpcRequestSent("1", WS_METHODS.vcsListRefs, "vcs.listRefs · env-1", "user-blocking");
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS);
+
+    expect(getSlowRpcAckRequests()).toMatchObject([
+      { requestId: "1", tag: "vcs.listRefs · env-1" },
+    ]);
+  });
+
   it("clears the slow request once the server acknowledges it", () => {
     trackRpcRequestSent("1", "git.status");
     vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS);

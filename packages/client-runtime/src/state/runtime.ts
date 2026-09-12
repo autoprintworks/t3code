@@ -619,7 +619,11 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
     ...(options.refreshTrigger === undefined ? {} : { refreshTrigger: options.refreshTrigger }),
-    execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
+    // Query atoms refresh on their own schedule; nobody is waiting on one, so
+    // a slow refresh must not raise the slow-request warning. See the
+    // opposite choice for commands below.
+    execute: (input: EnvironmentRpcInput<TTag>) =>
+      request(options.tag, input, { interaction: "background" }),
   });
 }
 
@@ -690,7 +694,9 @@ export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnary
         environmentId,
         input,
       };
-      return request(options.tag, input).pipe(
+      // A command runs because the user asked for it, so its latency is worth
+      // surfacing. Query atoms refresh on their own and stay background.
+      return request(options.tag, input, { interaction: "user-blocking" }).pipe(
         Effect.tap(() => options.onSuccess?.(target, registry) ?? Effect.void),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );

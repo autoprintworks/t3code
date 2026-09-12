@@ -85,7 +85,9 @@ function timestampedCommandMetadata(input: {
 }
 
 function dispatch(command: ClientOrchestrationCommand) {
-  return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
+  return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command, {
+    interaction: "user-blocking",
+  });
 }
 
 export const createProject: (input: CreateProjectInput) => CommandEffect = Effect.fn(

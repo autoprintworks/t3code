@@ -142,9 +142,11 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
         )
       : Option.none<VcsListRefsResult>();
   const refresh = Effect.fn("CachedVcsRefsState.refresh")(function* () {
-    const refs = yield* request(WS_METHODS.vcsListRefs, input).pipe(
-      Effect.provideService(EnvironmentSupervisor, supervisor),
-    );
+    // This refresh runs on its own schedule; nobody is waiting on it, so a
+    // slow ref listing must not raise the slow-request warning.
+    const refs = yield* request(WS_METHODS.vcsListRefs, input, {
+      interaction: "background",
+    }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor));
     const persist = cache.saveVcsRefs(environmentId, input.cwd, refs).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not persist cached Git refs.").pipe(

@@ -21,9 +21,21 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedErrorClass<Envi
   },
 ) {}
 
+/**
+ * Whether a user action is waiting on the request. Background reads refresh
+ * cached views on their own schedule, so their latency must stay out of the
+ * user's way. User-blocking requests are the ones a person is waiting for.
+ */
+export type EnvironmentRpcInteraction = "user-blocking" | "background";
+
 export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
   readonly method: string;
+  readonly interaction: EnvironmentRpcInteraction;
+}
+
+export interface EnvironmentRpcRequestOptions {
+  readonly interaction?: EnvironmentRpcInteraction;
 }
 
 export class EnvironmentRpcRequestObserver extends Context.Reference<{
@@ -128,7 +140,7 @@ const currentSession = Effect.fn("EnvironmentRpc.currentSession")(function* () {
 
 export const request = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
->(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+>(tag: TTag, input: EnvironmentRpcInput<TTag>, options?: EnvironmentRpcRequestOptions) {
   const supervisor = yield* EnvironmentSupervisor;
   yield* Effect.annotateCurrentSpan({
     "environment.id": supervisor.target.environmentId,
@@ -142,6 +154,11 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
     method: tag,
+    // A request a user is waiting on is the common case at this call site;
+    // routine polling and refreshes opt out explicitly with "background" at
+    // their own call sites so a forgotten option still raises the warning
+    // instead of silently hiding a slow request.
+    interaction: options?.interaction ?? "user-blocking",
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
