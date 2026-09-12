@@ -257,10 +257,14 @@ sets the update feed; see the "No silent re-overwrite" note above.
 ### The fork feature manifest
 
 `fork-features.json` at the repository root lists every feature this fork carries over upstream: the
-files it lives in, the test that proves it, and whether it patches a file upstream also owns.
-`scripts/check-fork-features.ts` fails when a listed file or test file is gone, then runs the listed
-tests. It runs in the gate and in `ci.yml`, so an upstream merge that deletes a fork seam stops
-before it can publish.
+files it lives in, the test that proves it, whether it patches a file upstream also owns, and its
+`keep` line. `scripts/check-fork-features.ts` fails when a listed file or test file is gone, then
+runs the listed tests. It runs in the gate and in `ci.yml`, so an upstream merge that deletes a fork
+seam stops before it can publish.
+
+A feature with no `keep` line fails the checker, because a resolver would have nothing to follow.
+What a `keep` line must say and how it is applied is defined in [Resolving an upstream
+conflict](../agents/upstream-conflict-resolution.md); read that instead of a second account here.
 
 Every entry names a test that cannot pass on plain upstream. That is the point of the manifest: a
 test upstream also owns would stay green after an upstream merge deleted the fork's work. So
@@ -290,9 +294,10 @@ whether a release `v<version>` now exists, and says whether the merge reached th
 release job can fail after the push, or after the publish, so the body reads the state rather than
 assuming it.
 
-A worker resolves a conflict by hand, in a normal pull request against `main`: merge the upstream tag
-locally, fix the conflicting files, open the pull request. Do not rebase. Once that pull request is
-on `main`, dispatch the workflow again against the same tag.
+A worker resolves a conflict by hand, in a normal pull request against `main`, following
+[Resolving an upstream conflict](../agents/upstream-conflict-resolution.md). Upstream wins every
+conflicting hunk unless a `keep` line in `fork-features.json` names the file. Do not rebase. Once
+that pull request is on `main`, dispatch the workflow again against the same tag.
 
 ### The fork is behind upstream
 

@@ -1,9 +1,10 @@
 {
-  "comment": "Every feature this fork carries over pingdotgg/t3code. scripts/check-fork-features.ts fails when a listed file or test file is gone, then runs the listed tests. .github/workflows/fork-update.yml runs it in the gate, so an upstream merge that deletes a fork seam stops before it can publish. See docs/operations/fork-windows-build.md.",
+  "comment": "Every feature this fork carries over pingdotgg/t3code. Each entry's \"keep\" line is the per-file resolution rule an upstream merge conflict is settled by: what of ours must survive in the listed files, and what takes upstream. scripts/check-fork-features.ts fails when a keep line, a listed file or a test file is gone, then runs the listed tests. .github/workflows/fork-update.yml runs it in the gate, so an upstream merge that deletes a fork seam stops before it can publish. See docs/agents/upstream-conflict-resolution.md and docs/operations/fork-windows-build.md.",
   "features": [
     {
       "name": "fork-app-identity",
       "description": "The fork installs and runs beside official T3 Code: its own app id, product name, state directory (~/.t3-fork) and t3code-fork:// URL scheme. Issues #34 and #59.",
+      "keep": "Our app id, product name, window title, ~/.t3-fork state directory and t3code-fork:// URL scheme replace upstream's wherever these files set them; take upstream for the rest of these files, then re-apply those settings on top.",
       "files": [
         "apps/desktop/src/app/DesktopEnvironment.ts",
         "apps/desktop/src/app/DesktopLinuxUrlHandler.ts",
@@ -17,6 +18,7 @@
     {
       "name": "fork-desktop-build",
       "description": "The desktop build stages the fork's app id, product name and installer file name, and reads its update source from T3CODE_DESKTOP_UPDATE_REPOSITORY. scripts/release-smoke.ts also carries the fork's fix for running the release-only shell steps under Git for Windows bash. Issues #59, #75 and #94.",
+      "keep": "Our app id, product name, installer file name, the T3CODE_DESKTOP_UPDATE_REPOSITORY update source and the Git for Windows bash fix in release-smoke.ts replace upstream's; take upstream for the rest of these files, then re-apply those parts on top.",
       "files": ["scripts/build-desktop-artifact.ts", "scripts/release-smoke.ts"],
       "test": "scripts/build-desktop-artifact.test.ts",
       "patchesUpstream": true
@@ -24,6 +26,7 @@
     {
       "name": "windows-console-suppression",
       "description": "Spawned server and provider processes no longer draw a console window on Windows. Issue #82.",
+      "keep": "windowsConsole.ts is ours whole; take upstream for the rest of the other listed files, then re-apply every call into windowsConsole.ts that hides a spawned console window on top.",
       "files": [
         "packages/shared/src/windowsConsole.ts",
         "packages/shared/src/shell.ts",
@@ -37,6 +40,7 @@
     {
       "name": "terminal-subprocess-poll",
       "description": "Bounded terminal and preview polling on one shared back-off engine: a probe budget held under the poll period, bounded fan-out, a round that backs off when nothing changed and returns to the base period on any event. Issue #83, merged in #106, re-applied on upstream v0.0.39's terminal manager in #125. pollLoop.ts is the fork's own module and upstream has no file at that path, so its test cannot pass on plain upstream.",
+      "keep": "pollLoop.ts is ours whole, and Manager.ts and PortScanner.ts must still drive their polling through it; take upstream for the rest of those two files, then re-apply the pollLoop call sites on top.",
       "files": [
         "apps/server/src/pollLoop.ts",
         "apps/server/src/terminal/Manager.ts",
@@ -48,6 +52,7 @@
     {
       "name": "fork-automatic-updates",
       "description": "A found update downloads with no click and installs on the next quit. One update pill label names the waiting version, Settings shows the state in plain words, and a switch turns it off for upstream's two-click flow. forkAutomaticUpdates.ts and forkAutomaticUpdates.logic.ts are the fork's own modules and upstream has no file at either path, so the test cannot pass on plain upstream. Issue #113.",
+      "keep": "forkAutomaticUpdates.ts and forkAutomaticUpdates.logic.ts are ours whole, and the automatic download, the single update pill label, the Settings state and switch, and the IPC channel that carries them survive in the other listed files; the \"Update pill label\" row in docs/internals/glossary.md is ours whole too; everything else in those files takes upstream.",
       "files": [
         "apps/desktop/src/updates/forkAutomaticUpdates.ts",
         "apps/desktop/src/updates/DesktopUpdates.ts",
@@ -72,6 +77,7 @@
     {
       "name": "fm-acp-provider",
       "description": "First Mate is driven through its ACP door as a configurable ACP agent provider. Issues #78 and #79.",
+      "keep": "Every listed file is the fork's own and upstream has no file at these paths, so keep our side of anything that conflicts here; nothing in these files takes upstream. If upstream adds a file at one of these paths, keep our file and rename upstream's.",
       "files": [
         "apps/server/src/provider/acpAgent/AcpAgentProvider.ts",
         "apps/server/src/provider/acpAgent/AcpAgentDriver.ts",
@@ -85,6 +91,7 @@
     {
       "name": "fm-worker-threads",
       "description": "First Mate workers show up as read-only threads, with the fork's own migration track behind them. Issue #81.",
+      "keep": "AcpAgentWorkerThreadReactor.ts, AcpAgentWorkerSessions.ts, AcpPeerSessions.ts and ForkMigrations.ts are ours whole, and decider.ts must keep our read-only thread handling; take upstream for the rest of decider.ts, then re-apply the read-only rules on top.",
       "files": [
         "apps/server/src/provider/acpAgent/AcpAgentWorkerThreadReactor.ts",
         "apps/server/src/provider/acpAgent/AcpAgentWorkerSessions.ts",
@@ -98,6 +105,7 @@
     {
       "name": "fork-connect-public-env",
       "description": "The desktop build ships with T3 Connect switched on. A clone with no .env gets .env.example copied to .env before the build spawns, so server.asar and app.asar carry the public Clerk key and relay URL. fork-public-env.ts is the fork's own module and upstream has no file at that path, so its test cannot pass on plain upstream. Issue #137.",
+      "keep": "fork-public-env.ts is ours whole, and the call that copies .env.example to .env before the build spawns survives in build-desktop-artifact.ts, the workflow and the doc; everything else in those files takes upstream.",
       "files": [
         "scripts/lib/fork-public-env.ts",
         "scripts/build-desktop-artifact.ts",
@@ -110,6 +118,7 @@
     {
       "name": "fm-worker-thread-model",
       "description": "A read-only worker thread says which model and thinking level is behind it: a strip where the composer would sit, and badges on the sidebar row. ReadOnlyThreadModel.tsx and readOnlyThreadModel.logic.ts are the fork's own modules and upstream has no file at either path, so the test cannot pass on plain upstream. Issue #135.",
+      "keep": "ReadOnlyThreadModel.tsx and readOnlyThreadModel.logic.ts are ours whole, and the model and thinking level strip and sidebar badges they add survive in ChatView.tsx and Sidebar.tsx; everything else in those files takes upstream.",
       "files": [
         "apps/web/src/components/chat/ReadOnlyThreadModel.tsx",
         "apps/web/src/components/chat/readOnlyThreadModel.logic.ts",

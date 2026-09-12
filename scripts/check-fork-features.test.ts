@@ -12,6 +12,7 @@ import {
 const feature = (overrides: Partial<ForkFeature> = {}): ForkFeature => ({
   name: "fork-app-identity",
   description: "The fork installs beside official T3 Code.",
+  keep: "Our app id and product name replace upstream's; everything else takes upstream.",
   files: ["apps/desktop/src/app/DesktopEnvironment.ts"],
   test: "apps/desktop/src/app/DesktopLinuxUrlHandler.test.ts",
   patchesUpstream: true,
@@ -37,12 +38,27 @@ describe("check-fork-features", () => {
       parseForkFeatures(source);
     } catch (error) {
       const problems = (error as ForkFeatureManifestError).problems;
-      assert.equal(problems.length, 4);
+      assert.equal(problems.length, 5);
       assert.include(problems.join("\n"), `half-written: "description" must be a string`);
+      assert.include(problems.join("\n"), `half-written: "keep" must say what of ours survives`);
       assert.include(problems.join("\n"), `half-written: "files" must be a non-empty array`);
       assert.include(problems.join("\n"), `half-written: "test" must be a test file path`);
       assert.include(problems.join("\n"), `half-written: "patchesUpstream" must be a boolean`);
     }
+  });
+
+  it("rejects a feature with no keep line", () => {
+    const source = JSON.stringify({ features: [{ ...feature(), keep: "  " }] });
+
+    assert.throws(() => parseForkFeatures(source), /"keep" must say what of ours survives/);
+  });
+
+  it("rejects a keep line that never says what takes upstream", () => {
+    const source = JSON.stringify({
+      features: [{ ...feature(), keep: "Our app id and product name are ours." }],
+    });
+
+    assert.throws(() => parseForkFeatures(source), /"keep" must say what of ours survives/);
   });
 
   it("rejects a duplicate feature name", () => {
