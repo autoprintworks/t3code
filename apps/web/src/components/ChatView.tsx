@@ -308,6 +308,7 @@ import {
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ChatComposerOverlay } from "./chat/ChatComposerOverlay";
+import { ReadOnlyThreadModelStrip } from "./chat/ReadOnlyThreadModel";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -8251,6 +8252,20 @@ export default function ChatView(props: ChatViewProps) {
                   </div>
                 </div>
               </div>
+            </ChatComposerOverlay>
+
+            {/* Read-only threads take the composer's slot, and its measurement
+              host, so the timeline reserves the same room it would for a bar. */}
+            <ChatComposerOverlay
+              ref={setComposerOverlayElement}
+              hidden={!isReadOnlyThread}
+              hero={false}
+            >
+              <ReadOnlyThreadModelStrip
+                providerEntries={providerInstanceEntries}
+                selection={activeThread.modelSelection}
+                runtimeMode={activeThread.runtimeMode}
+              />
             </ChatComposerOverlay>
 
             {activeThreadRef && activePreviewMiniPlayer && previewMiniPlayerVisible ? (
