@@ -24,9 +24,10 @@ export interface ForkFeature {
   readonly name: string;
   readonly description: string;
   /**
-   * The per-file rule an upstream merge conflict in {@link files} is settled
-   * by: what of ours must survive, and what takes upstream. Read by the worker
-   * brief in docs/agents/upstream-conflict-resolution.md.
+   * The per-file conflict-resolution rule for {@link files}. What it must say
+   * and how it is applied is defined in
+   * docs/agents/upstream-conflict-resolution.md, which a worker reads instead
+   * of this comment.
    */
   readonly keep: string;
   /** Every file the feature lives in, fork-only or patched from upstream. */
@@ -84,7 +85,7 @@ export function parseForkFeatures(source: string): readonly ForkFeature[] {
     if (!isNonEmptyString(feature.description)) {
       problems.push(`${label}: "description" must be a string`);
     }
-    if (!isNonEmptyString(feature.keep)) {
+    if (!isNonEmptyString(feature.keep) || !/upstream/i.test(feature.keep)) {
       problems.push(`${label}: "keep" must say what of ours survives and what takes upstream`);
     }
     if (

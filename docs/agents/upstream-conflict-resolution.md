@@ -59,7 +59,9 @@ node scripts/check-fork-features.ts
 ```
 
 Those are the four steps the fork update gate runs, in that order. See
-`.github/workflows/fork-update.yml`.
+`.github/workflows/fork-update.yml`. Run all four, repo-wide, even though AGENTS.md tells an agent
+not to run repo-wide checks in the ordinary case: a merge from upstream can touch any file in the
+tree, so this job is the named exception.
 
 `node scripts/check-fork-features.ts` is the proof the resolution kept the fork. It fails when a
 listed file or test file is gone, then runs every listed test. Every entry names a test that cannot

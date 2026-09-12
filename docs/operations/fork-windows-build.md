@@ -262,11 +262,9 @@ files it lives in, the test that proves it, whether it patches a file upstream a
 runs the listed tests. It runs in the gate and in `ci.yml`, so an upstream merge that deletes a fork
 seam stops before it can publish.
 
-The `keep` line is one sentence: what of ours must survive in that entry's files, and what takes
-upstream. It exists so an upstream merge conflict can be resolved by rule rather than by taste. A
-feature with no `keep` line fails the checker, because a resolver would have nothing to follow. The
-brief that reads these lines is [Resolving an upstream
-conflict](../agents/upstream-conflict-resolution.md).
+A feature with no `keep` line fails the checker, because a resolver would have nothing to follow.
+What a `keep` line must say and how it is applied is defined in [Resolving an upstream
+conflict](../agents/upstream-conflict-resolution.md); read that instead of a second account here.
 
 Every entry names a test that cannot pass on plain upstream. That is the point of the manifest: a
 test upstream also owns would stay green after an upstream merge deleted the fork's work. So

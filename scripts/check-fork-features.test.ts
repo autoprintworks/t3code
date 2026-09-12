@@ -53,6 +53,14 @@ describe("check-fork-features", () => {
     assert.throws(() => parseForkFeatures(source), /"keep" must say what of ours survives/);
   });
 
+  it("rejects a keep line that never says what takes upstream", () => {
+    const source = JSON.stringify({
+      features: [{ ...feature(), keep: "Our app id and product name are ours." }],
+    });
+
+    assert.throws(() => parseForkFeatures(source), /"keep" must say what of ours survives/);
+  });
+
   it("rejects a duplicate feature name", () => {
     const source = JSON.stringify({ features: [feature(), feature()] });
 
