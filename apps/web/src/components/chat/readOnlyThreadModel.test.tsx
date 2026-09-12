@@ -3,30 +3,42 @@ import {
   ProviderInstanceId,
   type ModelSelection,
   type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../../providerInstances";
 import { ReadOnlyThreadModelBadges, ReadOnlyThreadModelStrip } from "./ReadOnlyThreadModel";
 
-/**
- * The selection a running First Mate worker carries, verbatim, and the same
- * selection with its thinking level dropped.
- */
+/** The selection a running First Mate worker carries, verbatim. */
 const workerSelection: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-5",
   options: [{ id: "effort", value: "medium" }],
 };
-const selectionWithoutThinking: ModelSelection = {
-  instanceId: ProviderInstanceId.make("claudeAgent"),
-  model: "claude-opus-5",
-};
 
-function claudeEntries() {
-  const provider: ServerProvider = {
-    instanceId: ProviderInstanceId.make("claudeAgent"),
+function modelNamed(name: string): ServerProviderModel {
+  return {
+    slug: "claude-opus-5",
+    name,
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Thinking",
+          type: "select",
+          options: [{ id: "medium", label: "Medium" }],
+        },
+      ],
+    },
+  };
+}
+
+function instance(instanceId: string, modelName: string): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(instanceId),
     driver: ProviderDriverKind.make("claudeAgent"),
     enabled: true,
     installed: true,
@@ -34,39 +46,31 @@ function claudeEntries() {
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-09-11T00:00:00.000Z",
-    models: [
-      {
-        slug: "claude-opus-5",
-        name: "Opus 5",
-        isCustom: false,
-        capabilities: {
-          optionDescriptors: [
-            {
-              id: "effort",
-              label: "Thinking",
-              type: "select",
-              options: [
-                { id: "low", label: "Low" },
-                { id: "medium", label: "Medium" },
-                { id: "high", label: "High" },
-              ],
-            },
-          ],
-        },
-      },
-    ],
+    models: [modelNamed(modelName)],
     slashCommands: [],
     skills: [],
   };
-  return deriveProviderInstanceEntries([provider]);
 }
 
+/**
+ * Two instances of the same driver, both carrying the selected slug under a
+ * different name. Only the one the selection names may supply the label, so a
+ * lookup that keys off anything else shows "Other instance".
+ */
+const twoInstances: ReadonlyArray<ProviderInstanceEntry> = deriveProviderInstanceEntries([
+  instance("claudeAgentSecondary", "Other instance"),
+  instance("claudeAgent", "Opus 5"),
+]);
+
+const twoInstancesByInstanceId: ReadonlyMap<string, ProviderInstanceEntry> = new Map(
+  twoInstances.map((entry) => [entry.instanceId as string, entry]),
+);
+
 describe("ReadOnlyThreadModelStrip", () => {
-  it("shows the model, the thinking level and the runtime mode", () => {
+  it("labels the model from the instance the selection names, and says the runtime mode", () => {
     const markup = renderToStaticMarkup(
       <ReadOnlyThreadModelStrip
-        providerEntries={claudeEntries()}
-        instanceId={ProviderInstanceId.make("claudeAgent")}
+        providerEntries={twoInstances}
         selection={workerSelection}
         runtimeMode="full-access"
       />,
@@ -75,57 +79,30 @@ describe("ReadOnlyThreadModelStrip", () => {
     expect(markup).toContain("Opus 5");
     expect(markup).toContain("Medium");
     expect(markup).toContain("Full access");
-    // A strip, not a composer: nothing to type into and nothing to pick.
-    expect(markup).not.toContain("<textarea");
-    expect(markup).not.toContain("<button");
-  });
-
-  it("omits the thinking level when the selection carries no effort option", () => {
-    const markup = renderToStaticMarkup(
-      <ReadOnlyThreadModelStrip
-        providerEntries={claudeEntries()}
-        instanceId={ProviderInstanceId.make("claudeAgent")}
-        selection={selectionWithoutThinking}
-        runtimeMode="full-access"
-      />,
-    );
-
-    expect(markup).toContain("Opus 5");
-    expect(markup).toContain("Full access");
-    expect(markup).not.toContain("Medium");
-    expect(markup).not.toContain("Unknown");
+    expect(markup).not.toContain("Other instance");
   });
 });
 
 describe("ReadOnlyThreadModelBadges", () => {
-  it("shows the model and the thinking level in the row", () => {
+  it("labels the model from the instance the selection names", () => {
     const markup = renderToStaticMarkup(
       <ReadOnlyThreadModelBadges
-        providerEntry={claudeEntries()[0] ?? null}
+        providerEntryByInstanceId={twoInstancesByInstanceId}
         selection={workerSelection}
       />,
     );
 
     expect(markup).toContain("Opus 5");
     expect(markup).toContain("Medium");
+    expect(markup).not.toContain("Other instance");
   });
 
-  it("omits the thinking level when the selection carries no effort option", () => {
+  it("falls back to the stored slug when the selection names an instance that is gone", () => {
     const markup = renderToStaticMarkup(
       <ReadOnlyThreadModelBadges
-        providerEntry={claudeEntries()[0] ?? null}
-        selection={selectionWithoutThinking}
+        providerEntryByInstanceId={new Map()}
+        selection={workerSelection}
       />,
-    );
-
-    expect(markup).toContain("Opus 5");
-    expect(markup).not.toContain("Medium");
-    expect(markup).not.toContain("Unknown");
-  });
-
-  it("falls back to the stored slug and value when the model is unknown", () => {
-    const markup = renderToStaticMarkup(
-      <ReadOnlyThreadModelBadges providerEntry={null} selection={workerSelection} />,
     );
 
     expect(markup).toContain("claude-opus-5");

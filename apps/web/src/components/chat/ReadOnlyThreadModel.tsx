@@ -1,4 +1,4 @@
-import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
+import type { ModelSelection, RuntimeMode } from "@t3tools/contracts";
 
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -8,6 +8,9 @@ import { resolveReadOnlyThreadModel } from "./readOnlyThreadModel.logic";
  * Same words the composer's runtime mode control uses (`runtimeModeConfig` in
  * ChatComposer.tsx). Repeated rather than imported: importing that module here
  * would pull the whole composer into the sidebar and into this file's test.
+ * Upstream already keeps its own copies in CompactComposerControlsMenu.tsx and
+ * in the mobile thread settings. Typing this as a `Record<RuntimeMode, string>`
+ * is what stops a renamed mode drifting: the union changing fails the build.
  */
 const runtimeModeLabels: Record<RuntimeMode, string> = {
   "approval-required": "Supervised",
@@ -17,17 +20,25 @@ const runtimeModeLabels: Record<RuntimeMode, string> = {
 };
 
 /**
+ * Caps the badges on a sidebar row. An unknown model falls back to the stored
+ * slug, which is long enough to push the diff counts and the timestamp out of
+ * the row, so a badge truncates instead of growing. The size is set here rather
+ * than inherited: the card row's meta line is `text-xs`, the slim row is not.
+ */
+const rowModelClassName = "min-w-0 max-w-24 shrink-0 truncate text-muted-foreground/60 text-xs";
+const rowThinkingClassName = "min-w-0 max-w-16 shrink-0 truncate text-muted-foreground/60 text-xs";
+
+/**
  * Stands where the composer sits on a read-only thread: what is driving the
  * work, not a way to change it. No input, no picker, nothing to click.
  */
 export function ReadOnlyThreadModelStrip(props: {
   readonly providerEntries: ReadonlyArray<ProviderInstanceEntry>;
-  readonly instanceId: ProviderInstanceId | string;
   readonly selection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
 }) {
   const providerEntry =
-    props.providerEntries.find((entry) => entry.instanceId === props.instanceId) ?? null;
+    props.providerEntries.find((entry) => entry.instanceId === props.selection.instanceId) ?? null;
   const { modelLabel, thinkingLabel } = resolveReadOnlyThreadModel({
     selection: props.selection,
     models: providerEntry?.models ?? [],
@@ -71,26 +82,27 @@ export function ReadOnlyThreadModelStrip(props: {
  * Model and thinking level on a read-only sidebar row. A read-only thread
  * cannot be opened to change either one, so the row carries them at rest
  * instead of only in the hover card.
+ *
+ * Takes the whole instance lookup rather than one entry, so the instance is
+ * picked from the selection here and cannot be picked wrongly by the caller.
  */
 export function ReadOnlyThreadModelBadges(props: {
-  readonly providerEntry: ProviderInstanceEntry | null;
+  readonly providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   readonly selection: ModelSelection;
 }) {
+  const providerEntry = props.providerEntryByInstanceId.get(props.selection.instanceId) ?? null;
   const { modelLabel, thinkingLabel } = resolveReadOnlyThreadModel({
     selection: props.selection,
-    models: props.providerEntry?.models ?? [],
+    models: providerEntry?.models ?? [],
   });
 
   return (
     <>
-      <span data-testid="sidebar-read-only-model" className="shrink-0 text-muted-foreground/60">
+      <span data-testid="sidebar-read-only-model" className={rowModelClassName}>
         {modelLabel}
       </span>
       {thinkingLabel === null ? null : (
-        <span
-          data-testid="sidebar-read-only-thinking"
-          className="shrink-0 text-muted-foreground/60"
-        >
+        <span data-testid="sidebar-read-only-thinking" className={rowThinkingClassName}>
           {thinkingLabel}
         </span>
       )}

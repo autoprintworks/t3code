@@ -22,6 +22,12 @@ export interface ReadOnlyThreadModelSummary {
  *
  * The thread title of a First Mate worker already carries both as text. This
  * reads the selection instead, because a title is free text a user can rename.
+ *
+ * `models` must be the model list of the instance named in
+ * `selection.instanceId`, never the instance the thread's session happens to be
+ * running. A session can be on a different instance, and that instance's list
+ * does not hold the selected slug at all, so a model we do know would fall back
+ * to its raw slug.
  */
 export function resolveReadOnlyThreadModel(input: {
   readonly selection: ModelSelection;

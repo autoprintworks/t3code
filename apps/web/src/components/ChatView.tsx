@@ -8263,9 +8263,6 @@ export default function ChatView(props: ChatViewProps) {
             >
               <ReadOnlyThreadModelStrip
                 providerEntries={providerInstanceEntries}
-                instanceId={
-                  activeThread.session?.providerInstanceId ?? activeThread.modelSelection.instanceId
-                }
                 selection={activeThread.modelSelection}
                 runtimeMode={activeThread.runtimeMode}
               />

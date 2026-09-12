@@ -1531,6 +1531,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     )
   ) : null;
 
+  // A read-only thread cannot be opened to see what is driving it, so both row
+  // variants carry the model and the thinking level at rest, not on hover.
+  const readOnlyModelBadges =
+    thread.readOnly === true ? (
+      <ReadOnlyThreadModelBadges
+        providerEntryByInstanceId={props.providerEntryByInstanceId}
+        selection={thread.modelSelection}
+      />
+    ) : null;
+
   if (variant === "slim") {
     return (
       <li
@@ -1589,6 +1599,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
+            {readOnlyModelBadges}
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -1892,12 +1903,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               )}
               {terminalStatusIcon}
               {prBadge}
-              {thread.readOnly === true ? (
-                <ReadOnlyThreadModelBadges
-                  providerEntry={providerEntry}
-                  selection={thread.modelSelection}
-                />
-              ) : null}
+              {readOnlyModelBadges}
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}
