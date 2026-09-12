@@ -46,6 +46,11 @@ because its build step runs the same script. The four values are public identifi
 bundle and the web client but not into the desktop main bundle, so `server.asar` carries both
 values and `app.asar` carries the Clerk key alone. See [connect-setup.md](connect-setup.md).
 
+A local `dist:desktop:win` leaves that `.env` in the repository root, and the next build keeps it,
+so a later upstream change to `.env.example` reaches this machine only once you delete `.env`. A
+hand-written `.env` or `.env.local` is yours in full: when it is missing one of the four values, T3
+Connect stays off, because nothing fills a single missing key from `.env.example`.
+
 Known risk: the fork's OAuth callback scheme is `t3code-fork://` and the official Clerk instance
 allowlists `t3code://app/` and `t3code-dev://app/` only, so a Google or GitHub sign-in may open the
 browser and never come back, while email code sign-in stays in the window

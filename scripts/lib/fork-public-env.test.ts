@@ -2,18 +2,27 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { decideForkPublicEnv, ensureForkPublicEnv } from "./fork-public-env.ts";
 import { loadRepoEnv } from "./public-config.ts";
 
-const EXAMPLE = [
-  "T3CODE_CLERK_PUBLISHABLE_KEY=pk_live_Y2xlcmsudDMuY29kZXMk",
-  "T3CODE_CLERK_JWT_TEMPLATE=t3-relay",
-  "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID=hzxSgY2cH10sDU2r",
-  "T3CODE_RELAY_URL=https://relay.t3.codes",
-  "",
-].join("\n");
+/**
+ * The repository's own `.env.example` is the only copy of the values, here as well as in
+ * the build, so an upstream edit to it flows through instead of failing this test.
+ */
+const REPO_ROOT = NodePath.resolve(import.meta.dirname, "../..");
+const EXAMPLE = NodeFS.readFileSync(NodePath.join(REPO_ROOT, ".env.example"), "utf8");
+const EXPECTED = NodeUtil.parseEnv(EXAMPLE);
+
+/** Short of all four, the installed fork offers no sign-in and the relay cannot list it. */
+const REQUIRED_KEYS = [
+  "T3CODE_CLERK_PUBLISHABLE_KEY",
+  "T3CODE_CLERK_JWT_TEMPLATE",
+  "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
+  "T3CODE_RELAY_URL",
+] as const;
 
 const temporaryDirectories: string[] = [];
 
@@ -41,19 +50,19 @@ describe("decideForkPublicEnv", () => {
 });
 
 describe("ensureForkPublicEnv", () => {
-  it("gives a clean clone T3 Connect's public values", () => {
+  it("gives a clean clone the values the fork's .env.example carries", () => {
     const repoRoot = makeTemporaryDirectory();
     NodeFS.writeFileSync(NodePath.join(repoRoot, ".env.example"), EXAMPLE);
 
     expect(ensureForkPublicEnv(repoRoot).action).toBe("copy-example");
 
     const env = loadRepoEnv({ baseEnv: {}, repoRoot });
-    expect(env.T3CODE_CLERK_PUBLISHABLE_KEY).toBe("pk_live_Y2xlcmsudDMuY29kZXMk");
-    expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBe("pk_live_Y2xlcmsudDMuY29kZXMk");
-    expect(env.T3CODE_CLERK_JWT_TEMPLATE).toBe("t3-relay");
-    expect(env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID).toBe("hzxSgY2cH10sDU2r");
-    expect(env.T3CODE_RELAY_URL).toBe("https://relay.t3.codes");
-    expect(env.VITE_T3CODE_RELAY_URL).toBe("https://relay.t3.codes");
+    for (const key of REQUIRED_KEYS) {
+      expect(EXPECTED[key]).toBeTruthy();
+      expect(env[key]).toBe(EXPECTED[key]);
+    }
+    expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBe(EXPECTED.T3CODE_CLERK_PUBLISHABLE_KEY);
+    expect(env.VITE_T3CODE_RELAY_URL).toBe(EXPECTED.T3CODE_RELAY_URL);
   });
 
   it("keeps a developer's own .env", () => {
@@ -89,30 +98,6 @@ describe("ensureForkPublicEnv", () => {
     expect(NodeFS.existsSync(NodePath.join(repoRoot, ".env"))).toBe(false);
   });
 });
-
-describe("the fork's own .env.example", () => {
-  it("still carries the values the installer needs", () => {
-    const repoRoot = NodePath.resolve(import.meta.dirname, "../..");
-    const env = loadRepoEnv({
-      baseEnv: {},
-      repoRoot: stageExampleAsEnv(repoRoot),
-    });
-
-    expect(env.T3CODE_CLERK_PUBLISHABLE_KEY).toBe("pk_live_Y2xlcmsudDMuY29kZXMk");
-    expect(env.T3CODE_RELAY_URL).toBe("https://relay.t3.codes");
-  });
-});
-
-/** Copies the repository's real `.env.example` into a scratch root, then applies the fork rule. */
-function stageExampleAsEnv(repoRoot: string) {
-  const staged = makeTemporaryDirectory();
-  NodeFS.copyFileSync(
-    NodePath.join(repoRoot, ".env.example"),
-    NodePath.join(staged, ".env.example"),
-  );
-  ensureForkPublicEnv(staged);
-  return staged;
-}
 
 function makeTemporaryDirectory() {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-fork-public-env-"));
