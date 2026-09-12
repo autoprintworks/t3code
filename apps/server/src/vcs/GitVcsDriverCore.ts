@@ -247,6 +247,26 @@ function paginateBranches(input: {
   };
 }
 
+const ORIGIN_HEAD_REF = "refs/remotes/origin/HEAD";
+const ORIGIN_REF_PREFIX = "refs/remotes/origin/";
+
+/**
+ * Reads the default branch out of the ref enumeration, which lists
+ * `refs/remotes/origin/HEAD` with its symbolic target. Returns null when origin
+ * has no HEAD, matching what `git symbolic-ref` reported before.
+ */
+function readDefaultBranchFromRefLines(refLines: ReadonlyArray<string>): string | null {
+  for (const line of refLines) {
+    if (!line.startsWith(`${ORIGIN_HEAD_REF}\t`)) continue;
+    const symbolicTarget = line.split("\t")[2]?.trim() ?? "";
+    if (symbolicTarget.length === 0) continue;
+    return symbolicTarget.startsWith(ORIGIN_REF_PREFIX)
+      ? symbolicTarget.slice(ORIGIN_REF_PREFIX.length)
+      : symbolicTarget;
+  }
+  return null;
+}
+
 function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
   const worktreePaths = new Map<string, string>();
   let currentPath: string | null = null;
@@ -1035,49 +1055,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.asVoid);
   };
 
+  const REPOSITORY_PATHS_ARGS = ["rev-parse", "--git-common-dir", "--show-toplevel"] as const;
+
+  /**
+   * Reads the repository paths with two concurrent Git processes rather than
+   * three sequential ones. Process spawn latency, not Git's own work, dominates
+   * this call: on a busy host each `git` spawn costs hundreds of milliseconds,
+   * so the round count is what the caller waits on.
+   *
+   * `rev-parse` prints one line per requested item in argument order and keeps
+   * the earlier lines when a later one fails, so a bare repository still yields
+   * the common directory alongside its "must be run in a work tree" failure.
+   */
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
-    const commonDirResult = yield* executeGitWithStableDiagnostics(
-      "GitVcsDriver.resolveRepositoryPaths.commonDir",
-      cwd,
-      ["rev-parse", "--git-common-dir"],
-      {
-        timeoutMs: 5_000,
-        allowNonZeroExit: true,
-      },
-    );
-    if (commonDirResult.exitCode !== 0) {
-      const stderr = commonDirResult.stderr.trim();
-      if (isNonRepositoryGitStderr(stderr)) {
-        return null;
-      }
-      return yield* new GitCommandError({
-        ...gitCommandContext({
-          operation: "GitVcsDriver.resolveRepositoryPaths.commonDir",
-          cwd,
-          args: ["rev-parse", "--git-common-dir"],
-        }),
-        detail: "Failed to resolve the Git common directory.",
-        exitCode: commonDirResult.exitCode,
-        stdoutLength: commonDirResult.stdout.length,
-        stderrLength: commonDirResult.stderr.length,
-      });
-    }
-
-    const commonDirOutput = commonDirResult.stdout.trim();
-    const resolvedGitCommonDir = path.isAbsolute(commonDirOutput)
-      ? path.normalize(commonDirOutput)
-      : path.resolve(cwd, commonDirOutput);
-    const gitCommonDir = yield* fileSystem
-      .realPath(resolvedGitCommonDir)
-      .pipe(Effect.orElseSucceed(() => resolvedGitCommonDir));
-    const [worktreeRootResult, currentBranchResult] = yield* Effect.all(
+    const [pathsResult, currentBranchResult] = yield* Effect.all(
       [
-        executeGit(
-          "GitVcsDriver.resolveRepositoryPaths.worktreeRoot",
+        executeGitWithStableDiagnostics(
+          "GitVcsDriver.resolveRepositoryPaths.paths",
           cwd,
-          ["rev-parse", "--show-toplevel"],
+          REPOSITORY_PATHS_ARGS,
           {
             timeoutMs: 5_000,
             allowNonZeroExit: true,
@@ -1095,9 +1093,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ],
       { concurrency: 2 },
     );
-    const worktreeRootOutput = worktreeRootResult.stdout.trim();
+
+    const pathLines = pathsResult.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const commonDirOutput = pathLines[0] ?? "";
+    if (commonDirOutput.length === 0) {
+      const stderr = pathsResult.stderr.trim();
+      if (isNonRepositoryGitStderr(stderr)) {
+        return null;
+      }
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.resolveRepositoryPaths.paths",
+          cwd,
+          args: REPOSITORY_PATHS_ARGS,
+        }),
+        detail: "Failed to resolve the Git common directory.",
+        ...(pathsResult.exitCode === null ? {} : { exitCode: pathsResult.exitCode }),
+        stdoutLength: pathsResult.stdout.length,
+        stderrLength: pathsResult.stderr.length,
+      });
+    }
+
+    const resolvedGitCommonDir = path.isAbsolute(commonDirOutput)
+      ? path.normalize(commonDirOutput)
+      : path.resolve(cwd, commonDirOutput);
+    const gitCommonDir = yield* fileSystem
+      .realPath(resolvedGitCommonDir)
+      .pipe(Effect.orElseSucceed(() => resolvedGitCommonDir));
+    const worktreeRootOutput = pathLines[1] ?? "";
     const worktreeRoot =
-      worktreeRootResult.exitCode === 0 && worktreeRootOutput.length > 0
+      worktreeRootOutput.length > 0
         ? path.normalize(
             path.isAbsolute(worktreeRootOutput)
               ? worktreeRootOutput
@@ -2571,7 +2599,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
     const gitDirArgs = ["--git-dir", gitCommonDir] as const;
-    const [refsResult, defaultRefResult, worktreeListResult, remoteNamesResult] = yield* Effect.all(
+    const [refsResult, worktreeListResult, remoteNamesResult] = yield* Effect.all(
       [
         executeGitWithStableDiagnostics(
           "GitVcsDriver.listRefs.snapshotRefs",
@@ -2590,15 +2618,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           },
         ),
         executeGit(
-          "GitVcsDriver.listRefs.defaultRef",
-          fetchCwd,
-          [...gitDirArgs, "symbolic-ref", "refs/remotes/origin/HEAD"],
-          {
-            timeoutMs: 5_000,
-            allowNonZeroExit: true,
-          },
-        ),
-        executeGit(
           "GitVcsDriver.listRefs.worktreeList",
           fetchCwd,
           [...gitDirArgs, "worktree", "list", "--porcelain", "-z"],
@@ -2613,7 +2632,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           allowNonZeroExit: true,
         }),
       ],
-      { concurrency: 2 },
+      { concurrency: 3 },
     );
 
     const remoteNames =
@@ -2623,10 +2642,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         `GitVcsDriver.listRefs: remote name lookup returned code ${remoteNamesResult.exitCode} for ${gitCommonDir}: ${remoteNamesResult.stderr.trim()}. Falling back to an empty remote name list.`,
       );
     }
-    const defaultBranch =
-      defaultRefResult.exitCode === 0
-        ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
-        : null;
+    // `refs/remotes/origin/HEAD` is itself a symbolic ref under `refs/remotes`,
+    // so the enumeration above already carries the default branch. Asking Git
+    // for it again would cost another process spawn for data we hold.
+    const refLines = refsResult.stdout.split("\n");
+    const defaultBranch = readDefaultBranchFromRefLines(refLines);
     const parsedWorktreeEntries =
       worktreeListResult.exitCode === 0
         ? [...parseWorktreeBranchPaths(worktreeListResult.stdout)].map(
@@ -2647,7 +2667,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const localBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
     const remoteBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
 
-    for (const line of refsResult.stdout.split("\n")) {
+    for (const line of refLines) {
       if (line.length === 0) continue;
       const [fullRefName, lastCommitRaw, symbolicTarget] = line.split("\t");
       if (!fullRefName || symbolicTarget) continue;

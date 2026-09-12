@@ -47,6 +47,21 @@ const makeNonRepositoryHandle = () =>
     getOutputFd: () => Stream.empty,
   });
 
+const makeMissingWorktreeRootHandle = () =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.encodeText(Stream.make(".git\n")),
+    stderr: Stream.encodeText(Stream.make("fatal: this operation must be run in a work tree")),
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+
 const makeSuccessfulHandle = (stdout: string) =>
   ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
@@ -209,12 +224,81 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
     yield* driver.listRefs({ cwd });
 
-    assert.deepStrictEqual(commands, [
+    assert.deepStrictEqual(commands.slice(0, 3), [
       { args: ["rev-parse", "--git-path", "index"], lcAll: "C" },
       { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
       { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
-      { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
     ]);
+    // The repository path lookup spawns its two processes concurrently, so their
+    // relative order is not fixed. Only the path command parses Git diagnostics.
+    assert.deepStrictEqual(
+      commands
+        .slice(3)
+        .map((command) => command.args.join(" "))
+        .sort(),
+      ["rev-parse --git-common-dir --show-toplevel", "symbolic-ref --quiet --short HEAD"],
+    );
+    assert.equal(
+      commands.find(
+        (command) => command.args.join(" ") === "rev-parse --git-common-dir --show-toplevel",
+      )?.lcAll,
+      "C",
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("lists refs with one round of Git processes", () => {
+  const commands: Array<ReadonlyArray<string>> = [];
+  const stdoutFor = (args: ReadonlyArray<string>): string => {
+    if (args.includes("--git-common-dir")) return "/repo/.git\n/repo\n";
+    if (args.includes("for-each-ref")) {
+      return [
+        "refs/heads/main\t1700000000\t",
+        "refs/remotes/origin/HEAD\t1700000000\trefs/remotes/origin/main",
+        "refs/remotes/origin/main\t1700000000\t",
+        "",
+      ].join("\n");
+    }
+    if (args.includes("worktree")) return "";
+    if (args.includes("remote")) return "origin\n";
+    return "";
+  };
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      commands.push(command.args);
+      return makeSuccessfulHandle(stdoutFor(command.args));
+    }),
+  );
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(
+      Layer.merge(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const refs = yield* driver.listRefs({ cwd: "/repo" });
+
+    // Five processes, not seven: the repository paths come from one `rev-parse`,
+    // and the default branch is read from the ref enumeration instead of a
+    // second `symbolic-ref`.
+    assert.equal(commands.length, 5);
+    assert.isFalse(
+      commands.some((args) => args.includes("refs/remotes/origin/HEAD")),
+      "listRefs should not spawn a dedicated default-branch lookup",
+    );
+    assert.isTrue(refs.hasPrimaryRemote);
+    assert.deepStrictEqual(
+      refs.refs.filter((ref) => ref.isDefault).map((ref) => ref.name),
+      ["main"],
+    );
   }).pipe(Effect.provide(layer));
 });
 
@@ -511,11 +595,17 @@ it.effect("marks the current branch when worktree metadata is unavailable", () =
           if (!ChildProcess.isStandardCommand(command)) {
             return yield* Effect.die("expected a standard Git command");
           }
-          const isWorktreeRoot =
+          const isRepositoryPaths =
             command.args.includes("rev-parse") && command.args.includes("--show-toplevel");
           const isWorktreeList =
             command.args.includes("worktree") && command.args.includes("--porcelain");
-          if (isWorktreeRoot || isWorktreeList) {
+          if (isRepositoryPaths) {
+            // How Git answers `rev-parse --git-common-dir --show-toplevel` when
+            // there is no work tree: the common directory is printed, the work
+            // tree line is not, and the exit code is non-zero.
+            return makeMissingWorktreeRootHandle();
+          }
+          if (isWorktreeList) {
             return makeNonRepositoryHandle();
           }
           return yield* delegate.spawn(command);
