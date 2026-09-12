@@ -94,6 +94,18 @@
       ],
       "test": "apps/server/src/orchestration/decider.readOnly.test.ts",
       "patchesUpstream": true
+    },
+    {
+      "name": "fork-connect-public-env",
+      "description": "The desktop build ships with T3 Connect switched on. A clone with no .env gets .env.example copied to .env before the build spawns, so server.asar and app.asar carry the public Clerk key and relay URL. fork-public-env.ts is the fork's own module and upstream has no file at that path, so its test cannot pass on plain upstream. Issue #137.",
+      "files": [
+        "scripts/lib/fork-public-env.ts",
+        "scripts/build-desktop-artifact.ts",
+        ".github/workflows/fork-update.yml",
+        "docs/operations/fork-windows-build.md"
+      ],
+      "test": "scripts/lib/fork-public-env.test.ts",
+      "patchesUpstream": true
     }
   ]
 }

@@ -29,6 +29,7 @@ import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
+import { describeForkPublicEnv, ensureForkPublicEnv } from "./lib/fork-public-env.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
@@ -3450,6 +3451,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     serverDist: path.join(repoRoot, "apps/server/dist"),
   };
   const bundledClientEntry = path.join(distDirs.serverDist, "client/index.html");
+
+  // Fork-only: give a clean clone T3 Connect's public values before anything reads them.
+  // Every consumer of scripts/lib/public-config.ts runs in a child of this process, so the
+  // file has to be on disk before the build spawns. See docs/operations/fork-windows-build.md.
+  yield* Effect.log(describeForkPublicEnv(ensureForkPublicEnv(repoRoot)));
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
