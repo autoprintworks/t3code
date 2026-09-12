@@ -17,7 +17,11 @@ import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 
 import { decideOrchestrationCommand } from "./decider.ts";
-import { rememberTurnEnvironment, takeTurnEnvironment } from "./TurnEnvironment.ts";
+import {
+  rememberTurnEnvironment,
+  sameTurnEnvironment,
+  takeTurnEnvironment,
+} from "./TurnEnvironment.ts";
 
 const THREAD_UPDATED_AT = "2026-01-01T00:00:00.000Z";
 
@@ -170,4 +174,67 @@ describe("thread.turn.start environment stays out of the event stream", () => {
       expect(serialized).not.toContain("FM_UNIT");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+
+const decodeEnvironment = Schema.decodeUnknownSync(ProviderInstanceEnvironment);
+
+/**
+ * A turn's environment is compared with the live session's to decide whether
+ * that session must restart. A false difference restarts a process for
+ * nothing, so these pin what counts as the same.
+ */
+describe("sameTurnEnvironment", () => {
+  it("reads a missing environment and an empty one as the same", () => {
+    expect(sameTurnEnvironment(undefined, undefined)).toBe(true);
+    expect(sameTurnEnvironment(undefined, decodeEnvironment([]))).toBe(true);
+    expect(sameTurnEnvironment(decodeEnvironment([]), undefined)).toBe(true);
+  });
+
+  it("ignores the order the entries arrive in", () => {
+    const first = decodeEnvironment([
+      { name: "FM_UNIT", value: "unit-7" },
+      { name: "PATH", value: SECRET_TOOL_DIR },
+    ]);
+    const second = decodeEnvironment([
+      { name: "PATH", value: SECRET_TOOL_DIR },
+      { name: "FM_UNIT", value: "unit-7" },
+    ]);
+    expect(sameTurnEnvironment(first, second)).toBe(true);
+  });
+
+  it("ignores the case of a name, the way a spawn does", () => {
+    const upper = decodeEnvironment([{ name: "PATH", value: SECRET_TOOL_DIR }]);
+    const mixed = decodeEnvironment([{ name: "Path", value: SECRET_TOOL_DIR }]);
+    expect(sameTurnEnvironment(upper, mixed)).toBe(true);
+
+    // Two entries for one variable: the last wins at spawn, and here too.
+    const duplicated = decodeEnvironment([
+      { name: "Path", value: "/other" },
+      { name: "PATH", value: SECRET_TOOL_DIR },
+    ]);
+    expect(sameTurnEnvironment(upper, duplicated)).toBe(true);
+  });
+
+  it("ignores fields the process never sees", () => {
+    const plain = decodeEnvironment([{ name: "FM_TOKEN", value: "secret" }]);
+    const marked = decodeEnvironment([{ name: "FM_TOKEN", value: "secret", sensitive: true }]);
+    expect(sameTurnEnvironment(plain, marked)).toBe(true);
+  });
+
+  it("reads a changed value, an added name, and a missing environment as different", () => {
+    const base = decodeEnvironment([{ name: "FM_UNIT", value: "unit-7" }]);
+    expect(
+      sameTurnEnvironment(base, decodeEnvironment([{ name: "FM_UNIT", value: "unit-8" }])),
+    ).toBe(false);
+    expect(
+      sameTurnEnvironment(
+        base,
+        decodeEnvironment([
+          { name: "FM_UNIT", value: "unit-7" },
+          { name: "PATH", value: SECRET_TOOL_DIR },
+        ]),
+      ),
+    ).toBe(false);
+    expect(sameTurnEnvironment(base, undefined)).toBe(false);
+  });
 });

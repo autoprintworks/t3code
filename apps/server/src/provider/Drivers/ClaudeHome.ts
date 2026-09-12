@@ -58,9 +58,10 @@ const PATH_VARIABLE_NAME = "PATH";
  *
  * The result belongs to that spawn alone. Nothing here is stored on the
  * session, so a turn's environment reaches a process only at spawn. A live
- * session keeps the environment it was spawned with, and a turn's environment
- * on a live session is dropped. The follow-up is
- * https://github.com/autoprintworks/t3code/issues/132.
+ * session keeps the environment it was spawned with, which is why a turn that
+ * carries a different one restarts the session first. See
+ * `ensureSessionForThread` in
+ * `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts`.
  */
 export const applyTurnEnvironment = (
   baseEnv: NodeJS.ProcessEnv,

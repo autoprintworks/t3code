@@ -427,6 +427,10 @@ jobs:
           # The build reads its update source here. This is what points the installed fork at
           # the fork's own releases instead of upstream's. See scripts/build-desktop-artifact.ts.
           T3CODE_DESKTOP_UPDATE_REPOSITORY: autoprintworks/t3code
+        # T3 Connect needs no step here. The runner checkout has no .env, so the build copies
+        # .env.example to .env itself (scripts/lib/fork-public-env.ts) and this installer carries
+        # the same public Clerk and relay values as a local build. See
+        # docs/operations/fork-windows-build.md.
         run: pnpm dist:desktop:win
 
       - name: Release smoke

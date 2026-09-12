@@ -44,7 +44,11 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { takeTurnEnvironment, withTurnEnvironment } from "../TurnEnvironment.ts";
+import {
+  sameTurnEnvironment,
+  takeTurnEnvironment,
+  withTurnEnvironment,
+} from "../TurnEnvironment.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -73,7 +77,8 @@ type ProviderIntentEvent = Extract<
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested"
-      | "thread.settled";
+      | "thread.settled"
+      | "thread.deleted";
   }
 >;
 
@@ -347,6 +352,13 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  // The environment the live session of a thread was spawned with. A turn that
+  // carries a different one restarts that session, so the reactor has to know
+  // what the running process already holds. The value stays in this process:
+  // it is never persisted, never put on an orchestration event, and never sent
+  // to a client, because its values name paths on the server's filesystem.
+  // See `apps/server/src/orchestration/TurnEnvironment.ts`.
+  const threadSpawnEnvironments = new Map<string, ProviderInstanceEnvironment>();
   const compactingThreadIds = new Set<ThreadId>();
   const stoppingThreadIds = new Set<ThreadId>();
 
@@ -578,11 +590,19 @@ const make = Effect.gen(function* () {
 
   /**
    * `options.environment` is one turn's environment, and it reaches a process
-   * at spawn and nowhere else. When the thread's session is already live and
-   * needs no restart, this returns early, no `startSession` runs, and that
-   * turn's environment is dropped. The live process keeps the environment it
-   * was spawned with. The follow-up is
-   * https://github.com/autoprintworks/t3code/issues/132.
+   * at spawn and nowhere else. A turn that carries an environment the live
+   * session was not spawned with therefore restarts that session first, down
+   * the same path a model selection change takes, keeping the resume cursor so
+   * the conversation continues in the new process. The turn then runs with the
+   * environment it asked for.
+   *
+   * A turn that carries no environment never restarts a live session, even one
+   * spawned with an environment. A turn without an environment is the ordinary
+   * turn from the sidebar, and restarting a worker's session on each of those
+   * would throw away the environment its owner gave it.
+   *
+   * `sameTurnEnvironment` in `../TurnEnvironment.ts` says what counts as the
+   * same environment.
    */
   const ensureSessionForThread = Effect.fn("ensureSessionForThread")(function* (
     threadId: ThreadId,
@@ -743,12 +763,25 @@ const make = Effect.gen(function* () {
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           // Belongs to the turn that asked for this session, not to the
-          // thread. It is applied to the process this call spawns and is not
-          // kept, so the next turn starts from the instance environment.
+          // thread. It is applied to the process this call spawns, and a later
+          // turn without an environment does not repeat it.
           ...withTurnEnvironment(options?.environment),
           runtimeMode: desiredRuntimeMode,
         })
-        .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
+        .pipe(
+          Effect.tap(() => refreshWorkspaceSnapshot),
+          // What the new process holds. The next turn on this thread compares
+          // its own environment against this to decide on a restart.
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (options?.environment === undefined || options.environment.length === 0) {
+                threadSpawnEnvironments.delete(threadId);
+                return;
+              }
+              threadSpawnEnvironments.set(threadId, options.environment);
+            }),
+          ),
+        );
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -798,13 +831,19 @@ const make = Effect.gen(function* () {
         preferredProvider === "claudeAgent" &&
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
+      // Only a turn that carries an environment can restart for one. A turn
+      // with none leaves the live session alone, whatever it was spawned with.
+      const shouldRestartForTurnEnvironment =
+        options?.environment !== undefined &&
+        !sameTurnEnvironment(threadSpawnEnvironments.get(threadId), options.environment);
 
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
-        !shouldRestartForModelSelectionChange
+        !shouldRestartForModelSelectionChange &&
+        !shouldRestartForTurnEnvironment
       ) {
         yield* refreshWorkspaceSnapshot;
         return existingSessionThreadId;
@@ -828,6 +867,7 @@ const make = Effect.gen(function* () {
         cwdChanged,
         modelChanged,
         instanceChanged,
+        shouldRestartForTurnEnvironment,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
         hasResumeCursor: resumeCursor !== undefined,
@@ -1707,7 +1747,11 @@ const make = Effect.gen(function* () {
               updatedAt: now,
             },
             createdAt: now,
-          }),
+          }).pipe(
+            // The process is gone, so nothing holds that environment now. The
+            // next spawn records its own.
+            Effect.tap(() => Effect.sync(() => threadSpawnEnvironments.delete(thread.id))),
+          ),
       }),
       Effect.ensuring(clearStopping),
     );
@@ -1741,6 +1785,11 @@ const make = Effect.gen(function* () {
         );
         return;
       }
+      case "thread.deleted":
+        // Deleting a thread stops its provider session outside this reactor,
+        // so the spawn environment for that thread is dropped here.
+        threadSpawnEnvironments.delete(event.payload.threadId);
+        return;
       case "thread.turn-start-requested":
         yield* processTurnStartRequested(event);
         return;
@@ -1813,7 +1862,8 @@ const make = Effect.gen(function* () {
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested" ||
-        event.type === "thread.settled"
+        event.type === "thread.settled" ||
+        event.type === "thread.deleted"
       ) {
         return yield* worker.enqueue(event);
       }
