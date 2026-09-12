@@ -784,10 +784,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
+        // A checkpoint is a byte-exact snapshot. core.autocrlf converts line endings on
+        // the way into the object store, so a user with the common Windows default of
+        // autocrlf=true would have their file's actual bytes silently rewritten the
+        // moment T3 Code captured a checkpoint. Pin autocrlf off for this call alone so
+        // capture never depends on the host's git config.
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["add", "-A", "--", "."],
+          args: ["-c", "core.autocrlf=false", "add", "-A", "--", "."],
           env: commitEnv,
         });
 
@@ -852,10 +857,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
+      // The mirror of the capture-side pin above: a revert writes the checkpoint's
+      // stored bytes back to the working tree, and core.autocrlf would rewrite LF to
+      // CRLF on checkout for a user with autocrlf=true. Pin it off so a revert always
+      // restores exactly what was captured.
       yield* execute({
         operation,
         cwd: input.cwd,
-        args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+        args: [
+          "-c",
+          "core.autocrlf=false",
+          "restore",
+          "--source",
+          commitOid,
+          "--worktree",
+          "--staged",
+          "--",
+          ".",
+        ],
       });
       yield* execute({
         operation,

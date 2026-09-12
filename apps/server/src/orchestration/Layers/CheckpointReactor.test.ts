@@ -226,6 +226,10 @@ function createGitRepository() {
   runGit(cwd, ["init", "--initial-branch=main"]);
   runGit(cwd, ["config", "user.email", "test@example.com"]);
   runGit(cwd, ["config", "user.name", "Test User"]);
+  // Checkpoint capture and revert round-trip file content through git. Without this, a
+  // machine-level core.autocrlf=true rewrites LF to CRLF on checkout, and a checkpoint
+  // revert would come back with different line endings than what was written.
+  runGit(cwd, ["config", "core.autocrlf", "false"]);
   NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "v1\n", "utf8");
   runGit(cwd, ["add", "."]);
   runGit(cwd, ["commit", "-m", "Initial"]);
