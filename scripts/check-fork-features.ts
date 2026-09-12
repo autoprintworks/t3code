@@ -11,7 +11,10 @@ import * as NodeURL from "node:url";
  * Guard for the fork feature manifest at the repository root. Run by the fork
  * update gate (`.github/workflows/fork-update.yml`) and by CI, so an upstream
  * merge that deletes a file or a test a fork feature lives in fails before
- * anything is published. See docs/operations/fork-windows-build.md.
+ * anything is published. A feature with no `keep` line fails here too, because
+ * a conflict resolver has no rule to follow without one. See
+ * docs/agents/upstream-conflict-resolution.md and
+ * docs/operations/fork-windows-build.md.
  */
 
 const repoRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
@@ -20,6 +23,12 @@ const manifestPath = NodePath.resolve(repoRoot, "fork-features.json");
 export interface ForkFeature {
   readonly name: string;
   readonly description: string;
+  /**
+   * The per-file rule an upstream merge conflict in {@link files} is settled
+   * by: what of ours must survive, and what takes upstream. Read by the worker
+   * brief in docs/agents/upstream-conflict-resolution.md.
+   */
+  readonly keep: string;
   /** Every file the feature lives in, fork-only or patched from upstream. */
   readonly files: readonly string[];
   /** Test file that fails on plain upstream without the feature. */
@@ -74,6 +83,9 @@ export function parseForkFeatures(source: string): readonly ForkFeature[] {
 
     if (!isNonEmptyString(feature.description)) {
       problems.push(`${label}: "description" must be a string`);
+    }
+    if (!isNonEmptyString(feature.keep)) {
+      problems.push(`${label}: "keep" must say what of ours survives and what takes upstream`);
     }
     if (
       !Array.isArray(feature.files) ||

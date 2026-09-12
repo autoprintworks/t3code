@@ -1,9 +1,10 @@
 {
-  "comment": "Every feature this fork carries over pingdotgg/t3code. scripts/check-fork-features.ts fails when a listed file or test file is gone, then runs the listed tests. .github/workflows/fork-update.yml runs it in the gate, so an upstream merge that deletes a fork seam stops before it can publish. See docs/operations/fork-windows-build.md.",
+  "comment": "Every feature this fork carries over pingdotgg/t3code. Each entry's \"keep\" line is the per-file resolution rule an upstream merge conflict is settled by: what of ours must survive in the listed files, and what takes upstream. scripts/check-fork-features.ts fails when a keep line, a listed file or a test file is gone, then runs the listed tests. .github/workflows/fork-update.yml runs it in the gate, so an upstream merge that deletes a fork seam stops before it can publish. See docs/agents/upstream-conflict-resolution.md and docs/operations/fork-windows-build.md.",
   "features": [
     {
       "name": "fork-app-identity",
       "description": "The fork installs and runs beside official T3 Code: its own app id, product name, state directory (~/.t3-fork) and t3code-fork:// URL scheme. Issues #34 and #59.",
+      "keep": "Our app id, product name, window title, ~/.t3-fork state directory and t3code-fork:// URL scheme replace upstream's wherever these files set them; everything else in these files takes upstream.",
       "files": [
         "apps/desktop/src/app/DesktopEnvironment.ts",
         "apps/desktop/src/app/DesktopLinuxUrlHandler.ts",
@@ -17,6 +18,7 @@
     {
       "name": "fork-desktop-build",
       "description": "The desktop build stages the fork's app id, product name and installer file name, and reads its update source from T3CODE_DESKTOP_UPDATE_REPOSITORY. scripts/release-smoke.ts also carries the fork's fix for running the release-only shell steps under Git for Windows bash. Issues #59, #75 and #94.",
+      "keep": "Our app id, product name, installer file name, the T3CODE_DESKTOP_UPDATE_REPOSITORY update source and the Git for Windows bash fix in release-smoke.ts replace upstream's; everything else in these files takes upstream.",
       "files": ["scripts/build-desktop-artifact.ts", "scripts/release-smoke.ts"],
       "test": "scripts/build-desktop-artifact.test.ts",
       "patchesUpstream": true
@@ -24,6 +26,7 @@
     {
       "name": "windows-console-suppression",
       "description": "Spawned server and provider processes no longer draw a console window on Windows. Issue #82.",
+      "keep": "windowsConsole.ts is ours whole, and every call into it that hides a spawned console window survives in the other listed files; everything else in those files takes upstream.",
       "files": [
         "packages/shared/src/windowsConsole.ts",
         "packages/shared/src/shell.ts",
@@ -37,6 +40,7 @@
     {
       "name": "terminal-subprocess-poll",
       "description": "Bounded terminal and preview polling on one shared back-off engine: a probe budget held under the poll period, bounded fan-out, a round that backs off when nothing changed and returns to the base period on any event. Issue #83, merged in #106, re-applied on upstream v0.0.39's terminal manager in #125. pollLoop.ts is the fork's own module and upstream has no file at that path, so its test cannot pass on plain upstream.",
+      "keep": "pollLoop.ts is ours whole, and Manager.ts and PortScanner.ts must still drive their polling through it; take upstream for the rest of those two files, then re-apply the pollLoop call sites on top.",
       "files": [
         "apps/server/src/pollLoop.ts",
         "apps/server/src/terminal/Manager.ts",
@@ -48,6 +52,7 @@
     {
       "name": "fork-automatic-updates",
       "description": "A found update downloads with no click and installs on the next quit. One update pill label names the waiting version, Settings shows the state in plain words, and a switch turns it off for upstream's two-click flow. forkAutomaticUpdates.ts and forkAutomaticUpdates.logic.ts are the fork's own modules and upstream has no file at either path, so the test cannot pass on plain upstream. Issue #113.",
+      "keep": "forkAutomaticUpdates.ts and forkAutomaticUpdates.logic.ts are ours whole, and the automatic download, the single update pill label, the Settings state and switch, and the IPC channel that carries them survive in the other listed files; everything else in those files takes upstream.",
       "files": [
         "apps/desktop/src/updates/forkAutomaticUpdates.ts",
         "apps/desktop/src/updates/DesktopUpdates.ts",
@@ -72,6 +77,7 @@
     {
       "name": "fm-acp-provider",
       "description": "First Mate is driven through its ACP door as a configurable ACP agent provider. Issues #78 and #79.",
+      "keep": "Every listed file is the fork's own and upstream has no file at these paths, so keep our side of anything that conflicts here; nothing in these files takes upstream.",
       "files": [
         "apps/server/src/provider/acpAgent/AcpAgentProvider.ts",
         "apps/server/src/provider/acpAgent/AcpAgentDriver.ts",
@@ -85,6 +91,7 @@
     {
       "name": "fm-worker-threads",
       "description": "First Mate workers show up as read-only threads, with the fork's own migration track behind them. Issue #81.",
+      "keep": "AcpAgentWorkerThreadReactor.ts, AcpAgentWorkerSessions.ts, AcpPeerSessions.ts and ForkMigrations.ts are ours whole, and decider.ts must keep our read-only thread handling; take upstream for the rest of decider.ts, then re-apply the read-only rules on top.",
       "files": [
         "apps/server/src/provider/acpAgent/AcpAgentWorkerThreadReactor.ts",
         "apps/server/src/provider/acpAgent/AcpAgentWorkerSessions.ts",
