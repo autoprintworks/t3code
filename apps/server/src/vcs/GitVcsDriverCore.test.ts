@@ -302,6 +302,45 @@ it.effect("lists refs with one round of Git processes", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("marks no ref as default when origin has no HEAD", () => {
+  const stdoutFor = (args: ReadonlyArray<string>): string => {
+    if (args.includes("--git-common-dir")) return "/repo/.git\n/repo\n";
+    if (args.includes("for-each-ref")) {
+      return ["refs/heads/main\t1700000000\t", "refs/remotes/origin/main\t1700000000\t", ""].join(
+        "\n",
+      );
+    }
+    if (args.includes("worktree")) return "";
+    if (args.includes("remote")) return "origin\n";
+    return "";
+  };
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      return makeSuccessfulHandle(stdoutFor(command.args));
+    }),
+  );
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(
+      Layer.merge(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const refs = yield* driver.listRefs({ cwd: "/repo" });
+
+    assert.isTrue(refs.hasPrimaryRemote);
+    assert.isFalse(refs.refs.some((ref) => ref.isDefault));
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("invalidates origin remote cache when a driver mutation adds origin", () =>
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
