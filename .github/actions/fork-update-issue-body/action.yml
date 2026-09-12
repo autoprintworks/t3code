@@ -1,0 +1,44 @@
+name: Fork update issue body
+description: >-
+  Read a report file and hand its contents to the caller as a multi-line `body` output.
+  The three fork-update report steps all need this, and the heredoc delimiter and the
+  escaping rules belong in one place rather than three.
+
+inputs:
+  path:
+    description: Path to the file holding the report. Read as-is, including its newlines.
+    required: true
+
+outputs:
+  body:
+    description: The file's contents, ready to pass to an action that takes an issue body.
+    value: ${{ steps.emit.outputs.body }}
+
+runs:
+  using: composite
+  steps:
+    - name: Emit the body output
+      id: emit
+      shell: bash
+      env:
+        BODY_PATH: ${{ inputs.path }}
+      run: |
+        set -euo pipefail
+        if [ ! -f "$BODY_PATH" ]; then
+          echo "No report file at $BODY_PATH." >&2
+          exit 1
+        fi
+
+        # A multi-line output goes through a heredoc. A body line equal to the delimiter would
+        # close it early and let the rest of the file set other outputs, so pick one the file
+        # does not contain. Real reports never collide, and this costs nothing when they do not.
+        delimiter=FORK_UPDATE_EOF
+        while grep -qxF "$delimiter" "$BODY_PATH"; do
+          delimiter="${delimiter}_X"
+        done
+
+        {
+          echo "body<<$delimiter"
+          cat "$BODY_PATH"
+          echo "$delimiter"
+        } >> "$GITHUB_OUTPUT"

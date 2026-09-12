@@ -64,6 +64,11 @@ jobs:
           # carries a gitlink with no .gitmodules entry, so that call exits 128 and fails the
           # job. This job only has contents: read, so a persisted token cannot push anyway.
 
+      - name: Prepare the merge
+        uses: ./.github/actions/prepare-fork-merge
+        with:
+          upstream-remote: ${{ env.UPSTREAM_REMOTE }}
+
       - name: Resolve the upstream ref and the run mode
         id: resolve
         shell: bash
@@ -74,11 +79,6 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          git remote add upstream "$UPSTREAM_REMOTE"
-          git fetch --tags --force upstream
-          # Fork branches too, so `upstream_ref` can name one. That is how the conflict path
-          # is exercised without pushing anything to upstream.
-          git fetch --force origin '+refs/heads/*:refs/remotes/origin/*'
 
           # A scheduled run is the real pipeline. Anything else rehearses unless told otherwise.
           if [ "$EVENT_NAME" = "schedule" ]; then
@@ -146,10 +146,8 @@ jobs:
           UPSTREAM_REF: ${{ steps.resolve.outputs.upstream_ref }}
         run: |
           # No -e in this step. The merge below is allowed to fail, because the step reads
-          # its exit code. So the two calls above the merge carry their own guard.
+          # its exit code.
           set -uo pipefail
-          git config user.name "github-actions[bot]" || { echo "git config user.name failed"; exit 1; }
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com" || { echo "git config user.email failed"; exit 1; }
 
           # Merge, never rebase (#60). A rebase would rewrite the fork's own history.
           if git merge --no-ff --no-edit -m "chore: merge upstream $UPSTREAM_REF" "$UPSTREAM_REF"; then
@@ -173,7 +171,6 @@ jobs:
           cat "$RUNNER_TEMP/conflicts.txt"
 
       - name: Write the conflict report
-        id: conflict_report
         if: steps.merge.outputs.conflict == 'true'
         shell: bash
         env:
@@ -192,18 +189,20 @@ jobs:
             echo ""
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$RUNNER_TEMP/conflict-issue.md"
-          {
-            echo "body<<FORK_UPDATE_EOF"
-            cat "$RUNNER_TEMP/conflict-issue.md"
-            echo "FORK_UPDATE_EOF"
-          } >> "$GITHUB_OUTPUT"
+
+      - name: Read the conflict report
+        id: conflict_body
+        if: steps.merge.outputs.conflict == 'true'
+        uses: ./.github/actions/fork-update-issue-body
+        with:
+          path: ${{ runner.temp }}/conflict-issue.md
 
       - name: Report the conflict
         if: steps.merge.outputs.conflict == 'true'
         uses: ./.github/actions/report-fork-update-issue
         with:
           title: Upstream ${{ steps.resolve.outputs.upstream_ref }} conflicts with fork
-          body: ${{ steps.conflict_report.outputs.body }}
+          body: ${{ steps.conflict_body.outputs.body }}
           token: ${{ github.token }}
 
       - name: Stop on the conflict
@@ -270,7 +269,6 @@ jobs:
           run_gate_step "node scripts/check-fork-features.ts" node scripts/check-fork-features.ts
 
       - name: Write the gate report
-        id: gate_report
         if: failure() && steps.gate.outcome == 'failure'
         shell: bash
         env:
@@ -286,18 +284,20 @@ jobs:
             echo ""
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$RUNNER_TEMP/gate-issue.md"
-          {
-            echo "body<<FORK_UPDATE_EOF"
-            cat "$RUNNER_TEMP/gate-issue.md"
-            echo "FORK_UPDATE_EOF"
-          } >> "$GITHUB_OUTPUT"
+
+      - name: Read the gate report
+        id: gate_body
+        if: failure() && steps.gate.outcome == 'failure'
+        uses: ./.github/actions/fork-update-issue-body
+        with:
+          path: ${{ runner.temp }}/gate-issue.md
 
       - name: Report the gate failure
         if: failure() && steps.gate.outcome == 'failure'
         uses: ./.github/actions/report-fork-update-issue
         with:
           title: Upstream ${{ steps.resolve.outputs.upstream_ref }} breaks the fork gate
-          body: ${{ steps.gate_report.outputs.body }}
+          body: ${{ steps.gate_body.outputs.body }}
           token: ${{ github.token }}
 
   release:
@@ -323,15 +323,15 @@ jobs:
           # partial clone and the merge below could not read upstream's blobs.
           fetch-depth: 0
 
+      - name: Prepare the merge
+        uses: ./.github/actions/prepare-fork-merge
+        with:
+          upstream-remote: ${{ env.UPSTREAM_REMOTE }}
+
       - name: Merge upstream into the fork
         shell: bash
         run: |
           set -euo pipefail
-          git remote add upstream "$UPSTREAM_REMOTE"
-          git fetch --tags --force upstream
-          git fetch --force origin '+refs/heads/*:refs/remotes/origin/*'
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # The gate proved this merge is clean at this commit, so a conflict here is a bug.
           git merge --no-ff --no-edit -m "chore: merge upstream $UPSTREAM_REF" "$UPSTREAM_REF"
 
@@ -521,7 +521,6 @@ jobs:
             --notes "Fork build of upstream \`$UPSTREAM_REF\` with every fork change kept. The Windows installer is unsigned, so SmartScreen warns on first run."
 
       - name: Write the build failure report
-        id: build_report
         if: failure()
         shell: bash
         env:
@@ -575,11 +574,13 @@ jobs:
             echo ""
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$RUNNER_TEMP/build-issue.md"
-          {
-            echo "body<<FORK_UPDATE_EOF"
-            cat "$RUNNER_TEMP/build-issue.md"
-            echo "FORK_UPDATE_EOF"
-          } >> "$GITHUB_OUTPUT"
+
+      - name: Read the build failure report
+        id: build_body
+        if: failure()
+        uses: ./.github/actions/fork-update-issue-body
+        with:
+          path: ${{ runner.temp }}/build-issue.md
 
       - name: Report the build failure
         if: failure()
@@ -588,5 +589,5 @@ jobs:
           # Its own title. The action dedupes on an exact title match, so sharing the gate's
           # title would file a build failure as a comment on a merge-conflict issue.
           title: Upstream ${{ needs.gate.outputs.upstream_ref }} fails the fork release build
-          body: ${{ steps.build_report.outputs.body }}
+          body: ${{ steps.build_body.outputs.body }}
           token: ${{ github.token }}

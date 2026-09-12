@@ -1,0 +1,27 @@
+name: Prepare the fork merge
+description: >-
+  Point the checkout at upstream, fetch upstream tags and the fork's own branches, and set the
+  committer the merge commit carries. Both fork-update jobs need this, on different runners,
+  because a job cannot inherit another job's checkout.
+
+inputs:
+  upstream-remote:
+    description: Upstream repository URL, added as the `upstream` remote.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Add upstream, fetch and set the committer
+      shell: bash
+      env:
+        UPSTREAM_REMOTE: ${{ inputs.upstream-remote }}
+      run: |
+        set -euo pipefail
+        git remote add upstream "$UPSTREAM_REMOTE"
+        git fetch --tags --force upstream
+        # Fork branches too, so `upstream_ref` can name one. That is how the conflict path
+        # is exercised without pushing anything to upstream.
+        git fetch --force origin '+refs/heads/*:refs/remotes/origin/*'
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
