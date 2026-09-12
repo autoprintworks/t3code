@@ -775,7 +775,12 @@ export function createServerEnvironmentAtoms<R, E>(
               : yield* Effect.gen(function* () {
                   const selfUpdateMethod = currentConfig?.environment.capabilities.serverSelfUpdate;
                   const exit = yield* environmentRegistry
-                    .run(target.environmentId, request(WS_METHODS.serverUpdateServer, target.input))
+                    .run(
+                      target.environmentId,
+                      request(WS_METHODS.serverUpdateServer, target.input, {
+                        interaction: "user-blocking",
+                      }),
+                    )
                     .pipe(Effect.exit);
                   if (Exit.isSuccess(exit)) {
                     return exit.value;
@@ -801,9 +806,11 @@ export function createServerEnvironmentAtoms<R, E>(
               const commitExit = yield* environmentRegistry
                 .run(
                   target.environmentId,
-                  request(WS_METHODS.serverCommitDesktopUpdate, {
-                    requestId: updateResult.desktopUpdateToken,
-                  }),
+                  request(
+                    WS_METHODS.serverCommitDesktopUpdate,
+                    { requestId: updateResult.desktopUpdateToken },
+                    { interaction: "user-blocking" },
+                  ),
                 )
                 .pipe(Effect.exit);
               if (Exit.isFailure(commitExit) && !isLegacyUpdateHandoffLoss(commitExit.cause)) {
@@ -873,9 +880,11 @@ export function createServerEnvironmentAtoms<R, E>(
                   environmentRegistry
                     .run(
                       target.environmentId,
-                      request(WS_METHODS.serverCommitDesktopUpdate, {
-                        requestId: desktopUpdateToken,
-                      }),
+                      request(
+                        WS_METHODS.serverCommitDesktopUpdate,
+                        { requestId: desktopUpdateToken },
+                        { interaction: "user-blocking" },
+                      ),
                     )
                     .pipe(Effect.asVoid),
                 ),

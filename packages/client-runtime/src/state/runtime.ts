@@ -690,7 +690,9 @@ export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnary
         environmentId,
         input,
       };
-      return request(options.tag, input).pipe(
+      // A command runs because the user asked for it, so its latency is worth
+      // surfacing. Query atoms refresh on their own and stay background.
+      return request(options.tag, input, { interaction: "user-blocking" }).pipe(
         Effect.tap(() => options.onSuccess?.(target, registry) ?? Effect.void),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );

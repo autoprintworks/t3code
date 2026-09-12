@@ -131,26 +131,41 @@ describe("environment RPC", () => {
       const { activeSession, supervisor } = yield* makeHarness();
       yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
 
+      const observerLayer = Effect.provideService(
+        EnvironmentRpcRequestObserver,
+        EnvironmentRpcRequestObserver.of({
+          observe: ({ environmentId, method, interaction }) =>
+            Effect.sync(() => {
+              observations.push(`start:${environmentId}:${method}:${interaction}`);
+              return Effect.sync(() => {
+                observations.push(`finish:${environmentId}:${method}:${interaction}`);
+              });
+            }),
+        }),
+      );
+
       const result = yield* request(WS_METHODS.cloudGetRelayClientStatus, {}).pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        Effect.provideService(
-          EnvironmentRpcRequestObserver,
-          EnvironmentRpcRequestObserver.of({
-            observe: ({ environmentId, method }) =>
-              Effect.sync(() => {
-                observations.push(`start:${environmentId}:${method}`);
-                return Effect.sync(() => {
-                  observations.push(`finish:${environmentId}:${method}`);
-                });
-              }),
-          }),
-        ),
+        observerLayer,
+      );
+      yield* request(
+        WS_METHODS.cloudGetRelayClientStatus,
+        {},
+        {
+          interaction: "user-blocking",
+        },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        observerLayer,
       );
 
       expect(result).toEqual({ status: "available", version: "2026.6.0" });
+      // A request is background unless the caller says a user is waiting on it.
       expect(observations).toEqual([
-        `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
-        `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
+        `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:background`,
+        `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:background`,
+        `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:user-blocking`,
+        `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}:user-blocking`,
       ]);
     }),
   );
